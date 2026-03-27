@@ -756,9 +756,10 @@ describe('settings API', () => {
 
     const settingsPath = path.join(tempDataDir, 'config', 'settings.json')
     const telegramPath = path.join(tempDataDir, 'config', 'telegram.json')
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { language: string }
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { language: string; batchingDelayMs: number }
     const telegram = JSON.parse(fs.readFileSync(telegramPath, 'utf-8')) as { botToken: string }
     expect(settings.language).toBe('German')
+    expect(settings.batchingDelayMs).toBe(4000)
     expect(telegram.botToken).toBe('telegram-secret')
   })
 })
