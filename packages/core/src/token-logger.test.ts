@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { initDatabase } from './database.js'
-import { logTokenUsage, logToolCall, getTokenUsage, getToolCalls } from './token-logger.js'
+import { logTokenUsage, logToolCall, getTokenUsage, getToolCalls, queryToolCalls, getToolCallById, getDistinctToolNames } from './token-logger.js'
 import type { Database } from './database.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -175,6 +175,113 @@ describe('token-logger', () => {
 
       const records = getToolCalls(testDb, { limit: 2 })
       expect(records).toHaveLength(2)
+    })
+  })
+
+  describe('logToolCall with status', () => {
+    it('stores status field and returns id', () => {
+      const testDb = createDb()
+
+      const id = logToolCall(testDb, {
+        sessionId: 's1',
+        toolName: 'bash',
+        input: 'ls',
+        output: 'error!',
+        durationMs: 10,
+        status: 'error',
+      })
+
+      expect(id).toBeGreaterThan(0)
+      const row = testDb.prepare('SELECT status FROM tool_calls WHERE id = ?').get(id) as { status: string }
+      expect(row.status).toBe('error')
+    })
+
+    it('defaults status to success', () => {
+      const testDb = createDb()
+
+      const id = logToolCall(testDb, {
+        sessionId: 's1',
+        toolName: 'bash',
+        input: 'ls',
+        output: 'ok',
+        durationMs: 10,
+      })
+
+      const row = testDb.prepare('SELECT status FROM tool_calls WHERE id = ?').get(id) as { status: string }
+      expect(row.status).toBe('success')
+    })
+  })
+
+  describe('queryToolCalls', () => {
+    it('returns paginated results', () => {
+      const testDb = createDb()
+
+      for (let i = 0; i < 10; i++) {
+        logToolCall(testDb, { sessionId: 's1', toolName: 'shell', input: `cmd-${i}`, output: '{}', durationMs: 100 })
+      }
+
+      const result = queryToolCalls(testDb, { page: 1, limit: 3 })
+      expect(result.records).toHaveLength(3)
+      expect(result.total).toBe(10)
+      expect(result.totalPages).toBe(4)
+      expect(result.page).toBe(1)
+    })
+
+    it('searches across tool_name, input, and output', () => {
+      const testDb = createDb()
+
+      logToolCall(testDb, { sessionId: 's1', toolName: 'bash', input: 'echo hello', output: 'hello', durationMs: 10 })
+      logToolCall(testDb, { sessionId: 's1', toolName: 'file_read', input: '/tmp/test', output: 'world', durationMs: 10 })
+
+      const result = queryToolCalls(testDb, { search: 'hello' })
+      expect(result.records).toHaveLength(1)
+      expect(result.records[0].toolName).toBe('bash')
+
+      const result2 = queryToolCalls(testDb, { search: 'file_read' })
+      expect(result2.records).toHaveLength(1)
+    })
+
+    it('filters by session and tool name', () => {
+      const testDb = createDb()
+
+      logToolCall(testDb, { sessionId: 's1', toolName: 'bash', input: '{}', output: '{}', durationMs: 10 })
+      logToolCall(testDb, { sessionId: 's2', toolName: 'bash', input: '{}', output: '{}', durationMs: 10 })
+
+      const result = queryToolCalls(testDb, { sessionId: 's1' })
+      expect(result.total).toBe(1)
+    })
+  })
+
+  describe('getToolCallById', () => {
+    it('returns full record by ID', () => {
+      const testDb = createDb()
+
+      const id = logToolCall(testDb, { sessionId: 's1', toolName: 'bash', input: 'test input', output: 'test output', durationMs: 50, status: 'success' })
+
+      const record = getToolCallById(testDb, id)
+      expect(record).not.toBeNull()
+      expect(record!.id).toBe(id)
+      expect(record!.toolName).toBe('bash')
+      expect(record!.input).toBe('test input')
+      expect(record!.status).toBe('success')
+    })
+
+    it('returns null for non-existent ID', () => {
+      const testDb = createDb()
+      expect(getToolCallById(testDb, 99999)).toBeNull()
+    })
+  })
+
+  describe('getDistinctToolNames', () => {
+    it('returns unique tool names', () => {
+      const testDb = createDb()
+
+      logToolCall(testDb, { sessionId: 's1', toolName: 'bash', input: '{}', output: '{}', durationMs: 10 })
+      logToolCall(testDb, { sessionId: 's1', toolName: 'bash', input: '{}', output: '{}', durationMs: 10 })
+      logToolCall(testDb, { sessionId: 's1', toolName: 'file_read', input: '{}', output: '{}', durationMs: 10 })
+
+      const names = getDistinctToolNames(testDb)
+      expect(names).toEqual(['bash', 'file_read'])
     })
   })
 })
