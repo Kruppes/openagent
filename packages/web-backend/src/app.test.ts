@@ -1,9 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import http from 'node:http'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { WebSocket } from 'ws'
 import { createApp } from './app.js'
 import { initDatabase } from '@openagent/core'
 import type { Database } from '@openagent/core'
+import type { AgentCore } from '@openagent/core'
 import { setupWebSocketChat } from './ws-chat.js'
 import { setupWebSocketLogs } from './ws-logs.js'
 import { generateAccessToken } from './auth.js'
@@ -15,10 +19,22 @@ let logsWss: import('ws').WebSocketServer
 let broadcastLog: (record: import('@openagent/core').ToolCallRecord) => void
 let port: number
 let baseUrl: string
+let tempDataDir: string
+let previousDataDir: string | undefined
+const setTimeoutMinutes = vi.fn()
+const refreshSystemPrompt = vi.fn()
 
 beforeAll(async () => {
+  previousDataDir = process.env.DATA_DIR
+  tempDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openagent-web-backend-'))
+  process.env.DATA_DIR = tempDataDir
+
   db = initDatabase(':memory:')
-  const app = createApp({ db })
+  const mockAgentCore = {
+    getSessionManager: () => ({ setTimeoutMinutes }),
+    refreshSystemPrompt,
+  } as unknown as AgentCore
+  const app = createApp({ db, agentCore: mockAgentCore })
   server = http.createServer(app)
   wss = setupWebSocketChat(server, db, null)
   const logsSetup = setupWebSocketLogs(server)
@@ -42,6 +58,13 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) =>
     server.close((err) => (err ? reject(err) : resolve()))
   )
+
+  fs.rmSync(tempDataDir, { recursive: true, force: true })
+  if (previousDataDir === undefined) {
+    delete process.env.DATA_DIR
+  } else {
+    process.env.DATA_DIR = previousDataDir
+  }
 })
 
 describe('health endpoint', () => {
@@ -507,5 +530,234 @@ describe('WebSocket logs', () => {
     expect(data.toolName).toBe('bash')
     expect(data.input).toBe('echo hello')
     ws.close()
+  })
+})
+
+describe('memory API', () => {
+  let adminToken: string
+
+  beforeAll(async () => {
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'admin' }),
+    })
+    const body = (await loginRes.json()) as { accessToken: string }
+    adminToken = body.accessToken
+  })
+
+  it('reads and updates SOUL.md', async () => {
+    const getRes = await fetch(`${baseUrl}/api/memory/soul`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    const getBody = (await getRes.json()) as { content: string }
+    expect(getRes.status).toBe(200)
+    expect(getBody.content).toContain('# Soul')
+
+    const putRes = await fetch(`${baseUrl}/api/memory/soul`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ content: '# Soul\n\nUpdated from test\n' }),
+    })
+    const putBody = (await putRes.json()) as { content: string }
+    expect(putRes.status).toBe(200)
+    expect(putBody.content).toContain('Updated from test')
+    expect(refreshSystemPrompt).toHaveBeenCalled()
+  })
+
+  it('lists, writes, and reads daily memory files', async () => {
+    const putRes = await fetch(`${baseUrl}/api/memory/daily/2026-03-27`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ content: '# Daily Memory — 2026-03-27\n\nNote\n' }),
+    })
+    expect(putRes.status).toBe(200)
+
+    const listRes = await fetch(`${baseUrl}/api/memory/daily`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    const listBody = (await listRes.json()) as {
+      files: Array<{ date: string; filename: string }>
+    }
+    expect(listRes.status).toBe(200)
+    expect(listBody.files.some((file) => file.date === '2026-03-27')).toBe(true)
+
+    const getRes = await fetch(`${baseUrl}/api/memory/daily/2026-03-27`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    const getBody = (await getRes.json()) as { content: string }
+    expect(getRes.status).toBe(200)
+    expect(getBody.content).toContain('Note')
+  })
+})
+
+describe('settings API', () => {
+  let adminToken: string
+
+  beforeAll(async () => {
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'admin' }),
+    })
+    const body = (await loginRes.json()) as { accessToken: string }
+    adminToken = body.accessToken
+  })
+
+  it('reads settings including telegram token', async () => {
+    const res = await fetch(`${baseUrl}/api/settings`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    const body = (await res.json()) as { telegramBotToken: string }
+    expect(res.status).toBe(200)
+    expect(body.telegramBotToken).toBe('')
+  })
+
+  it('updates settings and applies live changes', async () => {
+    setTimeoutMinutes.mockClear()
+    refreshSystemPrompt.mockClear()
+
+    const res = await fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sessionTimeoutMinutes: 30,
+        language: 'German',
+        heartbeatIntervalMinutes: 7,
+        batchingDelayMs: 4000,
+        telegramBotToken: 'telegram-secret',
+      }),
+    })
+    const body = (await res.json()) as {
+      sessionTimeoutMinutes: number
+      language: string
+      heartbeatIntervalMinutes: number
+      batchingDelayMs: number
+      telegramBotToken: string
+    }
+
+    expect(res.status).toBe(200)
+    expect(body.sessionTimeoutMinutes).toBe(30)
+    expect(body.language).toBe('German')
+    expect(body.heartbeatIntervalMinutes).toBe(7)
+    expect(body.batchingDelayMs).toBe(4000)
+    expect(body.telegramBotToken).toBe('telegram-secret')
+    expect(setTimeoutMinutes).toHaveBeenCalledWith(30)
+    expect(refreshSystemPrompt).toHaveBeenCalled()
+
+    const settingsPath = path.join(tempDataDir, 'config', 'settings.json')
+    const telegramPath = path.join(tempDataDir, 'config', 'telegram.json')
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { language: string }
+    const telegram = JSON.parse(fs.readFileSync(telegramPath, 'utf-8')) as { botToken: string }
+    expect(settings.language).toBe('German')
+    expect(telegram.botToken).toBe('telegram-secret')
+  })
+})
+
+describe('users API', () => {
+  let adminToken: string
+
+  beforeAll(async () => {
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'admin' }),
+    })
+    const body = (await loginRes.json()) as { accessToken: string }
+    adminToken = body.accessToken
+  })
+
+  it('creates, updates, lists, and deletes users', async () => {
+    const createRes = await fetch(`${baseUrl}/api/users`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ username: 'alice', password: 'pass1234', role: 'user' }),
+    })
+    const createBody = (await createRes.json()) as { user: { id: number; role: string } }
+    expect(createRes.status).toBe(201)
+    expect(createBody.user.role).toBe('user')
+
+    const listRes = await fetch(`${baseUrl}/api/users`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    const listBody = (await listRes.json()) as { users: Array<{ username: string }> }
+    expect(listRes.status).toBe(200)
+    expect(listBody.users.some((user) => user.username === 'alice')).toBe(true)
+
+    const updateRes = await fetch(`${baseUrl}/api/users/${createBody.user.id}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ role: 'admin', password: 'newpass123' }),
+    })
+    const updateBody = (await updateRes.json()) as { user: { role: string } }
+    expect(updateRes.status).toBe(200)
+    expect(updateBody.user.role).toBe('admin')
+
+    const deleteRes = await fetch(`${baseUrl}/api/users/${createBody.user.id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    expect(deleteRes.status).toBe(200)
+  })
+
+  it('does not allow deleting yourself', async () => {
+    const res = await fetch(`${baseUrl}/api/users/1`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    expect(res.status).toBe(400)
+  })
+})
+
+describe('usage API', () => {
+  let adminToken: string
+
+  beforeAll(async () => {
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'admin' }),
+    })
+    const body = (await loginRes.json()) as { accessToken: string }
+    adminToken = body.accessToken
+
+    db.prepare(
+      'INSERT INTO token_usage (provider, model, prompt_tokens, completion_tokens, estimated_cost, session_id) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('openai', 'gpt-4o-mini', 120, 45, 0.12, 'usage-sess-1')
+    db.prepare(
+      'INSERT INTO token_usage (provider, model, prompt_tokens, completion_tokens, estimated_cost, session_id) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run('openai', 'gpt-4o', 200, 80, 0.34, 'usage-sess-2')
+  })
+
+  it('returns usage summary, provider rollups, and recent records', async () => {
+    const res = await fetch(`${baseUrl}/api/usage`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    const body = (await res.json()) as {
+      summary: { requests: number; totalTokens: number }
+      byProvider: Array<{ provider: string; requests: number }>
+      recent: Array<{ sessionId: string }>
+    }
+
+    expect(res.status).toBe(200)
+    expect(body.summary.requests).toBeGreaterThanOrEqual(2)
+    expect(body.summary.totalTokens).toBeGreaterThanOrEqual(445)
+    expect(body.byProvider[0].provider).toBe('openai')
+    expect(body.recent.some((record) => record.sessionId === 'usage-sess-1')).toBe(true)
   })
 })

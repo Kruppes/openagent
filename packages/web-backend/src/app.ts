@@ -5,6 +5,10 @@ import { createAuthRouter } from './routes/auth.js'
 import { createChatRouter } from './routes/chat.js'
 import { createLogsRouter } from './routes/logs.js'
 import { createProvidersRouter } from './routes/providers.js'
+import { createMemoryRouter } from './routes/memory.js'
+import { createSettingsRouter } from './routes/settings.js'
+import { createUsersRouter } from './routes/users.js'
+import { createUsageRouter } from './routes/usage.js'
 import { ensureAdminUser } from './auth.js'
 
 const startTime = Date.now()
@@ -31,13 +35,16 @@ export function createApp(options?: AppOptions): express.Express {
     })
   })
 
-  // Mount auth and chat routes when database is available
   if (options?.db) {
     ensureAdminUser(options.db)
     app.use('/api/auth', createAuthRouter(options.db))
     app.use('/api/chat', createChatRouter(options.db))
     app.use('/api/logs', createLogsRouter(options.db))
     app.use('/api/providers', createProvidersRouter())
+    app.use('/api/memory', createMemoryRouter(options.agentCore ?? null))
+    app.use('/api/settings', createSettingsRouter(options.agentCore ?? null))
+    app.use('/api/users', createUsersRouter(options.db))
+    app.use('/api/usage', createUsageRouter(options.db))
   }
 
   return app
