@@ -8,6 +8,10 @@ import { Type } from '@mariozechner/pi-ai'
 import type { Database } from './database.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
 import { estimateCost } from './provider-config.js'
+import { assembleSystemPrompt, ensureMemoryStructure } from './memory.js'
+import { createMemoryTools } from './memory-tools.js'
+import { SessionManager } from './session-manager.js'
+import type { SessionInfo } from './session-manager.js'
 
 /**
  * A chunk yielded from the agent's response stream
@@ -30,6 +34,9 @@ export interface AgentCoreOptions {
   systemPrompt?: string
   tools?: AgentTool[]
   yoloMode?: boolean
+  memoryDir?: string
+  sessionTimeoutMinutes?: number
+  baseInstructions?: string
 }
 
 /**
@@ -162,47 +169,80 @@ export class AgentCore {
   private model: Model<Api>
   private apiKey: string
   private db: Database
-  private sessions: Map<string, string> = new Map() // userId -> sessionId
+  private sessionManager: SessionManager
   private toolCallTimers: Map<string, number> = new Map() // toolCallId -> startTime
   private toolCallArgs: Map<string, unknown> = new Map() // toolCallId -> args
+  private memoryDir?: string
+  private baseInstructions?: string
 
   constructor(options: AgentCoreOptions) {
     this.model = options.model
     this.apiKey = options.apiKey
     this.db = options.db
+    this.memoryDir = options.memoryDir
+    this.baseInstructions = options.baseInstructions
+
+    // Ensure memory structure exists
+    ensureMemoryStructure(options.memoryDir)
+
+    // Build system prompt from memory
+    const systemPrompt = options.systemPrompt ?? assembleSystemPrompt({
+      memoryDir: options.memoryDir,
+      baseInstructions: options.baseInstructions,
+    })
 
     const tools: AgentTool[] = [
       ...(options.tools ?? []),
+      ...createMemoryTools(options.memoryDir),
       ...(options.yoloMode !== false ? createYoloTools() : []),
     ]
 
     this.agent = new PiAgent({
       initialState: {
-        systemPrompt: options.systemPrompt ?? 'You are openagent, a helpful AI assistant with full system access.',
+        systemPrompt,
         model: this.model,
         tools,
       },
       getApiKey: () => this.apiKey,
     })
+
+    // Initialize session manager
+    this.sessionManager = new SessionManager({
+      db: this.db,
+      timeoutMinutes: options.sessionTimeoutMinutes ?? 15,
+      memoryDir: options.memoryDir,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      onSessionEnd: (_session: SessionInfo) => {
+        // Clear agent messages when session ends
+        this.agent.clearMessages()
+
+        // Rebuild system prompt with fresh memory context
+        const freshPrompt = assembleSystemPrompt({
+          memoryDir: this.memoryDir,
+          baseInstructions: this.baseInstructions,
+        })
+        this.agent.setSystemPrompt(freshPrompt)
+      },
+    })
   }
 
   /**
-   * Get or create a session ID for a user
+   * Get the session manager
    */
-  private getSessionId(userId: string): string {
-    let sessionId = this.sessions.get(userId)
-    if (!sessionId) {
-      sessionId = `session-${userId}-${Date.now()}`
-      this.sessions.set(userId, sessionId)
-    }
-    return sessionId
+  getSessionManager(): SessionManager {
+    return this.sessionManager
   }
 
   /**
    * Send a message and get back an async iterable of response chunks
    */
-  async *sendMessage(userId: string, text: string): AsyncIterable<ResponseChunk> {
-    const sessionId = this.getSessionId(userId)
+  async *sendMessage(userId: string, text: string, source: string = 'web'): AsyncIterable<ResponseChunk> {
+    // Get or create session
+    const session = this.sessionManager.getOrCreateSession(userId, source)
+    const sessionId = session.id
+
+    // Record the message
+    this.sessionManager.recordMessage(userId)
 
     // Collect events via subscription
     const eventQueue: AgentEvent[] = []
@@ -256,6 +296,13 @@ export class AgentCore {
       unsubscribe()
       await promptPromise
     }
+  }
+
+  /**
+   * Handle /new command: summarize current session and start fresh
+   */
+  async handleNewCommand(userId: string): Promise<string | null> {
+    return this.sessionManager.handleNewCommand(userId)
   }
 
   /**
@@ -364,8 +411,19 @@ export class AgentCore {
    * Reset a user's session
    */
   resetSession(userId: string): void {
-    this.sessions.delete(userId)
+    this.sessionManager.handleNewCommand(userId)
     this.agent.clearMessages()
+  }
+
+  /**
+   * Refresh the system prompt from current memory state
+   */
+  refreshSystemPrompt(): void {
+    const prompt = assembleSystemPrompt({
+      memoryDir: this.memoryDir,
+      baseInstructions: this.baseInstructions,
+    })
+    this.agent.setSystemPrompt(prompt)
   }
 
   /**
@@ -373,5 +431,12 @@ export class AgentCore {
    */
   getAgent(): PiAgent {
     return this.agent
+  }
+
+  /**
+   * Dispose all sessions and clean up
+   */
+  async dispose(): Promise<void> {
+    await this.sessionManager.dispose()
   }
 }
