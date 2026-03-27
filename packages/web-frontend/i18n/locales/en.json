@@ -22,7 +22,8 @@
     "save": "Save",
     "cancel": "Cancel",
     "saveFailed": "Could not save changes.",
-    "deleteFailed": "Could not delete item."
+    "deleteFailed": "Could not delete item.",
+    "language": "Language"
   },
   "admin": {
     "title": "Admin access required",

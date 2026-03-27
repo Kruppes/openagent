@@ -22,7 +22,8 @@
     "save": "Speichern",
     "cancel": "Abbrechen",
     "saveFailed": "Änderungen konnten nicht gespeichert werden.",
-    "deleteFailed": "Element konnte nicht gelöscht werden."
+    "deleteFailed": "Element konnte nicht gelöscht werden.",
+    "language": "Sprache"
   },
   "admin": {
     "title": "Admin-Zugriff erforderlich",

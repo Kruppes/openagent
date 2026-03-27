@@ -148,6 +148,21 @@
                 {{ user?.username }}
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              <DropdownMenuSub>
+                <template #trigger>
+                  <AppIcon name="globe" size="sm" />
+                  {{ $t('common.language') }}
+                </template>
+                <DropdownMenuItem
+                  v-for="loc in localeList"
+                  :key="loc.code"
+                  @click="setLocale(loc.code)"
+                >
+                  {{ loc.name }}
+                  <AppIcon v-if="locale === loc.code" name="check" size="sm" class="ml-auto" />
+                </DropdownMenuItem>
+              </DropdownMenuSub>
+              <DropdownMenuSeparator />
               <DropdownMenuItem destructive @click="handleLogout">
                 <AppIcon name="close" size="sm" />
                 {{ $t('auth.logout') }}
@@ -233,7 +248,9 @@ const statusDotClass = computed(() => {
   }
 })
 
-const { t } = useI18n()
+const { t, locale, locales, setLocale } = useI18n()
+
+const localeList = computed(() => (locales.value as Array<{ code: string; name: string }>))
 const statusText = computed(() => {
   switch (connectionStatus.value) {
     case 'connected': return t('status.online')
