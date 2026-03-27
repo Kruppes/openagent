@@ -724,7 +724,7 @@ describe('users API', () => {
   })
 })
 
-describe('usage API', () => {
+describe('stats API', () => {
   let adminToken: string
 
   beforeAll(async () => {
@@ -736,28 +736,129 @@ describe('usage API', () => {
     const body = (await loginRes.json()) as { accessToken: string }
     adminToken = body.accessToken
 
-    db.prepare(
-      'INSERT INTO token_usage (provider, model, prompt_tokens, completion_tokens, estimated_cost, session_id) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run('openai', 'gpt-4o-mini', 120, 45, 0.12, 'usage-sess-1')
-    db.prepare(
-      'INSERT INTO token_usage (provider, model, prompt_tokens, completion_tokens, estimated_cost, session_id) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run('openai', 'gpt-4o', 200, 80, 0.34, 'usage-sess-2')
+    const configDir = path.join(tempDataDir, 'config')
+    fs.mkdirSync(configDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(configDir, 'settings.json'),
+      JSON.stringify({
+        sessionTimeoutMinutes: 15,
+        language: 'en',
+        heartbeatIntervalMinutes: 5,
+        yoloMode: true,
+        tokenPriceTable: {
+          'custom-model': { input: 1.25, output: 2.5 },
+          'gpt-4o': { input: 2.5, output: 10 },
+        },
+      }, null, 2),
+      'utf-8',
+    )
+
+    const insert = db.prepare(
+      'INSERT INTO token_usage (timestamp, provider, model, prompt_tokens, completion_tokens, estimated_cost, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    )
+
+    insert.run('2026-03-27T08:00:00.000Z', 'openai', 'gpt-4o', 1000, 500, 0, 'usage-sess-1')
+    insert.run('2026-03-27T12:00:00.000Z', 'openai', 'gpt-4o', 2000, 1000, 0.5, 'usage-sess-2')
+    insert.run('2026-03-26T10:30:00.000Z', 'anthropic', 'custom-model', 3000, 1500, 0, 'usage-sess-3')
+    insert.run('2026-03-01T09:00:00.000Z', 'anthropic', 'custom-model', 4000, 2000, 0, 'usage-sess-4')
   })
 
-  it('returns usage summary, provider rollups, and recent records', async () => {
-    const res = await fetch(`${baseUrl}/api/usage`, {
+  it('GET /api/stats/usage aggregates usage with group_by and filters', async () => {
+    const res = await fetch(`${baseUrl}/api/stats/usage?group_by=provider,model&date_from=2026-03-26&date_to=2026-03-27`, {
       headers: { Authorization: `Bearer ${adminToken}` },
     })
     const body = (await res.json()) as {
-      summary: { requests: number; totalTokens: number }
-      byProvider: Array<{ provider: string; requests: number }>
-      recent: Array<{ sessionId: string }>
+      groupBy: string[]
+      rows: Array<{
+        provider: string
+        model: string
+        requests: number
+        totalTokens: number
+        estimatedCost: number
+      }>
+      totals: { requests: number; totalTokens: number; estimatedCost: number }
+      availableProviders: string[]
+      availableModels: string[]
     }
 
     expect(res.status).toBe(200)
-    expect(body.summary.requests).toBeGreaterThanOrEqual(2)
-    expect(body.summary.totalTokens).toBeGreaterThanOrEqual(445)
-    expect(body.byProvider[0].provider).toBe('openai')
-    expect(body.recent.some((record) => record.sessionId === 'usage-sess-1')).toBe(true)
+    expect(body.groupBy).toEqual(['provider', 'model'])
+    expect(body.rows).toHaveLength(2)
+    expect(body.rows[0].provider).toBe('openai')
+    expect(body.rows[0].model).toBe('gpt-4o')
+    expect(body.rows[0].requests).toBe(2)
+    expect(body.rows[0].totalTokens).toBe(4500)
+    expect(body.rows[0].estimatedCost).toBeCloseTo(0.5075, 6)
+    expect(body.rows[1].provider).toBe('anthropic')
+    expect(body.rows[1].estimatedCost).toBeCloseTo(0.0075, 6)
+    expect(body.totals.requests).toBe(3)
+    expect(body.totals.totalTokens).toBe(9000)
+    expect(body.availableProviders).toEqual(['anthropic', 'openai'])
+    expect(body.availableModels).toEqual(['custom-model', 'gpt-4o'])
+  })
+
+  it('GET /api/stats/usage supports hourly grouping with provider/model filters', async () => {
+    const res = await fetch(`${baseUrl}/api/stats/usage?group_by=hour&provider=openai&model=gpt-4o&date_from=2026-03-27&date_to=2026-03-27`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    const body = (await res.json()) as {
+      rows: Array<{ hour: string; promptTokens: number; completionTokens: number; totalTokens: number }>
+    }
+
+    expect(res.status).toBe(200)
+    expect(body.rows).toHaveLength(2)
+    expect(body.rows[0].hour).toBe('2026-03-27 08:00:00')
+    expect(body.rows[0].totalTokens).toBe(1500)
+    expect(body.rows[1].hour).toBe('2026-03-27 12:00:00')
+  })
+
+  it('GET /api/stats/summary returns today/week/month/all-time totals', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-27T15:30:00.000Z'))
+
+    try {
+      const res = await fetch(`${baseUrl}/api/stats/summary`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      })
+      const body = (await res.json()) as {
+        today: { totalTokens: number; estimatedCost: number }
+        week: { totalTokens: number }
+        month: { totalTokens: number }
+        allTime: { totalTokens: number }
+      }
+
+      expect(res.status).toBe(200)
+      expect(body.today.totalTokens).toBe(4500)
+      expect(body.today.estimatedCost).toBeCloseTo(0.5075, 6)
+      expect(body.week.totalTokens).toBe(9000)
+      expect(body.month.totalTokens).toBe(15000)
+      expect(body.allTime.totalTokens).toBe(15000)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stats endpoints reject non-admin users', async () => {
+    const bcrypt = await import('bcrypt')
+    const hash = bcrypt.hashSync('stats-pass', 10)
+    db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run('stats-user', hash, 'user')
+
+    const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'stats-user', password: 'stats-pass' }),
+    })
+    const { accessToken } = (await loginRes.json()) as { accessToken: string }
+
+    const res = await fetch(`${baseUrl}/api/stats/usage?group_by=provider`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+
+    expect(res.status).toBe(403)
+  })
+
+  it('stats endpoints reject unauthenticated requests', async () => {
+    const res = await fetch(`${baseUrl}/api/stats/summary`)
+    expect(res.status).toBe(401)
   })
 })
