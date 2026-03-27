@@ -31,9 +31,10 @@ export {
   buildModel,
   estimateCost,
   DEFAULT_PRICE_TABLE,
+  getConfiguredPriceTable,
   PROVIDER_TYPE_PRESETS,
 } from './provider-config.js'
-export type { ProviderConfig, ProviderModelConfig, ProvidersFile, ProviderType, ProviderTypePreset } from './provider-config.js'
+export type { ProviderConfig, ProviderModelConfig, ProvidersFile, ProviderType, ProviderTypePreset, TokenPriceTable } from './provider-config.js'
 export { encrypt, decrypt, maskApiKey } from './encryption.js'
 export {
   logTokenUsage,

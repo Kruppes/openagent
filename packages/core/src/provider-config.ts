@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import type { Api, Model } from '@mariozechner/pi-ai'
-import { getConfigDir } from './config.js'
+import { getConfigDir, ensureConfigTemplates, loadConfig } from './config.js'
 import { encrypt, decrypt, isEncrypted, maskApiKey } from './encryption.js'
 
 /**
@@ -110,7 +110,9 @@ export interface ProvidersFile {
  * Price table for common models (cost per million tokens in USD)
  * Used as fallback when pi-mono cost data is not available
  */
-export const DEFAULT_PRICE_TABLE: Record<string, { input: number; output: number }> = {
+export type TokenPriceTable = Record<string, { input: number; output: number }>
+
+export const DEFAULT_PRICE_TABLE: TokenPriceTable = {
   'gpt-4o': { input: 2.50, output: 10.00 },
   'gpt-4o-mini': { input: 0.15, output: 0.60 },
   'gpt-4-turbo': { input: 10.00, output: 30.00 },
@@ -341,10 +343,23 @@ export function getActiveProvider(): ProviderConfig | null {
 /**
  * Build a pi-ai Model object from a provider config
  */
+export function getConfiguredPriceTable(): TokenPriceTable {
+  try {
+    ensureConfigTemplates()
+    const settings = loadConfig<{ tokenPriceTable?: TokenPriceTable }>('settings.json')
+    return {
+      ...DEFAULT_PRICE_TABLE,
+      ...(settings.tokenPriceTable ?? {}),
+    }
+  } catch {
+    return { ...DEFAULT_PRICE_TABLE }
+  }
+}
+
 export function buildModel(provider: ProviderConfig, modelId?: string): Model<Api> {
   const id = modelId ?? provider.defaultModel
   const modelConfig = provider.models?.find(m => m.id === id)
-  const priceFallback = DEFAULT_PRICE_TABLE[id] ?? { input: 0, output: 0 }
+  const priceFallback = getConfiguredPriceTable()[id] ?? { input: 0, output: 0 }
 
   return {
     id,
