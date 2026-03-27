@@ -10,6 +10,7 @@ const TEMPLATES: Record<string, object> = {
     sessionTimeoutMinutes: 15,
     language: 'en',
     heartbeatIntervalMinutes: 5,
+    batchingDelayMs: 2500,
     yoloMode: true,
     tokenPriceTable: {
       'gpt-4o': { input: 2.5, output: 10 },

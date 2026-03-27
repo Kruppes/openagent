@@ -10,6 +10,7 @@ export interface SettingsData {
   sessionTimeoutMinutes: number
   language: string
   heartbeatIntervalMinutes: number
+  batchingDelayMs?: number
   yoloMode: boolean
 }
 
@@ -19,7 +20,7 @@ export interface TelegramData {
   adminUserIds: number[]
   pollingMode: boolean
   webhookUrl: string
-  batchingDelayMs: number
+  batchingDelayMs?: number
 }
 
 export interface SettingsRouterOptions {
@@ -51,7 +52,7 @@ export function createSettingsRouter(options: SettingsRouterOptions = {}): Route
         language: settings.language ?? 'match',
         heartbeatIntervalMinutes: settings.heartbeatIntervalMinutes ?? 5,
         yoloMode: settings.yoloMode ?? true,
-        batchingDelayMs: telegram.batchingDelayMs ?? 2500,
+        batchingDelayMs: settings.batchingDelayMs ?? telegram.batchingDelayMs ?? 2500,
         telegramBotToken: telegram.botToken ?? '',
       })
     } catch (err) {
@@ -78,6 +79,7 @@ export function createSettingsRouter(options: SettingsRouterOptions = {}): Route
       const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as SettingsData
       const telegram = JSON.parse(fs.readFileSync(telegramPath, 'utf-8')) as TelegramData
       const previousHeartbeatInterval = settings.heartbeatIntervalMinutes ?? 5
+      const previousBatchingDelayMs = settings.batchingDelayMs ?? telegram.batchingDelayMs ?? 2500
 
       if (body.sessionTimeoutMinutes !== undefined) {
         if (typeof body.sessionTimeoutMinutes !== 'number' || !Number.isFinite(body.sessionTimeoutMinutes) || body.sessionTimeoutMinutes < 1) {
@@ -112,7 +114,7 @@ export function createSettingsRouter(options: SettingsRouterOptions = {}): Route
           res.status(400).json({ error: 'batchingDelayMs must be a non-negative number' })
           return
         }
-        telegram.batchingDelayMs = body.batchingDelayMs
+        settings.batchingDelayMs = body.batchingDelayMs
       }
 
       if (body.telegramBotToken !== undefined) {
@@ -149,7 +151,7 @@ export function createSettingsRouter(options: SettingsRouterOptions = {}): Route
         language: settings.language,
         heartbeatIntervalMinutes: settings.heartbeatIntervalMinutes,
         yoloMode: settings.yoloMode,
-        batchingDelayMs: telegram.batchingDelayMs,
+        batchingDelayMs: settings.batchingDelayMs ?? previousBatchingDelayMs,
         telegramBotToken: telegram.botToken,
       })
     } catch (err) {
