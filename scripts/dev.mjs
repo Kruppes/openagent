@@ -29,17 +29,16 @@ console.log(`[openagent] Backend:  http://localhost:${process.env.PORT}`)
 console.log('[openagent] Frontend: http://localhost:3001')
 
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+const spawnOpts = {
+  cwd: rootDir,
+  env: process.env,
+  stdio: 'inherit',
+  detached: true,
+}
+
 const children = [
-  spawn(npmCmd, ['run', 'dev:backend'], {
-    cwd: rootDir,
-    env: process.env,
-    stdio: 'inherit',
-  }),
-  spawn(npmCmd, ['run', 'dev:frontend'], {
-    cwd: rootDir,
-    env: process.env,
-    stdio: 'inherit',
-  }),
+  spawn(npmCmd, ['run', 'dev:backend'], spawnOpts),
+  spawn(npmCmd, ['run', 'dev:frontend'], spawnOpts),
 ]
 
 let shuttingDown = false
@@ -50,16 +49,12 @@ function shutdown(signal = 'SIGTERM') {
   shuttingDown = true
 
   for (const child of children) {
-    if (!child.killed) {
-      child.kill(signal)
-    }
+    try { process.kill(-child.pid, signal) } catch {}
   }
 
   setTimeout(() => {
     for (const child of children) {
-      if (!child.killed) {
-        child.kill('SIGKILL')
-      }
+      try { process.kill(-child.pid, 'SIGKILL') } catch {}
     }
   }, 3000).unref()
 }
