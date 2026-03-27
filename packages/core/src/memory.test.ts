@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach } from 'vitest'
 import {
   ensureMemoryStructure,
   readSoulFile,
-  readAgentsFile,
-  writeAgentsFile,
+  readMemoryFile,
+  writeMemoryFile,
   ensureDailyFile,
   readDailyFile,
   appendToDailyFile,
@@ -36,7 +36,7 @@ describe('memory', () => {
       expect(fs.existsSync(dir)).toBe(true)
       expect(fs.existsSync(path.join(dir, 'daily'))).toBe(true)
       expect(fs.existsSync(path.join(dir, 'SOUL.md'))).toBe(true)
-      expect(fs.existsSync(path.join(dir, 'AGENTS.md'))).toBe(true)
+      expect(fs.existsSync(path.join(dir, 'MEMORY.md'))).toBe(true)
     })
 
     it('does not overwrite existing files', () => {
@@ -69,25 +69,40 @@ describe('memory', () => {
     })
   })
 
-  describe('readAgentsFile / writeAgentsFile', () => {
-    it('reads AGENTS.md content', () => {
+  describe('readMemoryFile / writeMemoryFile', () => {
+    it('reads MEMORY.md content', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
 
-      const content = readAgentsFile(dir)
+      const content = readMemoryFile(dir)
       expect(content).toContain('# Agent Memory')
       expect(content).toContain('Learned Lessons')
     })
 
-    it('writes and reads back AGENTS.md', () => {
+    it('writes and reads back MEMORY.md', () => {
       const dir = makeTmpDir()
       ensureMemoryStructure(dir)
 
       const newContent = '# Agent Memory\n\n## Learned: Testing works!\n'
-      writeAgentsFile(newContent, dir)
+      writeMemoryFile(newContent, dir)
 
-      const content = readAgentsFile(dir)
+      const content = readMemoryFile(dir)
       expect(content).toBe(newContent)
+    })
+
+    it('migrates legacy AGENTS.md to MEMORY.md', () => {
+      const dir = makeTmpDir()
+      fs.mkdirSync(dir, { recursive: true })
+      fs.mkdirSync(path.join(dir, 'daily'), { recursive: true })
+      fs.writeFileSync(path.join(dir, 'SOUL.md'), '# Soul', 'utf-8')
+      fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# Legacy Content\n', 'utf-8')
+
+      ensureMemoryStructure(dir)
+
+      expect(fs.existsSync(path.join(dir, 'MEMORY.md'))).toBe(true)
+      expect(fs.existsSync(path.join(dir, 'AGENTS.md'))).toBe(false)
+      const content = readMemoryFile(dir)
+      expect(content).toBe('# Legacy Content\n')
     })
   })
 

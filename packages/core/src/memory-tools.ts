@@ -1,6 +1,6 @@
 import type { AgentTool } from '@mariozechner/pi-agent-core'
 import { Type } from '@mariozechner/pi-ai'
-import { readAgentsFile, writeAgentsFile, readDailyFile, appendToDailyFile } from './memory.js'
+import { readMemoryFile, writeMemoryFile, readDailyFile, appendToDailyFile } from './memory.js'
 
 /**
  * Create agent tools for interacting with the memory system
@@ -9,11 +9,11 @@ export function createMemoryTools(memoryDir?: string): AgentTool[] {
   const readCoreMemoryTool: AgentTool = {
     name: 'read_core_memory',
     label: 'Read Core Memory',
-    description: 'Read the AGENTS.md core memory file. This contains learned lessons, important notes, and technical instructions that persist across sessions.',
+    description: 'Read the MEMORY.md core memory file. This contains learned lessons, important notes, and technical instructions that persist across sessions.',
     parameters: Type.Object({}),
     execute: async () => {
       try {
-        const content = readAgentsFile(memoryDir)
+        const content = readMemoryFile(memoryDir)
         return {
           content: [{ type: 'text' as const, text: content }],
           details: { success: true },
@@ -30,14 +30,14 @@ export function createMemoryTools(memoryDir?: string): AgentTool[] {
   const writeCoreMemoryTool: AgentTool = {
     name: 'write_core_memory',
     label: 'Write Core Memory',
-    description: 'Overwrite the AGENTS.md core memory file. Use this to persist important lessons, rules, or technical notes across sessions. Be careful: this replaces the entire file.',
+    description: 'Overwrite the MEMORY.md core memory file. Use this to persist important lessons, rules, or technical notes across sessions. Be careful: this replaces the entire file.',
     parameters: Type.Object({
-      content: Type.String({ description: 'The full new content for the AGENTS.md file' }),
+      content: Type.String({ description: 'The full new content for the MEMORY.md file' }),
     }),
     execute: async (_toolCallId, params) => {
       const { content } = params as { content: string }
       try {
-        writeAgentsFile(content, memoryDir)
+        writeMemoryFile(content, memoryDir)
         return {
           content: [{ type: 'text' as const, text: `Successfully updated core memory (${content.length} bytes)` }],
           details: { success: true, size: content.length },

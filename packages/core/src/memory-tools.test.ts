@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { createMemoryTools } from './memory-tools.js'
-import { ensureMemoryStructure, readAgentsFile, readDailyFile } from './memory.js'
+import { ensureMemoryStructure, readMemoryFile, readDailyFile } from './memory.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -31,7 +31,7 @@ describe('memory-tools', () => {
   })
 
   describe('read_core_memory', () => {
-    it('reads AGENTS.md content', async () => {
+    it('reads MEMORY.md content', async () => {
       const tools = createMemoryTools(tmpDir)
       const tool = tools.find(t => t.name === 'read_core_memory')!
 
@@ -44,14 +44,14 @@ describe('memory-tools', () => {
   })
 
   describe('write_core_memory', () => {
-    it('writes and persists AGENTS.md', async () => {
+    it('writes and persists MEMORY.md', async () => {
       const tools = createMemoryTools(tmpDir)
       const tool = tools.find(t => t.name === 'write_core_memory')!
 
       const newContent = '# Updated Memory\n\n## New lesson learned\n'
       await tool.execute('call-2', { content: newContent })
 
-      const onDisk = readAgentsFile(tmpDir)
+      const onDisk = readMemoryFile(tmpDir)
       expect(onDisk).toBe(newContent)
     })
   })

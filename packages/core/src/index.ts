@@ -5,6 +5,8 @@ export {
   ensureMemoryStructure,
   getMemoryDir,
   readSoulFile,
+  readMemoryFile,
+  writeMemoryFile,
   readAgentsFile,
   writeAgentsFile,
   getDailyFilePath,

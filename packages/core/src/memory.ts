@@ -16,7 +16,7 @@ You are openagent, a helpful AI assistant.
 - Respect user privacy
 `
 
-const AGENTS_TEMPLATE = `# Agent Memory
+const MEMORY_TEMPLATE = `# Agent Memory
 
 This file contains core memories, learned lessons, and technical instructions.
 The agent can read and write this file to persist important information across sessions.
@@ -51,9 +51,15 @@ export function ensureMemoryStructure(memoryDir?: string): void {
     fs.writeFileSync(soulPath, SOUL_TEMPLATE, 'utf-8')
   }
 
-  const agentsPath = path.join(dir, 'AGENTS.md')
-  if (!fs.existsSync(agentsPath)) {
-    fs.writeFileSync(agentsPath, AGENTS_TEMPLATE, 'utf-8')
+  const memoryPath = path.join(dir, 'MEMORY.md')
+  if (!fs.existsSync(memoryPath)) {
+    // Migrate legacy AGENTS.md to MEMORY.md if it exists
+    const legacyPath = path.join(dir, 'AGENTS.md')
+    if (fs.existsSync(legacyPath)) {
+      fs.renameSync(legacyPath, memoryPath)
+    } else {
+      fs.writeFileSync(memoryPath, MEMORY_TEMPLATE, 'utf-8')
+    }
   }
 }
 
@@ -70,26 +76,30 @@ export function readSoulFile(memoryDir?: string): string {
 }
 
 /**
- * Read the AGENTS.md core memory file
+ * Read the MEMORY.md core memory file
  */
-export function readAgentsFile(memoryDir?: string): string {
+export function readMemoryFile(memoryDir?: string): string {
   const dir = memoryDir ?? getMemoryDir()
-  const agentsPath = path.join(dir, 'AGENTS.md')
-  if (!fs.existsSync(agentsPath)) {
+  const memoryPath = path.join(dir, 'MEMORY.md')
+  if (!fs.existsSync(memoryPath)) {
     ensureMemoryStructure(dir)
   }
-  return fs.readFileSync(agentsPath, 'utf-8')
+  return fs.readFileSync(memoryPath, 'utf-8')
 }
 
 /**
- * Write the AGENTS.md core memory file
+ * Write the MEMORY.md core memory file
  */
-export function writeAgentsFile(content: string, memoryDir?: string): void {
+export function writeMemoryFile(content: string, memoryDir?: string): void {
   const dir = memoryDir ?? getMemoryDir()
   ensureMemoryStructure(dir)
-  const agentsPath = path.join(dir, 'AGENTS.md')
-  fs.writeFileSync(agentsPath, content, 'utf-8')
+  const memoryPath = path.join(dir, 'MEMORY.md')
+  fs.writeFileSync(memoryPath, content, 'utf-8')
 }
+
+// Legacy aliases for backward compatibility
+export const readAgentsFile = readMemoryFile
+export const writeAgentsFile = writeMemoryFile
 
 /**
  * Get the path for today's daily memory file
@@ -194,8 +204,8 @@ export function assembleSystemPrompt(options?: {
     sections.push(`<instructions>\n${options.baseInstructions.trim()}\n</instructions>`)
   }
 
-  // 3. Core memory from AGENTS.md
-  const agents = readAgentsFile(memoryDir)
+  // 3. Core memory from MEMORY.md
+  const agents = readMemoryFile(memoryDir)
   sections.push(`<core_memory>\n${agents.trim()}\n</core_memory>`)
 
   // 4. Recent daily context
