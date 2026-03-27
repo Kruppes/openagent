@@ -26,3 +26,5 @@ coverage/
 # Nuxt
 .nuxt/
 .output/
+
+packages/web-frontend/dist
