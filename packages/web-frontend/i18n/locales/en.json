@@ -1,0 +1,46 @@
+{
+  "app": {
+    "title": "OpenAgent"
+  },
+  "nav": {
+    "chat": "Chat",
+    "dashboard": "Dashboard",
+    "memory": "Memory",
+    "settings": "Settings",
+    "providers": "Providers",
+    "usage": "Token Usage",
+    "logs": "Activity Logs",
+    "users": "Users"
+  },
+  "auth": {
+    "login": "Login",
+    "logout": "Logout",
+    "username": "Username",
+    "password": "Password",
+    "loginButton": "Sign In",
+    "loginError": "Invalid username or password",
+    "loginRequired": "Please log in to continue"
+  },
+  "chat": {
+    "placeholder": "Type a message...",
+    "send": "Send",
+    "newSession": "New Session",
+    "stop": "Stop",
+    "sessionReset": "Session has been reset.",
+    "taskAborted": "Task has been aborted.",
+    "connecting": "Connecting...",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "noMessages": "No messages yet. Start a conversation!",
+    "loadingHistory": "Loading chat history..."
+  },
+  "status": {
+    "online": "Online",
+    "offline": "Offline",
+    "connecting": "Connecting"
+  },
+  "user": {
+    "menu": "User menu",
+    "profile": "Profile"
+  }
+}
