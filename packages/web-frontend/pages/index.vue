@@ -76,56 +76,57 @@
         >
           <!-- Tool call card (clickable/expandable) -->
           <template v-if="msg.role === 'tool' && msg.toolData">
-            <button
-              class="group flex w-full items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60"
-              @click="toggleTool(msg.toolData!.toolCallId)"
-            >
-              <svg
-                class="h-3 w-3 shrink-0 transition-transform duration-200"
-                :class="{ 'rotate-90': expandedTools.has(msg.toolData!.toolCallId) }"
-                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            <div class="w-full overflow-hidden rounded-lg border border-border">
+              <!-- Header (clickable) -->
+              <button
+                class="group flex w-full items-center gap-2 bg-muted/30 px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60"
+                :class="{ 'border-b border-border': expandedTools.has(msg.toolData!.toolCallId) }"
+                @click="toggleTool(msg.toolData!.toolCallId)"
               >
-                <polyline points="9 18 15 12 9 6" />
-              </svg>
-              <AppIcon name="settings" class="h-3 w-3 shrink-0 opacity-60" />
-              <span class="font-medium">{{ msg.toolData!.toolName }}</span>
-              <span
-                v-if="msg.toolData!.toolIsError"
-                class="ml-auto rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
+                <svg
+                  class="h-3 w-3 shrink-0 transition-transform duration-200"
+                  :class="{ 'rotate-90': expandedTools.has(msg.toolData!.toolCallId) }"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                >
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+                <AppIcon name="settings" class="h-3 w-3 shrink-0 opacity-60" />
+                <span class="font-medium">{{ msg.toolData!.toolName }}</span>
+                <span
+                  v-if="msg.toolData!.toolIsError"
+                  class="ml-auto rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
+                >
+                  Error
+                </span>
+                <span
+                  v-else-if="msg.toolData!.toolResult !== undefined"
+                  class="ml-auto rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+                >
+                  Success
+                </span>
+                <span
+                  v-else
+                  class="ml-auto inline-flex items-center gap-1 text-[10px]"
+                >
+                  <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+                  Running
+                </span>
+              </button>
+              <!-- Expanded details -->
+              <div
+                v-if="expandedTools.has(msg.toolData!.toolCallId)"
+                class="bg-background text-xs"
               >
-                Error
-              </span>
-              <span
-                v-else-if="msg.toolData!.toolResult !== undefined"
-                class="ml-auto rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
-              >
-                Success
-              </span>
-              <span
-                v-else
-                class="ml-auto inline-flex items-center gap-1 text-[10px]"
-              >
-                <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
-                Running
-              </span>
-            </button>
-            <!-- Expanded details -->
-            <div
-              v-if="expandedTools.has(msg.toolData!.toolCallId)"
-              class="mt-1 overflow-hidden rounded-lg border border-border bg-background text-xs"
-            >
-              <!-- Input -->
-              <div class="border-b border-border px-3 py-2">
-                <p class="mb-1 font-semibold text-muted-foreground">Input</p>
-                <pre class="max-h-48 overflow-auto whitespace-pre-wrap break-all text-foreground">{{ formatToolData(msg.toolData!.toolArgs) }}</pre>
-              </div>
-              <!-- Output -->
-              <div class="px-3 py-2">
-                <p class="mb-1 font-semibold text-muted-foreground">Output</p>
-                <pre
-                  class="max-h-48 overflow-auto whitespace-pre-wrap break-all"
-                  :class="msg.toolData!.toolIsError ? 'text-destructive' : 'text-foreground'"
-                >{{ formatToolData(msg.toolData!.toolResult) }}</pre>
+                <!-- Input -->
+                <div class="border-b border-border px-3 py-2">
+                  <p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Input</p>
+                  <ToolDataDisplay :data="msg.toolData!.toolArgs" />
+                </div>
+                <!-- Output -->
+                <div class="max-h-60 overflow-y-auto px-3 py-2">
+                  <p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Output</p>
+                  <ToolDataDisplay :data="msg.toolData!.toolResult" :is-error="msg.toolData!.toolIsError" />
+                </div>
               </div>
             </div>
           </template>
@@ -252,6 +253,7 @@ function formatToolData(data: unknown): string {
     return String(data)
   }
 }
+
 
 const {
   messages,
