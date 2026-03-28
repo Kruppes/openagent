@@ -91,6 +91,18 @@ if (telegramBot) {
 const app = createApp({ db, agentCore, heartbeatService, runtimeMetrics, consolidationScheduler, telegramBot })
 const server = http.createServer(app)
 
+// Wire session timeout events into the chat event bus
+if (agentCore) {
+  agentCore.setOnSessionEnd((userId: string, summary: string | null) => {
+    chatEventBus.broadcast({
+      type: 'session_end',
+      userId: parseInt(userId, 10),
+      source: 'web',
+      text: summary ?? undefined,
+    })
+  })
+}
+
 // Set up WebSocket chat (with cross-channel event bus)
 setupWebSocketChat(server, db, agentCore, runtimeMetrics, chatEventBus)
 

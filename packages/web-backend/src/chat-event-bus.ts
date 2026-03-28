@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events'
  */
 export interface ChatEvent {
   /** The kind of event being broadcast */
-  type: 'user_message' | 'text' | 'tool_call_start' | 'tool_call_end' | 'done' | 'error' | 'system'
+  type: 'user_message' | 'text' | 'tool_call_start' | 'tool_call_end' | 'done' | 'error' | 'system' | 'session_end'
   /** The OpenAgent user ID (integer) this event belongs to */
   userId: number
   /** Where the event originated */
