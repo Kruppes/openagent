@@ -15,7 +15,7 @@ interface ChatMessage {
 }
 
 interface ChatResponse {
-  type: 'text' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message'
+  type: 'text' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end'
   text?: string
   toolName?: string
   toolCallId?: string
@@ -34,7 +34,7 @@ function saveChatMessage(
   db: Database,
   sessionId: string,
   userId: number,
-  role: 'user' | 'assistant' | 'tool',
+  role: 'user' | 'assistant' | 'tool' | 'system',
   content: string,
   metadata?: string,
 ): void {
@@ -161,14 +161,25 @@ export function setupWebSocketChat(
             activeStreams.delete(ws)
           }
 
-          // Reset session
+          // Reset session (generates summary + writes daily log)
+          let summary: string | null = null
           if (agentCore) {
-            agentCore.resetSession(String(currentUser.userId))
+            try {
+              summary = await agentCore.resetSession(String(currentUser.userId))
+            } catch (err) {
+              console.error('Failed to reset session:', err)
+            }
           }
+
+          // Save divider to DB (using old session ID, before switching)
+          const dividerMetadata = JSON.stringify({ type: 'session_divider', summary: summary ?? null })
+          saveChatMessage(db, sessionId, currentUser.userId, 'system', summary ?? '', dividerMetadata)
 
           const newSessionId = `web-${currentUser.userId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
           clientSessions.set(ws, newSessionId)
-          sendMessage(ws, { type: 'system', text: 'Session reset. Starting fresh conversation.', sessionId: newSessionId })
+
+          // Send session_end event with summary (frontend shows divider)
+          sendMessage(ws, { type: 'session_end', text: summary ?? undefined, sessionId: newSessionId })
           return
         }
 
@@ -322,6 +333,15 @@ export function setupWebSocketChat(
             text: event.text,
             source: event.source,
             senderName: event.senderName,
+          })
+        } else if (event.type === 'session_end') {
+          // Session timed out — assign new session ID and notify client
+          const newSessionId = `web-${event.userId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+          clientSessions.set(client, newSessionId)
+          sendMessage(client, {
+            type: 'session_end',
+            text: event.text,
+            sessionId: newSessionId,
           })
         } else {
           sendMessage(client, {
