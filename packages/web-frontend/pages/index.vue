@@ -210,6 +210,18 @@
                 <span class="h-1.5 w-1.5 animate-[typingDot_1.4s_ease-in-out_0.2s_infinite] rounded-full bg-current opacity-60" />
                 <span class="h-1.5 w-1.5 animate-[typingDot_1.4s_ease-in-out_0.4s_infinite] rounded-full bg-current opacity-60" />
               </div>
+
+              <!-- Timestamp -->
+              <p
+                v-if="msg.timestamp && !msg.streaming"
+                class="mt-1 text-right text-[10px] leading-none"
+                :class="{
+                  'text-primary-foreground/50': msg.role === 'user' && msg.source !== 'telegram',
+                  'text-muted-foreground/50': msg.role !== 'user' || msg.source === 'telegram',
+                }"
+              >
+                {{ formatMessageTime(msg.timestamp) }}
+              </p>
             </div>
           </template>
         </div>
@@ -409,5 +421,20 @@ function autoResize() {
   if (!el) return
   el.style.height = 'auto'
   el.style.height = Math.min(el.scrollHeight, 150) + 'px'
+}
+
+function formatMessageTime(timestamp: string): string {
+  if (!timestamp) return ''
+  const d = new Date(timestamp)
+  if (isNaN(d.getTime())) return ''
+
+  const now = new Date()
+  const isToday = d.toDateString() === now.toDateString()
+
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+
+  if (isToday) return time
+
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) + ' ' + time
 }
 </script>
