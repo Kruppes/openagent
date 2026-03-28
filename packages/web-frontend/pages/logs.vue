@@ -314,6 +314,8 @@ function toolBadgeClass(name: string): string {
     return 'border-transparent bg-sky-500/15 text-sky-600 dark:text-sky-400'
   if (lower === 'session_timeout')
     return 'border-transparent bg-amber-500/15 text-amber-600 dark:text-amber-400'
+  if (lower === 'memory_consolidation')
+    return 'border-transparent bg-violet-500/15 text-violet-600 dark:text-violet-400'
   if (lower.includes('bash') || lower.includes('exec') || lower.includes('command'))
     return 'border-transparent bg-warning/15 text-warning'
   if (lower.includes('file') || lower.includes('read') || lower.includes('write') || lower.includes('edit'))
@@ -410,6 +412,7 @@ function toolIcon(name: string): string {
   const lower = name.toLowerCase()
   if (lower === 'session_start') return 'sparkles'
   if (lower === 'session_end' || lower === 'session_timeout') return 'clock'
+  if (lower === 'memory_consolidation') return 'brain'
   if (lower.includes('bash') || lower.includes('exec') || lower.includes('command')) return 'activity'
   if (lower.includes('file') || lower.includes('read') || lower.includes('write') || lower.includes('edit')) return 'file'
   if (lower.includes('llm') || lower.includes('chat') || lower.includes('generate')) return 'brain'
