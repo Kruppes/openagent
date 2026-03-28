@@ -14,6 +14,24 @@ const TOKEN_KEY = 'openagent_access_token'
 const REFRESH_TOKEN_KEY = 'openagent_refresh_token'
 const USER_KEY = 'openagent_user'
 
+/**
+ * Decode the JWT payload and check if the token is expired.
+ * Returns true if expired or unparseable. Uses a 30-second safety margin
+ * so we refresh *before* the backend rejects the token.
+ */
+function isTokenExpired(token: string): boolean {
+  try {
+    const parts = token.split('.')
+    if (parts.length !== 3) return true
+    const payload = JSON.parse(atob(parts[1])) as { exp?: number }
+    if (!payload.exp) return true
+    // Expire 30 seconds early to avoid race conditions
+    return payload.exp * 1000 <= Date.now() + 30_000
+  } catch {
+    return true
+  }
+}
+
 export function useAuth() {
   const user = useState<User | null>('auth_user', () => {
     if (import.meta.client) {
@@ -39,7 +57,14 @@ export function useAuth() {
     return null
   })
 
-  const isAuthenticated = computed(() => !!accessToken.value)
+  // Track whether we have performed the initial server-side validation
+  const sessionValidated = useState<boolean>('auth_session_validated', () => false)
+
+  const isAuthenticated = computed(() => {
+    const token = accessToken.value
+    if (!token) return false
+    return !isTokenExpired(token)
+  })
 
   function setAuth(data: LoginResponse) {
     accessToken.value = data.accessToken
@@ -52,6 +77,7 @@ export function useAuth() {
   function clearAuth() {
     accessToken.value = null
     user.value = null
+    sessionValidated.value = false
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(REFRESH_TOKEN_KEY)
     localStorage.removeItem(USER_KEY)
@@ -90,6 +116,83 @@ export function useAuth() {
     }
   }
 
+  /**
+   * Validate the current session. Checks token expiry client-side and,
+   * on first call after page load, also validates against the backend
+   * to ensure the user still exists and the token is accepted.
+   *
+   * Returns true if the session is valid (possibly after a refresh).
+   */
+  async function validateSession(): Promise<boolean> {
+    // Re-sync token from localStorage in case state drifted
+    if (import.meta.client) {
+      const stored = localStorage.getItem(TOKEN_KEY)
+      if (stored && stored !== accessToken.value) {
+        accessToken.value = stored
+      }
+    }
+
+    const token = accessToken.value
+
+    // No token at all — check if we can refresh
+    if (!token) {
+      const refreshed = await refreshAccessToken()
+      if (!refreshed) {
+        clearAuth()
+        return false
+      }
+      sessionValidated.value = true
+      return true
+    }
+
+    // Token is expired — try to refresh
+    if (isTokenExpired(token)) {
+      const refreshed = await refreshAccessToken()
+      if (!refreshed) {
+        clearAuth()
+        return false
+      }
+      sessionValidated.value = true
+      return true
+    }
+
+    // Token looks valid client-side. On first load, also verify server-side
+    // to catch deleted users or revoked tokens.
+    if (!sessionValidated.value) {
+      try {
+        const config = useRuntimeConfig()
+        const res = await fetch(`${config.public.apiBase}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+
+        if (res.ok) {
+          const data = (await res.json()) as { user: User }
+          // Update user data in case it changed (e.g. role change)
+          user.value = data.user
+          localStorage.setItem(USER_KEY, JSON.stringify(data.user))
+          sessionValidated.value = true
+          return true
+        }
+
+        // Token rejected by server — try refresh
+        const refreshed = await refreshAccessToken()
+        if (!refreshed) {
+          clearAuth()
+          return false
+        }
+        sessionValidated.value = true
+        return true
+      } catch {
+        // Network error (backend unreachable) — clear auth so we don't
+        // show stale cached data behind a login wall.
+        clearAuth()
+        return false
+      }
+    }
+
+    return true
+  }
+
   async function login(username: string, password: string): Promise<{ success: boolean; error?: string }> {
     try {
       const config = useRuntimeConfig()
@@ -106,6 +209,7 @@ export function useAuth() {
 
       const data = (await res.json()) as LoginResponse
       setAuth(data)
+      sessionValidated.value = true
       return { success: true }
     } catch (err) {
       return { success: false, error: (err as Error).message }
@@ -125,5 +229,6 @@ export function useAuth() {
     logout,
     getAccessToken,
     refreshAccessToken,
+    validateSession,
   }
 }
