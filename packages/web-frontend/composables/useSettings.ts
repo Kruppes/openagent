@@ -11,6 +11,7 @@ export interface Settings {
   heartbeatIntervalMinutes: number
   yoloMode: boolean
   batchingDelayMs: number
+  telegramEnabled: boolean
   telegramBotToken: string
   memoryConsolidation: MemoryConsolidationSettings
 }
@@ -52,6 +53,7 @@ export function useSettings() {
         heartbeatIntervalMinutes: result.heartbeatIntervalMinutes,
         yoloMode: result.yoloMode,
         batchingDelayMs: result.batchingDelayMs,
+        telegramEnabled: result.telegramEnabled,
         telegramBotToken: result.telegramBotToken,
         memoryConsolidation: result.memoryConsolidation ?? {
           enabled: false,
