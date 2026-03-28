@@ -40,6 +40,47 @@ export class SessionManager {
     this.memoryDir = options.memoryDir
     this.onSummarize = options.onSummarize
     this.onSessionEnd = options.onSessionEnd
+
+    // Close any orphaned sessions from a previous server run
+    this.closeOrphanedSessions()
+  }
+
+  /**
+   * Close sessions that were left open from a previous server run
+   * (no ended_at). These exist because the server crashed or restarted
+   * without graceful shutdown.
+   */
+  private closeOrphanedSessions(): void {
+    const orphaned = this.db.prepare(
+      `SELECT id, message_count, summary_written, source FROM sessions WHERE ended_at IS NULL`
+    ).all() as Array<{ id: string; message_count: number; summary_written: number; source: string }>
+
+    if (orphaned.length === 0) return
+
+    console.log(`[session] Closing ${orphaned.length} orphaned session(s) from previous run`)
+
+    for (const session of orphaned) {
+      this.db.prepare(
+        `UPDATE sessions SET ended_at = datetime('now'), summary_written = ? WHERE id = ?`
+      ).run(session.summary_written, session.id)
+
+      // Log to tool_calls so it shows up in the activity log
+      logToolCall(this.db, {
+        sessionId: session.id,
+        toolName: 'session_timeout',
+        input: JSON.stringify({
+          reason: 'server_restart',
+          messageCount: session.message_count,
+        }),
+        output: JSON.stringify({
+          summaryWritten: false,
+          summary: null,
+          note: 'Session closed due to server restart',
+        }),
+        durationMs: 0,
+        status: 'success',
+      })
+    }
   }
 
   /**
