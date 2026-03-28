@@ -558,6 +558,7 @@ const { providers, fetchProviders } = useProviders()
 
 /* ── Users (for telegram user assignment) ── */
 const { users, fetchUsers } = useUsers()
+const { refreshAvatar } = useUserAvatar()
 
 /* ── Telegram users ── */
 const {
@@ -586,12 +587,14 @@ async function handleRejectTelegramUser(id: number) {
 async function handleAssignUser(telegramUserId: number, userIdStr: string) {
   const userId = userIdStr ? parseInt(userIdStr, 10) : null
   await updateTelegramUser(telegramUserId, { userId })
+  refreshAvatar()
 }
 
 async function handleDeleteTelegramUser(tgUser: TelegramUser) {
   const name = tgUser.telegramDisplayName || tgUser.telegramUsername || tgUser.telegramId
   if (!confirm(t('settings.telegramUsersDeleteConfirm', { name }))) return
   await deleteTelegramUser(tgUser.id)
+  refreshAvatar()
 }
 
 /* ── Consolidation runtime ── */
