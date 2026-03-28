@@ -10,6 +10,7 @@ import {
   ensureConfigTemplates,
   loadConfig,
   logTokenUsage,
+  logToolCall,
   estimateCost,
 } from '@openagent/core'
 
@@ -159,6 +160,7 @@ export class MemoryConsolidationScheduler {
 
   private async executeConsolidation(): Promise<ConsolidationResult> {
     console.log('[openagent] Starting memory consolidation...')
+    const startTime = Date.now()
 
     try {
       // Resolve the provider to use
@@ -171,6 +173,16 @@ export class MemoryConsolidationScheduler {
         }
         this.lastRun = new Date().toISOString()
         this.lastResult = result
+
+        logToolCall(this.db, {
+          sessionId: 'memory-consolidation',
+          toolName: 'memory_consolidation',
+          input: JSON.stringify({ lookbackDays: this.settings.lookbackDays }),
+          output: JSON.stringify({ error: 'No provider available for consolidation' }),
+          durationMs: Date.now() - startTime,
+          status: 'error',
+        })
+
         console.warn('[openagent] Memory consolidation skipped: no provider available')
         return result
       }
@@ -209,6 +221,25 @@ export class MemoryConsolidationScheduler {
         }
       }
 
+      // Log to activity log
+      logToolCall(this.db, {
+        sessionId: 'memory-consolidation',
+        toolName: 'memory_consolidation',
+        input: JSON.stringify({
+          lookbackDays: this.settings.lookbackDays,
+          provider: provider.provider,
+          model: model.id,
+        }),
+        output: JSON.stringify({
+          updated: result.updated,
+          dailyFilesReviewed: result.dailyFilesReviewed,
+          reason: result.reason ?? null,
+          tokens: result.usage ? result.usage.input + result.usage.output : null,
+        }),
+        durationMs: Date.now() - startTime,
+        status: 'success',
+      })
+
       console.log(
         `[openagent] Memory consolidation complete: ${result.updated ? 'UPDATED' : 'no change'} ` +
         `(${result.dailyFilesReviewed} daily files reviewed` +
@@ -225,6 +256,21 @@ export class MemoryConsolidationScheduler {
       }
       this.lastRun = new Date().toISOString()
       this.lastResult = result
+
+      // Log error to activity log
+      logToolCall(this.db, {
+        sessionId: 'memory-consolidation',
+        toolName: 'memory_consolidation',
+        input: JSON.stringify({
+          lookbackDays: this.settings.lookbackDays,
+        }),
+        output: JSON.stringify({
+          error: (err as Error).message,
+        }),
+        durationMs: Date.now() - startTime,
+        status: 'error',
+      })
+
       console.error('[openagent] Memory consolidation failed:', err)
       return result
     }
