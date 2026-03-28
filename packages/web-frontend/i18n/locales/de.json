@@ -319,6 +319,7 @@
     "recentHealthChecksDescription": "Ein kurzer Verlauf der letzten Heartbeat-Ergebnisse des Providers.",
     "agentStatus": "Agent-Status",
     "activeProvider": "Aktiver Anbieter",
+    "providerType": "Typ",
     "model": "Modell",
     "language": "Sprachmodus",
     "sessionTimeout": "Sitzungs-Timeout",

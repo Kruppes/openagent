@@ -11,6 +11,7 @@ export interface HealthSnapshot {
   provider: {
     id: string
     name: string
+    type: string
     model: string
     status: ProviderStatus
   } | null
@@ -79,6 +80,7 @@ export function useDashboard() {
 
   // ── Derived state ─────────────────────────────────────────────
   const providerName = computed(() => health.value.provider?.name ?? null)
+  const providerType = computed(() => health.value.provider?.type ?? null)
   const providerModel = computed(() => health.value.provider?.model ?? null)
   const providerStatus = computed((): ProviderStatus => health.value.provider?.status ?? 'unconfigured')
   const agentStatus = computed(() => health.value.agent.status)
@@ -122,6 +124,7 @@ export function useDashboard() {
 
     // derived
     providerName,
+    providerType,
     providerModel,
     providerStatus,
     agentStatus,

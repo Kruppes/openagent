@@ -321,6 +321,7 @@
     "recentHealthChecksDescription": "A short trail of the latest provider heartbeat results.",
     "agentStatus": "Agent status",
     "activeProvider": "Active provider",
+    "providerType": "Type",
     "model": "Model",
     "language": "Language mode",
     "sessionTimeout": "Session timeout",

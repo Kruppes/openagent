@@ -75,7 +75,6 @@
                   </CardTitle>
                   <CardDescription v-if="providerName" class="mt-0.5 truncate">
                     {{ providerName }}
-                    <template v-if="providerModel"> · {{ providerModel }}</template>
                   </CardDescription>
                   <CardDescription v-else class="mt-0.5">
                     {{ $t('dashboard.notConfigured') }}
@@ -88,6 +87,14 @@
             </CardHeader>
             <CardContent class="pt-0">
               <dl class="space-y-2.5">
+                <div v-if="providerTypeLabel" class="flex items-center justify-between gap-2 text-sm">
+                  <dt class="text-muted-foreground">{{ $t('dashboard.providerType') }}</dt>
+                  <dd class="font-semibold text-foreground">{{ providerTypeLabel }}</dd>
+                </div>
+                <div v-if="providerModel" class="flex items-center justify-between gap-2 text-sm">
+                  <dt class="text-muted-foreground">{{ $t('dashboard.model') }}</dt>
+                  <dd class="font-semibold text-foreground">{{ providerModel }}</dd>
+                </div>
                 <div class="flex items-center justify-between gap-2 text-sm">
                   <dt class="text-muted-foreground">{{ $t('dashboard.agentStatus') }}</dt>
                   <dd class="flex items-center gap-1.5 font-semibold text-foreground">
@@ -176,6 +183,7 @@ import type { ProviderStatus } from '~/composables/useDashboard'
 const { t } = useI18n()
 const { user } = useAuth()
 const { formatNumber, formatCurrency, formatDateTime } = useFormat()
+const { presets, fetchProviders } = useProviders()
 const isAdmin = computed(() => user.value?.role === 'admin')
 
 const {
@@ -184,6 +192,7 @@ const {
   health,
   healthHistory,
   providerName,
+  providerType,
   providerModel,
   providerStatus,
   agentStatus,
@@ -216,6 +225,12 @@ const statCards = computed(() => [
   },
 ])
 
+const providerTypeLabel = computed(() => {
+  if (!providerType.value) return null
+  const preset = presets.value[providerType.value]
+  return preset?.label ?? providerType.value
+})
+
 const agentStatusLabel = computed(() => t(`dashboard.agentStates.${agentStatus.value}`))
 
 const lastCheckLabel = computed(() => {
@@ -245,6 +260,6 @@ function statusBadgeVariant(status: ProviderStatus): 'success' | 'warning' | 'de
 // ── Init ────────────────────────────────────────────────────────
 onMounted(async () => {
   if (!isAdmin.value) return
-  await load()
+  await Promise.all([load(), fetchProviders()])
 })
 </script>
