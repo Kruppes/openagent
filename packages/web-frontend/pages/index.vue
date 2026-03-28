@@ -124,8 +124,8 @@
                 >
                   <polyline points="9 18 15 12 9 6" />
                 </svg>
-                <AppIcon name="settings" class="h-3 w-3 shrink-0 opacity-60" />
-                <span class="font-medium">{{ msg.toolData!.toolName }}</span>
+                <AppIcon :name="isToolSkillLoad(msg.toolData!) ? 'puzzle' : 'settings'" class="h-3 w-3 shrink-0 opacity-60" />
+                <span class="font-medium">{{ toolDisplayName(msg.toolData!) }}</span>
                 <span
                   v-if="msg.toolData!.toolIsError"
                   class="ml-auto rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive"
@@ -151,15 +151,20 @@
                 v-if="expandedTools.has(msg.toolData!.toolCallId)"
                 class="bg-background text-xs"
               >
-                <!-- Input -->
-                <div class="border-b border-border px-3 py-2">
+                <!-- Input (hidden for skill loads) -->
+                <div v-if="!isToolSkillLoad(msg.toolData!)" class="border-b border-border px-3 py-2">
                   <p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Input</p>
                   <ToolDataDisplay :data="msg.toolData!.toolArgs" />
                 </div>
                 <!-- Output -->
                 <div class="max-h-60 overflow-y-auto px-3 py-2">
                   <p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Output</p>
-                  <ToolDataDisplay :data="msg.toolData!.toolResult" :is-error="msg.toolData!.toolIsError" />
+                  <template v-if="isToolSkillLoad(msg.toolData!)">
+                    <pre class="whitespace-pre-wrap break-all text-xs text-foreground">{{ extractSkillContent(msg.toolData!.toolResult) ?? '' }}</pre>
+                  </template>
+                  <template v-else>
+                    <ToolDataDisplay :data="msg.toolData!.toolResult" :is-error="msg.toolData!.toolIsError" />
+                  </template>
                 </div>
               </div>
             </div>
@@ -276,13 +281,26 @@
 </template>
 
 <script setup lang="ts">
-import type { ChatMessage } from '~/composables/useChat'
+import type { ChatMessage, ToolCallData } from '~/composables/useChat'
 
 const { t } = useI18n()
 const { apiFetch } = useApi()
 const { user } = useAuth()
 const { userAvatarUrl, avatarFailed, userInitial, onAvatarError } = useUserAvatar()
 const { renderMarkdown, handleCopyAsMarkdown } = useMarkdown()
+const { isSkillLoad, getSkillName, extractSkillContent } = useSkillDetection()
+
+function isToolSkillLoad(toolData: ToolCallData): boolean {
+  return isSkillLoad(toolData.toolName, toolData.toolArgs)
+}
+
+function toolDisplayName(toolData: ToolCallData): string {
+  if (isToolSkillLoad(toolData)) {
+    const name = getSkillName(toolData.toolArgs)
+    return `Load Skill: ${name}`
+  }
+  return toolData.toolName
+}
 
 // Track which tool calls are expanded
 const expandedTools = ref<Set<string>>(new Set())

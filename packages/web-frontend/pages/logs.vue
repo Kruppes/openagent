@@ -92,18 +92,25 @@
           </span>
 
           <!-- Tool badge -->
-          <Badge :class="toolBadgeClass(entry.toolName)" class="shrink-0 gap-1 font-mono text-xs">
-            <AppIcon :name="toolIcon(entry.toolName)" class="h-3 w-3" />
-            {{ entry.toolName }}
+          <Badge :class="toolBadgeClass(entryDisplayName(entry))" class="shrink-0 gap-1 font-mono text-xs">
+            <AppIcon :name="toolIcon(entryDisplayName(entry))" class="h-3 w-3" />
+            {{ entryDisplayName(entry) }}
           </Badge>
 
           <!-- Input preview as badges (hidden on small screens) -->
           <div class="hidden min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:flex">
-            <template v-for="(value, key) in parseInputParams(entry.input)" :key="key">
-              <span class="inline-flex shrink-0 items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
-                <span class="font-medium">{{ key }}</span>
-                <span class="max-w-[200px] truncate opacity-70">{{ value }}</span>
+            <template v-if="isEntrySkillLoad(entry)">
+              <span class="inline-flex shrink-0 items-center gap-1 rounded bg-violet-500/15 px-1.5 py-0.5 font-mono text-[11px] text-violet-600 dark:text-violet-400">
+                <span class="font-medium">{{ getSkillName(entry.input) }}</span>
               </span>
+            </template>
+            <template v-else>
+              <template v-for="(value, key) in parseInputParams(entry.input)" :key="key">
+                <span class="inline-flex shrink-0 items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                  <span class="font-medium">{{ key }}</span>
+                  <span class="max-w-[200px] truncate opacity-70">{{ value }}</span>
+                </span>
+              </template>
             </template>
           </div>
 
@@ -138,8 +145,8 @@
           </div>
 
           <template v-else-if="expandedDetail">
-            <!-- Input (hidden if empty) -->
-            <div v-if="hasInputData(expandedDetail.input)" class="mb-3">
+            <!-- Input (hidden if empty or skill load) -->
+            <div v-if="hasInputData(expandedDetail.input) && !isEntrySkillLoad(expandedDetail)" class="mb-3">
               <h4 class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 {{ $t('logs.input') }}
               </h4>
@@ -154,7 +161,12 @@
                 {{ $t('logs.output') }}
               </h4>
               <div class="max-h-[300px] overflow-y-auto rounded-md border border-border bg-muted/50 p-3 text-xs leading-relaxed">
-                <ToolDataDisplay :data="parseLogData(expandedDetail.output)" :is-error="expandedDetail.status === 'error'" />
+                <template v-if="isEntrySkillLoad(expandedDetail)">
+                  <pre class="whitespace-pre-wrap break-all text-foreground">{{ extractSkillContent(expandedDetail.output) ?? '' }}</pre>
+                </template>
+                <template v-else>
+                  <ToolDataDisplay :data="parseLogData(expandedDetail.output)" :is-error="expandedDetail.status === 'error'" />
+                </template>
               </div>
             </div>
 
@@ -205,6 +217,16 @@
 
 <script setup lang="ts">
 import type { LogEntry } from '~/composables/useLogs'
+
+const { isSkillLoad, getSkillName, extractSkillContent } = useSkillDetection()
+
+function isEntrySkillLoad(entry: LogEntry): boolean {
+  return isSkillLoad(entry.toolName, entry.input)
+}
+
+function entryDisplayName(entry: LogEntry): string {
+  return isEntrySkillLoad(entry) ? 'Load Skill' : entry.toolName
+}
 
 const {
   logs,
@@ -308,6 +330,8 @@ function formatDuration(ms: number | null | undefined): string {
 function toolBadgeClass(name: string): string {
   if (!name) return 'border-transparent bg-primary/15 text-primary'
   const lower = name.toLowerCase()
+  if (lower === 'load skill')
+    return 'border-transparent bg-violet-500/15 text-violet-600 dark:text-violet-400'
   if (lower === 'session_start')
     return 'border-transparent bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
   if (lower === 'session_end')
@@ -410,6 +434,7 @@ function hasInputData(input: string | null | undefined): boolean {
 function toolIcon(name: string): string {
   if (!name) return 'wrench'
   const lower = name.toLowerCase()
+  if (lower === 'load skill') return 'puzzle'
   if (lower === 'session_start') return 'sparkles'
   if (lower === 'session_end' || lower === 'session_timeout') return 'clock'
   if (lower === 'memory_consolidation') return 'brain'
