@@ -19,7 +19,7 @@
     </div>
 
     <!-- Messages area -->
-    <div ref="messagesContainer" class="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+    <div ref="messagesContainer" class="flex flex-1 flex-col gap-4 overflow-y-auto p-4" @copy="handleCopyAsMarkdown">
       <!-- Loading history -->
       <template v-if="loadingHistory">
         <div class="flex flex-col gap-3">
@@ -267,7 +267,7 @@ const { t } = useI18n()
 const { apiFetch } = useApi()
 const { user } = useAuth()
 const { userAvatarUrl, avatarFailed, userInitial, onAvatarError } = useUserAvatar()
-const { renderMarkdown } = useMarkdown()
+const { renderMarkdown, handleCopyAsMarkdown } = useMarkdown()
 
 // Track which tool calls are expanded
 const expandedTools = ref<Set<string>>(new Set())
