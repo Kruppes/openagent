@@ -10,7 +10,7 @@
     >
       <span class="shrink-0 font-medium text-muted-foreground">{{ key }}:</span>
       <span
-        class="min-w-0 break-all"
+        class="min-w-0 whitespace-pre-wrap break-all"
         :class="isError ? 'text-destructive' : 'text-foreground'"
       >{{ formatValue(value) }}</span>
     </div>
