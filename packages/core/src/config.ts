@@ -37,7 +37,11 @@ const TEMPLATES: Record<string, object> = {
       runAtHour: 3,
       lookbackDays: 3,
       providerId: '',
-    }
+    },
+    builtinTools: {
+      webSearch: { enabled: true, provider: 'duckduckgo' },
+      webFetch: { enabled: true },
+    },
   },
   'skills.json': {
     skills: [],

@@ -13,6 +13,8 @@ import type { ProviderManager } from './provider-manager.js'
 import { assembleSystemPrompt, ensureMemoryStructure } from './memory.js'
 import { loadConfig, ensureConfigTemplates } from './config.js'
 import { createMemoryTools } from './memory-tools.js'
+import { createBuiltinWebTools } from './web-tools.js'
+import type { BuiltinToolsConfig } from './web-tools.js'
 import { SessionManager } from './session-manager.js'
 import type { SessionInfo } from './session-manager.js'
 
@@ -220,12 +222,14 @@ export class AgentCore {
     // Ensure memory structure exists
     ensureMemoryStructure(options.memoryDir)
 
-    // Load language setting from config
+    // Load language and builtinTools settings from config
     let language: string | undefined
+    let builtinToolsConfig: BuiltinToolsConfig | undefined
     try {
       ensureConfigTemplates()
-      const settings = loadConfig<{ language?: string }>('settings.json')
+      const settings = loadConfig<{ language?: string; builtinTools?: BuiltinToolsConfig }>('settings.json')
       language = settings.language
+      builtinToolsConfig = settings.builtinTools
     } catch {
       // Config not available yet, use default
     }
@@ -240,6 +244,7 @@ export class AgentCore {
     const tools: AgentTool[] = [
       ...(options.tools ?? []),
       ...createMemoryTools(options.memoryDir),
+      ...createBuiltinWebTools(builtinToolsConfig),
       ...(options.yoloMode !== false ? createYoloTools() : []),
     ]
 

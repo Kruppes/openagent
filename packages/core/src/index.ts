@@ -100,6 +100,15 @@ export {
   loadSkillsDecrypted,
 } from './skill-config.js'
 export type { SkillConfig, SkillsFile } from './skill-config.js'
+export {
+  createWebSearchTool,
+  createWebFetchTool,
+  createBuiltinWebTools,
+  extractTextFromHtml,
+  searchDuckDuckGo,
+  parseDuckDuckGoLiteHtml,
+} from './web-tools.js'
+export type { WebSearchResult, WebSearchConfig, WebFetchConfig, BuiltinToolsConfig } from './web-tools.js'
 export { AgentCore } from './agent.js'
 export type { ResponseChunk, AgentCoreOptions } from './agent.js'
 export { ProviderManager } from './provider-manager.js'
