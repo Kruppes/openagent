@@ -206,6 +206,7 @@ async function loadHistory() {
     // History load failed — not critical, just start fresh
   } finally {
     loadingHistory.value = false
+    nextTick(() => scrollToBottom())
   }
 }
 
