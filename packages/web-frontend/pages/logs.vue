@@ -308,6 +308,12 @@ function formatDuration(ms: number | null | undefined): string {
 function toolBadgeClass(name: string): string {
   if (!name) return 'border-transparent bg-primary/15 text-primary'
   const lower = name.toLowerCase()
+  if (lower === 'session_start')
+    return 'border-transparent bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+  if (lower === 'session_end')
+    return 'border-transparent bg-sky-500/15 text-sky-600 dark:text-sky-400'
+  if (lower === 'session_timeout')
+    return 'border-transparent bg-amber-500/15 text-amber-600 dark:text-amber-400'
   if (lower.includes('bash') || lower.includes('exec') || lower.includes('command'))
     return 'border-transparent bg-warning/15 text-warning'
   if (lower.includes('file') || lower.includes('read') || lower.includes('write') || lower.includes('edit'))
@@ -399,9 +405,11 @@ function hasInputData(input: string | null | undefined): boolean {
   }
 }
 
-function toolIcon(name: string): 'activity' | 'file' | 'brain' | 'wrench' {
+function toolIcon(name: string): string {
   if (!name) return 'wrench'
   const lower = name.toLowerCase()
+  if (lower === 'session_start') return 'sparkles'
+  if (lower === 'session_end' || lower === 'session_timeout') return 'clock'
   if (lower.includes('bash') || lower.includes('exec') || lower.includes('command')) return 'activity'
   if (lower.includes('file') || lower.includes('read') || lower.includes('write') || lower.includes('edit')) return 'file'
   if (lower.includes('llm') || lower.includes('chat') || lower.includes('generate')) return 'brain'
