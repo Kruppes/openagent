@@ -71,7 +71,7 @@
         >
           <!-- Avatar -->
           <div
-            class="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-muted-foreground overflow-hidden"
+            class="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-muted-foreground"
           >
             <!-- User avatar -->
             <template v-if="msg.role === 'user'">
@@ -79,7 +79,7 @@
                 v-if="userAvatarUrl && !avatarFailed"
                 :src="userAvatarUrl"
                 :alt="user?.username"
-                class="h-8 w-8 object-cover"
+                class="h-8 w-8 rounded-full object-cover"
                 @error="onAvatarError"
               >
               <span
