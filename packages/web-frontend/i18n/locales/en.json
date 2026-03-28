@@ -44,12 +44,17 @@
     "stop": "Stop",
     "noMessages": "No messages yet. Start a conversation!",
     "typing": "Typing...",
-    "newSessionDivider": "New Session"
+    "newSessionDivider": "New Session",
+    "statusConnected": "Chat connected",
+    "statusConnecting": "Connecting",
+    "statusDisconnected": "Chat disconnected"
   },
   "status": {
     "online": "Online",
     "offline": "Offline",
-    "connecting": "Connecting"
+    "connecting": "Connecting",
+    "healthy": "Healthy ({provider})",
+    "degraded": "Degraded ({provider})"
   },
   "theme": {
     "switchToDark": "Switch to dark mode",
@@ -120,7 +125,10 @@
     "costInput": "In",
     "costOutput": "Out",
     "costFree": "Free",
-    "costNA": "—"
+    "costNA": "—",
+    "degradedThreshold": "Degraded Threshold",
+    "degradedThresholdPlaceholder": "5000",
+    "degradedThresholdHint": "Latency above this value (in ms) marks the provider as degraded in health checks."
   },
   "logs": {
     "title": "Activity Logs",

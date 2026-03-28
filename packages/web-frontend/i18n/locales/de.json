@@ -44,12 +44,17 @@
     "stop": "Stopp",
     "noMessages": "Noch keine Nachrichten. Starten Sie eine Unterhaltung!",
     "typing": "Schreibt...",
-    "newSessionDivider": "Neue Sitzung"
+    "newSessionDivider": "Neue Sitzung",
+    "statusConnected": "Chat verbunden",
+    "statusConnecting": "Verbinde",
+    "statusDisconnected": "Chat getrennt"
   },
   "status": {
     "online": "Online",
     "offline": "Offline",
-    "connecting": "Verbindung"
+    "connecting": "Verbindung",
+    "healthy": "Healthy ({provider})",
+    "degraded": "Degraded ({provider})"
   },
   "theme": {
     "switchToDark": "Zu Dunkelmodus wechseln",
@@ -120,7 +125,10 @@
     "costInput": "In",
     "costOutput": "Out",
     "costFree": "Kostenlos",
-    "costNA": "—"
+    "costNA": "—",
+    "degradedThreshold": "Degraded-Schwellenwert",
+    "degradedThresholdPlaceholder": "5000",
+    "degradedThresholdHint": "Latenz über diesem Wert (in ms) kennzeichnet den Anbieter im Health-Check als degraded."
   },
   "logs": {
     "title": "Aktivitätsprotokolle",
