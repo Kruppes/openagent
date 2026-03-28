@@ -106,10 +106,15 @@
             {{ entry.toolName }}
           </Badge>
 
-          <!-- Input preview (hidden on small screens) -->
-          <span class="hidden min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground sm:block">
-            {{ entry.input || '—' }}
-          </span>
+          <!-- Input preview as badges (hidden on small screens) -->
+          <div class="hidden min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:flex">
+            <template v-for="(value, key) in parseInputParams(entry.input)" :key="key">
+              <span class="inline-flex shrink-0 items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                <span class="font-medium">{{ key }}</span>
+                <span class="max-w-[200px] truncate opacity-70">{{ value }}</span>
+              </span>
+            </template>
+          </div>
 
           <!-- Duration -->
           <span class="w-14 shrink-0 text-right font-mono text-xs tabular-nums text-muted-foreground">
@@ -142,8 +147,8 @@
           </div>
 
           <template v-else-if="expandedDetail">
-            <!-- Input -->
-            <div class="mb-3">
+            <!-- Input (hidden if empty) -->
+            <div v-if="hasInputData(expandedDetail.input)" class="mb-3">
               <h4 class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 {{ $t('logs.input') }}
               </h4>
@@ -327,6 +332,35 @@ function parseLogData(data: string | null | undefined): unknown {
     return JSON.parse(data)
   } catch {
     return data
+  }
+}
+
+function parseInputParams(input: string | null | undefined): Record<string, string> {
+  if (!input) return {}
+  try {
+    const parsed = JSON.parse(input)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const keys = Object.keys(parsed)
+    if (keys.length === 0) return {}
+    const result: Record<string, string> = {}
+    for (const key of keys) {
+      const val = parsed[key]
+      result[key] = val === null ? 'null' : typeof val === 'object' ? JSON.stringify(val) : String(val)
+    }
+    return result
+  } catch {
+    return {}
+  }
+}
+
+function hasInputData(input: string | null | undefined): boolean {
+  if (!input) return false
+  try {
+    const parsed = JSON.parse(input)
+    if (!parsed || typeof parsed !== 'object') return !!input
+    return Object.keys(parsed).length > 0
+  } catch {
+    return !!input.trim()
   }
 }
 
