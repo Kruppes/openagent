@@ -241,6 +241,7 @@ export interface ProviderModelConfig {
 export interface ProvidersFile {
   providers: ProviderConfig[]
   activeProvider?: string
+  fallbackProvider?: string
   _comment?: string
 }
 
@@ -586,6 +587,42 @@ export function updateProviderStatus(id: string, status: 'connected' | 'error' |
   const provider = file.providers.find(p => p.id === id)
   if (!provider) return
   provider.status = status
+  saveProviders(file)
+}
+
+/**
+ * Get the fallback provider configuration (decrypted), or null if not configured.
+ */
+export function getFallbackProvider(): ProviderConfig | null {
+  const file = loadProvidersDecrypted()
+  if (!file.fallbackProvider) return null
+
+  const found = file.providers.find(p => p.id === file.fallbackProvider)
+  return found ?? null
+}
+
+/**
+ * Set the fallback provider by ID. Validates that the ID exists and is not the active provider.
+ */
+export function setFallbackProvider(id: string): void {
+  const file = loadProviders()
+  const provider = file.providers.find(p => p.id === id)
+  if (!provider) {
+    throw new Error(`Provider not found: ${id}`)
+  }
+  if (file.activeProvider === id) {
+    throw new Error('Fallback provider cannot be the same as the active provider')
+  }
+  file.fallbackProvider = id
+  saveProviders(file)
+}
+
+/**
+ * Clear the fallback provider setting.
+ */
+export function clearFallbackProvider(): void {
+  const file = loadProviders()
+  delete file.fallbackProvider
   saveProviders(file)
 }
 

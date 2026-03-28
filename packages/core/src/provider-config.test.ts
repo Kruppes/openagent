@@ -4,6 +4,9 @@ import {
   loadProvidersDecrypted,
   loadProvidersMasked,
   getActiveProvider,
+  getFallbackProvider,
+  setFallbackProvider,
+  clearFallbackProvider,
   getAvailableModels,
   buildModel,
   estimateCost,
@@ -403,6 +406,60 @@ describe('provider CRUD', () => {
     expect(masked.providers[0].apiKey).toBe('')
     expect(masked.providers[0].apiKeyMasked).toContain('••••••••')
     expect(masked.providers[0].apiKeyMasked).not.toContain('sk-test1234567890')
+  })
+
+  it('setFallbackProvider sets the fallback provider', () => {
+    setupEmpty()
+    const p1 = addProvider({ name: 'primary', providerType: 'openai', apiKey: 'sk-1', defaultModel: 'gpt-4o' })
+    const p2 = addProvider({ name: 'fallback', providerType: 'anthropic', apiKey: 'sk-2', defaultModel: 'claude-3-5-sonnet-20241022' })
+
+    setFallbackProvider(p2.id)
+    const file = loadProviders()
+    expect(file.fallbackProvider).toBe(p2.id)
+  })
+
+  it('getFallbackProvider returns the decrypted fallback provider config', () => {
+    setupEmpty()
+    const p1 = addProvider({ name: 'primary', providerType: 'openai', apiKey: 'sk-1', defaultModel: 'gpt-4o' })
+    const p2 = addProvider({ name: 'fallback', providerType: 'anthropic', apiKey: 'sk-fb-key', defaultModel: 'claude-3-5-sonnet-20241022' })
+
+    setFallbackProvider(p2.id)
+    const fb = getFallbackProvider()
+    expect(fb).not.toBeNull()
+    expect(fb!.id).toBe(p2.id)
+    expect(fb!.name).toBe('fallback')
+    expect(fb!.apiKey).toBe('sk-fb-key') // decrypted
+  })
+
+  it('getFallbackProvider returns null when no fallback set', () => {
+    setupEmpty()
+    addProvider({ name: 'primary', providerType: 'openai', apiKey: 'sk-1', defaultModel: 'gpt-4o' })
+    expect(getFallbackProvider()).toBeNull()
+  })
+
+  it('setFallbackProvider rejects non-existent provider', () => {
+    setupEmpty()
+    addProvider({ name: 'primary', providerType: 'openai', apiKey: 'sk-1', defaultModel: 'gpt-4o' })
+    expect(() => setFallbackProvider('nonexistent')).toThrow('not found')
+  })
+
+  it('setFallbackProvider rejects active provider', () => {
+    setupEmpty()
+    const p1 = addProvider({ name: 'primary', providerType: 'openai', apiKey: 'sk-1', defaultModel: 'gpt-4o' })
+    expect(() => setFallbackProvider(p1.id)).toThrow('cannot be the same as the active provider')
+  })
+
+  it('clearFallbackProvider removes the fallback provider setting', () => {
+    setupEmpty()
+    const p1 = addProvider({ name: 'primary', providerType: 'openai', apiKey: 'sk-1', defaultModel: 'gpt-4o' })
+    const p2 = addProvider({ name: 'fallback', providerType: 'anthropic', apiKey: 'sk-2', defaultModel: 'claude-3-5-sonnet-20241022' })
+
+    setFallbackProvider(p2.id)
+    expect(loadProviders().fallbackProvider).toBe(p2.id)
+
+    clearFallbackProvider()
+    expect(loadProviders().fallbackProvider).toBeUndefined()
+    expect(getFallbackProvider()).toBeNull()
   })
 
   it('PROVIDER_TYPE_PRESETS has all required types', () => {
