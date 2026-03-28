@@ -345,7 +345,8 @@ function parseInputParams(input: string | null | undefined): Record<string, stri
     const result: Record<string, string> = {}
     for (const key of keys) {
       const val = parsed[key]
-      result[key] = val === null ? 'null' : typeof val === 'object' ? JSON.stringify(val) : String(val)
+      const str = val === null ? 'null' : typeof val === 'object' ? JSON.stringify(val) : String(val)
+      result[key] = str.length > 80 ? `${str.length} chars` : str
     }
     return result
   } catch {
