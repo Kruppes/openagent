@@ -290,9 +290,13 @@ export class AgentCore {
     let builtinToolsConfig: BuiltinToolsConfig | undefined
     try {
       ensureConfigTemplates()
-      const settings = loadConfig<{ language?: string; builtinTools?: BuiltinToolsConfig }>('settings.json')
+      const settings = loadConfig<{ language?: string; builtinTools?: BuiltinToolsConfig; braveSearchApiKey?: string; searxngUrl?: string }>('settings.json')
       language = settings.language
-      builtinToolsConfig = settings.builtinTools
+      builtinToolsConfig = {
+        ...settings.builtinTools,
+        braveSearchApiKey: settings.braveSearchApiKey ?? settings.builtinTools?.braveSearchApiKey,
+        searxngUrl: settings.searxngUrl ?? settings.builtinTools?.searxngUrl,
+      }
     } catch {
       // Config not available yet, use default
     }
