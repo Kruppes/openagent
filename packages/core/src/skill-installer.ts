@@ -1,5 +1,7 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
+import AdmZip from 'adm-zip'
 import { parseSkillMd, type ParsedSkill } from './skill-parser.js'
 
 /**
@@ -192,5 +194,109 @@ export async function installSkill(
     installPath,
     parsed,
     filesDownloaded,
+  }
+}
+
+/**
+ * Result of a skill upload (zip/skill file)
+ */
+export interface SkillUploadResult {
+  installPath: string
+  parsed: ParsedSkill
+  filesExtracted: number
+  owner: string
+  name: string
+}
+
+/**
+ * Count files recursively in a directory
+ */
+function countFiles(dir: string): number {
+  let count = 0
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isFile()) count++
+    else if (entry.isDirectory()) count += countFiles(path.join(dir, entry.name))
+  }
+  return count
+}
+
+/**
+ * Install a skill from a .zip or .skill file buffer.
+ *
+ * The zip may contain SKILL.md at the root or inside a single subdirectory.
+ * The skill is installed under DATA_DIR/skills/uploaded/<skill-name>.
+ */
+export function installSkillFromZip(
+  fileBuffer: Buffer,
+  originalFilename?: string,
+): SkillUploadResult {
+  const zip = new AdmZip(fileBuffer)
+  const zipEntries = zip.getEntries()
+
+  if (zipEntries.length === 0) {
+    throw new Error('The uploaded archive is empty')
+  }
+
+  // Extract to a temp directory first
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-upload-'))
+
+  try {
+    zip.extractAllTo(tmpDir, true)
+
+    // Find SKILL.md — either at root or one level deep
+    let skillRoot = tmpDir
+    const rootSkillMd = path.join(tmpDir, 'SKILL.md')
+
+    if (!fs.existsSync(rootSkillMd)) {
+      // Check if there's a single subdirectory containing SKILL.md
+      const entries = fs.readdirSync(tmpDir, { withFileTypes: true })
+      const dirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('__MACOSX'))
+      const files = entries.filter(e => e.isFile())
+
+      if (dirs.length === 1 && files.length === 0) {
+        const subDir = path.join(tmpDir, dirs[0].name)
+        if (fs.existsSync(path.join(subDir, 'SKILL.md'))) {
+          skillRoot = subDir
+        }
+      }
+
+      if (!fs.existsSync(path.join(skillRoot, 'SKILL.md'))) {
+        throw new Error('Archive does not contain a SKILL.md file (checked root and single subdirectory)')
+      }
+    }
+
+    // Parse SKILL.md
+    const skillMdContent = fs.readFileSync(path.join(skillRoot, 'SKILL.md'), 'utf-8')
+    const parsed = parseSkillMd(skillMdContent)
+
+    // Determine owner and name
+    const owner = 'uploaded'
+    const name = parsed.name || (originalFilename
+      ? path.basename(originalFilename, path.extname(originalFilename)).toLowerCase().replace(/[^a-z0-9-]/g, '-')
+      : 'unknown-skill')
+
+    // Move to final install path
+    const installPath = path.join(getSkillsDir(), owner, name)
+
+    // Clean existing installation if present
+    if (fs.existsSync(installPath)) {
+      fs.rmSync(installPath, { recursive: true, force: true })
+    }
+
+    fs.mkdirSync(path.dirname(installPath), { recursive: true })
+    fs.cpSync(skillRoot, installPath, { recursive: true })
+
+    const filesExtracted = countFiles(installPath)
+
+    return {
+      installPath,
+      parsed,
+      filesExtracted,
+      owner,
+      name,
+    }
+  } finally {
+    // Clean up temp directory
+    fs.rmSync(tmpDir, { recursive: true, force: true })
   }
 }

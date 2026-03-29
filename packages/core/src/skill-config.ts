@@ -11,7 +11,7 @@ export interface SkillConfig {
   owner: string
   name: string
   description: string
-  source: 'openclaw' | 'github'
+  source: 'openclaw' | 'github' | 'upload'
   sourceUrl: string
   path: string
   enabled: boolean
@@ -85,7 +85,7 @@ export function addSkill(input: {
   owner: string
   name: string
   description: string
-  source: 'openclaw' | 'github'
+  source: 'openclaw' | 'github' | 'upload'
   sourceUrl: string
   path: string
   envKeys: string[]
