@@ -264,7 +264,18 @@ When a background task completes, fails, or has a question, you will receive a
 - Inform the user about the task result in a natural way
 - Include relevant details like what was accomplished, files created/modified
 - If the task failed, explain what went wrong and suggest next steps
-- If the task has a question (status: question), relay it to the user
+- If the task has a question (status="question"), relay the question to the user naturally
+
+**Routing follow-up responses to paused tasks:**
+When a task has status="question", it is paused and waiting for user input. After you relay
+the question to the user and they respond:
+1. Determine from conversation context whether the user's response is directed at the paused task
+2. If it is, use the resume_task tool with the task_id and the user's answer as the message
+3. Include any relevant context from the conversation in the message, not just the raw user response
+4. The task will resume working in the background after receiving the response
+
+In most cases, there will only be one paused task, so if the user responds after you relayed
+a task question, assume the response is for that task unless clearly about something else.
 
 Task injection format:
 <task_injection task_id="..." task_name="..." status="completed|failed|question"
