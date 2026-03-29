@@ -22,8 +22,12 @@
   },
   "common": {
     "save": "Save",
+    "saving": "Saving…",
     "cancel": "Cancel",
     "confirm": "Confirm",
+    "create": "Create",
+    "edit": "Edit",
+    "delete": "Delete",
     "saveFailed": "Could not save changes.",
     "deleteFailed": "Could not delete item.",
     "language": "Language"
@@ -534,6 +538,41 @@
       "user": "User",
       "agent": "Agent",
       "cronjob": "Cronjob"
+    },
+    "tabs": {
+      "tasks": "Tasks",
+      "scheduled": "Scheduled Tasks"
+    }
+  },
+  "cronjobs": {
+    "create": "New Cronjob",
+    "createTitle": "Create Cronjob",
+    "createDescription": "Set up a recurring scheduled task with a cron expression.",
+    "editTitle": "Edit Cronjob",
+    "editDescription": "Update the cronjob configuration.",
+    "emptyTitle": "No scheduled tasks",
+    "emptyDescription": "Create a cronjob to automate recurring tasks like daily summaries or periodic checks.",
+    "deleteConfirmTitle": "Delete cronjob?",
+    "deleteConfirmDescription": "This will permanently remove the scheduled task. Any running instances will not be affected.",
+    "runNow": "Run Now",
+    "triggerSuccess": "Cronjob \"{name}\" triggered successfully.",
+    "defaultProvider": "Default",
+    "columns": {
+      "name": "Name",
+      "schedule": "Schedule",
+      "provider": "Provider",
+      "enabled": "Enabled",
+      "lastRun": "Last Run"
+    },
+    "form": {
+      "name": "Name",
+      "namePlaceholder": "e.g., Daily News Summary",
+      "prompt": "Prompt",
+      "promptPlaceholder": "Describe what this cronjob should do on each run...",
+      "schedule": "Schedule (Cron Expression)",
+      "scheduleHelp": "Format: minute hour day-of-month month day-of-week. Examples: \"0 9 * * *\" (daily at 9:00), \"*/15 * * * *\" (every 15 min), \"30 14 * * 1-5\" (weekdays at 14:30)",
+      "provider": "Provider",
+      "defaultProvider": "Default provider"
     }
   }
 }

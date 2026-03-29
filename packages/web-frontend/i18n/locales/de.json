@@ -22,8 +22,12 @@
   },
   "common": {
     "save": "Speichern",
+    "saving": "Speichern…",
     "cancel": "Abbrechen",
     "confirm": "Bestätigen",
+    "create": "Erstellen",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
     "saveFailed": "Änderungen konnten nicht gespeichert werden.",
     "deleteFailed": "Element konnte nicht gelöscht werden.",
     "language": "Sprache"
@@ -532,6 +536,41 @@
       "user": "Benutzer",
       "agent": "Agent",
       "cronjob": "Cronjob"
+    },
+    "tabs": {
+      "tasks": "Aufgaben",
+      "scheduled": "Geplante Aufgaben"
+    }
+  },
+  "cronjobs": {
+    "create": "Neuer Cronjob",
+    "createTitle": "Cronjob erstellen",
+    "createDescription": "Richten Sie eine wiederkehrende geplante Aufgabe mit einem Cron-Ausdruck ein.",
+    "editTitle": "Cronjob bearbeiten",
+    "editDescription": "Aktualisieren Sie die Cronjob-Konfiguration.",
+    "emptyTitle": "Keine geplanten Aufgaben",
+    "emptyDescription": "Erstellen Sie einen Cronjob, um wiederkehrende Aufgaben wie tägliche Zusammenfassungen oder regelmäßige Prüfungen zu automatisieren.",
+    "deleteConfirmTitle": "Cronjob löschen?",
+    "deleteConfirmDescription": "Die geplante Aufgabe wird dauerhaft entfernt. Laufende Instanzen werden nicht beeinflusst.",
+    "runNow": "Jetzt ausführen",
+    "triggerSuccess": "Cronjob \"{name}\" erfolgreich ausgelöst.",
+    "defaultProvider": "Standard",
+    "columns": {
+      "name": "Name",
+      "schedule": "Zeitplan",
+      "provider": "Anbieter",
+      "enabled": "Aktiviert",
+      "lastRun": "Letzter Lauf"
+    },
+    "form": {
+      "name": "Name",
+      "namePlaceholder": "z.B. Tägliche Nachrichtenzusammenfassung",
+      "prompt": "Prompt",
+      "promptPlaceholder": "Beschreiben Sie, was dieser Cronjob bei jedem Lauf tun soll...",
+      "schedule": "Zeitplan (Cron-Ausdruck)",
+      "scheduleHelp": "Format: Minute Stunde Tag-im-Monat Monat Wochentag. Beispiele: \"0 9 * * *\" (täglich um 9:00), \"*/15 * * * *\" (alle 15 Min), \"30 14 * * 1-5\" (wochentags um 14:30)",
+      "provider": "Anbieter",
+      "defaultProvider": "Standardanbieter"
     }
   }
 }
