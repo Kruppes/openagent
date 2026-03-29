@@ -77,6 +77,7 @@ export function createSettingsRouter(options: SettingsRouterOptions = {}): Route
       const telegram = loadConfig<TelegramData>('telegram.json')
 
       const consolidation = (settings as unknown as Record<string, unknown>).memoryConsolidation as Partial<MemoryConsolidationSettingsData> | undefined
+      const tasks = (settings as unknown as Record<string, unknown>).tasks as { defaultProvider?: string; maxDurationMinutes?: number; telegramDelivery?: string } | undefined
 
       const defaultNotifications: HeartbeatNotificationToggles = {
         healthyToDegraded: false,
@@ -109,6 +110,11 @@ export function createSettingsRouter(options: SettingsRouterOptions = {}): Route
           lookbackDays: consolidation?.lookbackDays ?? 3,
           providerId: consolidation?.providerId ?? '',
         },
+        tasks: {
+          defaultProvider: tasks?.defaultProvider ?? '',
+          maxDurationMinutes: tasks?.maxDurationMinutes ?? 60,
+          telegramDelivery: tasks?.telegramDelivery ?? 'auto',
+        },
       })
     } catch (err) {
       res.status(500).json({ error: `Failed to read settings: ${(err as Error).message}` })
@@ -133,6 +139,7 @@ export function createSettingsRouter(options: SettingsRouterOptions = {}): Route
         notifications?: Partial<HeartbeatNotificationToggles>
       }
       memoryConsolidation: Partial<MemoryConsolidationSettingsData>
+      tasks: Partial<{ defaultProvider: string; maxDurationMinutes: number; telegramDelivery: string }>
     }>
 
     try {
@@ -279,6 +286,35 @@ export function createSettingsRouter(options: SettingsRouterOptions = {}): Route
         consolidationChanged = true
       }
 
+      // Handle tasks settings
+      if (body.tasks !== undefined) {
+        const existingTasks = (settingsRaw.tasks ?? {}) as Record<string, unknown>
+
+        if (body.tasks.defaultProvider !== undefined) {
+          if (typeof body.tasks.defaultProvider !== 'string') {
+            res.status(400).json({ error: 'tasks.defaultProvider must be a string' })
+            return
+          }
+          existingTasks.defaultProvider = body.tasks.defaultProvider
+        }
+        if (body.tasks.maxDurationMinutes !== undefined) {
+          if (typeof body.tasks.maxDurationMinutes !== 'number' || !Number.isFinite(body.tasks.maxDurationMinutes) || body.tasks.maxDurationMinutes < 1) {
+            res.status(400).json({ error: 'tasks.maxDurationMinutes must be a positive number' })
+            return
+          }
+          existingTasks.maxDurationMinutes = body.tasks.maxDurationMinutes
+        }
+        if (body.tasks.telegramDelivery !== undefined) {
+          if (!['auto', 'always'].includes(body.tasks.telegramDelivery)) {
+            res.status(400).json({ error: 'tasks.telegramDelivery must be "auto" or "always"' })
+            return
+          }
+          existingTasks.telegramDelivery = body.tasks.telegramDelivery
+        }
+
+        settingsRaw.tasks = existingTasks
+      }
+
       if (body.telegramEnabled !== undefined) {
         telegram.enabled = !!body.telegramEnabled
       }
@@ -319,6 +355,7 @@ export function createSettingsRouter(options: SettingsRouterOptions = {}): Route
         options.onTelegramSettingsChanged?.()
       }
 
+      const tasksOut = (settingsRaw.tasks ?? {}) as Record<string, unknown>
       const consolidationOut = (settingsRaw.memoryConsolidation ?? {}) as Record<string, unknown>
 
       const defaultNotifications: HeartbeatNotificationToggles = {
@@ -354,6 +391,11 @@ export function createSettingsRouter(options: SettingsRouterOptions = {}): Route
           runAtHour: consolidationOut.runAtHour ?? 3,
           lookbackDays: consolidationOut.lookbackDays ?? 3,
           providerId: consolidationOut.providerId ?? '',
+        },
+        tasks: {
+          defaultProvider: tasksOut.defaultProvider ?? '',
+          maxDurationMinutes: tasksOut.maxDurationMinutes ?? 60,
+          telegramDelivery: tasksOut.telegramDelivery ?? 'auto',
         },
       })
     } catch (err) {
