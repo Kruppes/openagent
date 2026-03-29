@@ -419,7 +419,7 @@
     "deleteSuccess": "Skill erfolgreich gelöscht.",
     "toggleEnabled": "Aktivierung umschalten",
     "installTitle": "Skill installieren",
-    "installDescription": "Installieren Sie einen Skill über eine OpenClaw-Kurzform oder eine GitHub-URL.",
+    "installDescription": "Installieren Sie einen Skill über eine URL oder laden Sie eine .zip/.skill-Datei hoch.",
     "installSource": "Quelle",
     "installPlaceholder": "owner/name oder GitHub-URL",
     "installExamples": "Beispiele:",
@@ -443,7 +443,13 @@
     "builtinSaved": "Einstellungen für integrierte Tools gespeichert.",
     "addEnvVar": "Umgebungsvariable hinzufügen",
     "envKeyPlaceholder": "VARIABLEN_NAME",
-    "removeEnvVar": "Variable entfernen"
+    "removeEnvVar": "Variable entfernen",
+    "installModeUrl": "Von URL",
+    "installModeFile": "Datei hochladen",
+    "uploadFile": "Skill-Datei",
+    "uploadDropzone": "Klicken, um eine Datei auszuwählen",
+    "uploadHint": ".zip- und .skill-Dateien werden akzeptiert (max. 50 MB)",
+    "removeFile": "Datei entfernen"
   },
   "usage": {
     "kicker": "Verbrauchsanalysen",

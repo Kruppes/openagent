@@ -92,6 +92,27 @@ export function useSkills() {
     }
   }
 
+  async function uploadSkill(file: File): Promise<Skill | null> {
+    installing.value = true
+    error.value = null
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const data = await apiFetch<SkillMutationResponse>('/api/skills/upload', {
+        method: 'POST',
+        body: formData,
+        // Do NOT set Content-Type — browser sets it with boundary for multipart
+      })
+      await fetchSkills()
+      return data.skill
+    } catch (err) {
+      error.value = (err as Error).message
+      return null
+    } finally {
+      installing.value = false
+    }
+  }
+
   async function updateSkill(id: string, input: {
     enabled?: boolean
     envValues?: Record<string, string>
@@ -161,6 +182,7 @@ export function useSkills() {
     fetchSkills,
     fetchBuiltinTools,
     installSkill,
+    uploadSkill,
     updateSkill,
     deleteSkill,
     updateBuiltinTools,
