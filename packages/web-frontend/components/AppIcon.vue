@@ -46,6 +46,7 @@ import {
   Square,
   Sun,
   Trash2,
+  Upload,
   User,
   Users,
   Wrench,
@@ -94,6 +95,7 @@ const iconMap = {
   warning: CircleX,
   wrench: Wrench,
   trash: Trash2,
+  upload: Upload,
 } as const
 
 const props = withDefaults(defineProps<{

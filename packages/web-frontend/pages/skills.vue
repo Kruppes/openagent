@@ -236,7 +236,16 @@
       </DialogHeader>
 
       <div class="space-y-4">
-        <div class="space-y-2">
+        <!-- Mode tabs -->
+        <Tabs v-model="installMode" class="w-full">
+          <TabsList class="w-full">
+            <TabsTrigger value="url" class="flex-1">{{ $t('skills.installModeUrl') }}</TabsTrigger>
+            <TabsTrigger value="file" class="flex-1">{{ $t('skills.installModeFile') }}</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        <!-- URL mode -->
+        <div v-if="installMode === 'url'" class="space-y-2">
           <Label for="skill-source">{{ $t('skills.installSource') }}</Label>
           <Input
             id="skill-source"
@@ -254,6 +263,50 @@
           </div>
         </div>
 
+        <!-- File upload mode -->
+        <div v-if="installMode === 'file'" class="space-y-2">
+          <Label>{{ $t('skills.uploadFile') }}</Label>
+          <input
+            ref="fileInputRef"
+            type="file"
+            accept=".zip,.skill"
+            class="hidden"
+            :disabled="installing"
+            @change="handleFileSelect"
+          />
+
+          <!-- Drop zone / file display -->
+          <div
+            v-if="!selectedFile"
+            class="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-muted-foreground/25 p-8 text-center transition-colors hover:border-muted-foreground/50 hover:bg-muted/50"
+            @click="triggerFileInput"
+          >
+            <AppIcon name="upload" class="h-8 w-8 text-muted-foreground/50" />
+            <div>
+              <p class="text-sm font-medium text-foreground">{{ $t('skills.uploadDropzone') }}</p>
+              <p class="mt-0.5 text-xs text-muted-foreground">{{ $t('skills.uploadHint') }}</p>
+            </div>
+          </div>
+
+          <!-- Selected file -->
+          <div v-else class="flex items-center gap-3 rounded-lg border bg-muted/50 p-3">
+            <AppIcon name="file" class="h-5 w-5 shrink-0 text-muted-foreground" />
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-sm font-medium">{{ selectedFile.name }}</p>
+              <p class="text-xs text-muted-foreground">{{ formatFileSize(selectedFile.size) }}</p>
+            </div>
+            <button
+              type="button"
+              class="shrink-0 text-muted-foreground hover:text-destructive transition-colors"
+              :aria-label="$t('skills.removeFile')"
+              :disabled="installing"
+              @click="removeSelectedFile"
+            >
+              <AppIcon name="close" class="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
         <!-- Install error -->
         <Alert v-if="installError" variant="destructive">
           <AlertDescription>{{ installError }}</AlertDescription>
@@ -264,7 +317,10 @@
         <Button variant="outline" :disabled="installing" @click="closeInstallDialog">
           {{ $t('common.cancel') }}
         </Button>
-        <Button :disabled="!installSource.trim() || installing" @click="handleInstall">
+        <Button
+          :disabled="(installMode === 'url' && !installSource.trim()) || (installMode === 'file' && !selectedFile) || installing"
+          @click="handleInstall"
+        >
           <span
             v-if="installing"
             class="mr-1 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
@@ -378,6 +434,7 @@ const {
   fetchSkills,
   fetchBuiltinTools,
   installSkill,
+  uploadSkill,
   updateSkill,
   deleteSkill,
   updateBuiltinTools,
@@ -392,6 +449,9 @@ const builtinLoading = ref(false)
 const showInstallDialog = ref(false)
 const installSource = ref('')
 const installError = ref<string | null>(null)
+const installMode = ref<'url' | 'file'>('url')
+const selectedFile = ref<File | null>(null)
+const fileInputRef = ref<HTMLInputElement | null>(null)
 
 // Settings dialog
 const settingsSkill = ref<Skill | null>(null)
@@ -448,12 +508,28 @@ function closeInstallDialog() {
   showInstallDialog.value = false
   installSource.value = ''
   installError.value = null
+  installMode.value = 'url'
+  selectedFile.value = null
 }
 
 async function handleInstall() {
-  if (!installSource.value.trim()) return
   installError.value = null
 
+  if (installMode.value === 'file') {
+    if (!selectedFile.value) return
+    const result = await uploadSkill(selectedFile.value)
+    if (result) {
+      closeInstallDialog()
+      successMessage.value = t('skills.installSuccess')
+      autoHideSuccess()
+    } else {
+      installError.value = error.value
+      clearError()
+    }
+    return
+  }
+
+  if (!installSource.value.trim()) return
   const result = await installSkill(installSource.value.trim())
   if (result) {
     closeInstallDialog()
@@ -463,6 +539,22 @@ async function handleInstall() {
     installError.value = error.value
     clearError()
   }
+}
+
+function handleFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement
+  if (input.files && input.files.length > 0) {
+    selectedFile.value = input.files[0]
+  }
+}
+
+function triggerFileInput() {
+  fileInputRef.value?.click()
+}
+
+function removeSelectedFile() {
+  selectedFile.value = null
+  if (fileInputRef.value) fileInputRef.value.value = ''
 }
 
 // Toggle skill enabled/disabled
@@ -612,6 +704,12 @@ async function handleToggleWebFetch() {
 }
 
 const { t } = useI18n()
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
 function autoHideSuccess() {
   setTimeout(() => {
