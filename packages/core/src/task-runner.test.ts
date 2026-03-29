@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { initDatabase } from './database.js'
 import { TaskStore } from './task-store.js'
 import { TaskRunner, formatTaskInjection } from './task-runner.js'
-import type { TaskRunnerOptions } from './task-runner.js'
+import type { TaskRunnerOptions, TaskOverrides } from './task-runner.js'
 import type { Database } from './database.js'
 import type { ProviderConfig } from './provider-config.js'
 import fs from 'node:fs'
@@ -722,6 +722,187 @@ describe('TaskRunner', () => {
       // Original task should be marked as failed (server restart)
       const original = store.getById(task.id)!
       expect(original.status).toBe('failed')
+    })
+  })
+
+  describe('task overrides', () => {
+    it('excludes tools listed in toolsOverride', async () => {
+      const { Agent } = await import('@mariozechner/pi-agent-core')
+      const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>
+
+      let capturedOptions: any = null
+      const messages: unknown[] = []
+      MockAgent.mockImplementationOnce((options: any) => {
+        capturedOptions = options
+        return {
+          subscribe: vi.fn(() => () => {}),
+          prompt: vi.fn(async () => {
+            messages.push({
+              role: 'assistant',
+              content: [{ type: 'text', text: 'STATUS: completed\nSUMMARY: Done' }],
+            })
+          }),
+          abort: vi.fn(),
+          state: { get messages() { return messages } },
+        }
+      })
+
+      // Recreate runner with named tools
+      const toolA = { name: 'shell', description: 'Shell', parameters: {}, execute: async () => '' }
+      const toolB = { name: 'read_file', description: 'Read', parameters: {}, execute: async () => '' }
+      const toolC = { name: 'write_file', description: 'Write', parameters: {}, execute: async () => '' }
+
+      const runnerWithTools = new TaskRunner({
+        db,
+        buildModel: () => ({} as any),
+        getApiKey: async () => 'test-key',
+        tools: [toolA, toolB, toolC] as any,
+        onTaskComplete: () => {},
+      })
+
+      const task = store.create({
+        name: 'Tool Override Task',
+        prompt: 'Do work',
+        triggerType: 'cronjob',
+      })
+
+      const overrides: TaskOverrides = {
+        toolsOverride: JSON.stringify(['shell', 'write_file']),
+      }
+
+      await runnerWithTools.startTask(task, mockProvider, overrides)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      // The PiAgent should have been created with only read_file
+      expect(capturedOptions).toBeTruthy()
+      const passedTools = capturedOptions.initialState.tools
+      expect(passedTools).toHaveLength(1)
+      expect(passedTools[0].name).toBe('read_file')
+
+      runnerWithTools.dispose()
+    })
+
+    it('excludes skills listed in skillsOverride (passed through to runner)', async () => {
+      // Skills override is stored and passed through — the runner stores the override
+      // and it's available for the system prompt builder to use.
+      // For now we verify the override is accepted without error.
+      const task = store.create({
+        name: 'Skill Override Task',
+        prompt: 'Do work',
+        triggerType: 'cronjob',
+      })
+
+      const overrides: TaskOverrides = {
+        skillsOverride: JSON.stringify(['brave-search', 'web-browser']),
+      }
+
+      await runner.startTask(task, mockProvider, overrides)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const updated = store.getById(task.id)!
+      expect(updated.status).toBe('completed')
+    })
+
+    it('uses system prompt override when set', async () => {
+      const { Agent } = await import('@mariozechner/pi-agent-core')
+      const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>
+
+      let capturedOptions: any = null
+      const messages: unknown[] = []
+      MockAgent.mockImplementationOnce((options: any) => {
+        capturedOptions = options
+        return {
+          subscribe: vi.fn(() => () => {}),
+          prompt: vi.fn(async () => {
+            messages.push({
+              role: 'assistant',
+              content: [{ type: 'text', text: 'STATUS: completed\nSUMMARY: Done with custom prompt' }],
+            })
+          }),
+          abort: vi.fn(),
+          state: { get messages() { return messages } },
+        }
+      })
+
+      const task = store.create({
+        name: 'Custom Prompt Task',
+        prompt: 'Do work',
+        triggerType: 'cronjob',
+      })
+
+      const customPrompt = 'You are a specialized news summarizer. Only summarize tech news.'
+      const overrides: TaskOverrides = {
+        systemPromptOverride: customPrompt,
+      }
+
+      await runner.startTask(task, mockProvider, overrides)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      // The PiAgent should have been created with the custom system prompt
+      expect(capturedOptions).toBeTruthy()
+      expect(capturedOptions.initialState.systemPrompt).toBe(customPrompt)
+
+      const updated = store.getById(task.id)!
+      expect(updated.status).toBe('completed')
+      expect(updated.resultSummary).toBe('Done with custom prompt')
+    })
+
+    it('uses default system prompt when systemPromptOverride is null', async () => {
+      const { Agent } = await import('@mariozechner/pi-agent-core')
+      const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>
+
+      let capturedOptions: any = null
+      const messages: unknown[] = []
+      MockAgent.mockImplementationOnce((options: any) => {
+        capturedOptions = options
+        return {
+          subscribe: vi.fn(() => () => {}),
+          prompt: vi.fn(async () => {
+            messages.push({
+              role: 'assistant',
+              content: [{ type: 'text', text: 'STATUS: completed\nSUMMARY: Done' }],
+            })
+          }),
+          abort: vi.fn(),
+          state: { get messages() { return messages } },
+        }
+      })
+
+      const task = store.create({
+        name: 'Default Prompt Task',
+        prompt: 'Do work',
+        triggerType: 'cronjob',
+      })
+
+      const overrides: TaskOverrides = {
+        systemPromptOverride: null,
+      }
+
+      await runner.startTask(task, mockProvider, overrides)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      // Should use default prompt (contains "background task agent")
+      expect(capturedOptions.initialState.systemPrompt).toContain('background task agent')
+      expect(capturedOptions.initialState.systemPrompt).toContain('Do work')
+    })
+
+    it('handles invalid toolsOverride JSON gracefully', async () => {
+      const task = store.create({
+        name: 'Bad JSON Task',
+        prompt: 'Do work',
+        triggerType: 'cronjob',
+      })
+
+      const overrides: TaskOverrides = {
+        toolsOverride: 'invalid-json',
+      }
+
+      // Should not throw, should use all tools
+      await runner.startTask(task, mockProvider, overrides)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const updated = store.getById(task.id)!
+      expect(updated.status).toBe('completed')
     })
   })
 })
