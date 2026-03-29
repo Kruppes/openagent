@@ -89,8 +89,9 @@ export {
   parseSkillSource,
   downloadSkillDirectory,
   installSkill,
+  installSkillFromZip,
 } from './skill-installer.js'
-export type { SkillSource, SkillInstallResult, FetchFn } from './skill-installer.js'
+export type { SkillSource, SkillInstallResult, SkillUploadResult, FetchFn } from './skill-installer.js'
 export {
   loadSkills,
   saveSkills,
