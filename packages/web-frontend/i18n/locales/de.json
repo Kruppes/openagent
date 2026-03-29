@@ -211,6 +211,8 @@
     "languageSectionDescription": "Legen Sie fest, ob der Agent eine feste Sprache nutzt oder automatisch der Sprache des Nutzers folgt.",
     "language": "Agentensprache",
     "languageHint": "Diese Einstellung wird direkt in den System-Prompt eingefügt und sofort übernommen.",
+    "timezone": "Zeitzone",
+    "timezoneHint": "Das aktuelle Datum und die Uhrzeit in dieser Zeitzone werden in den System-Prompt eingefügt, damit der Agent immer weiß, wann es ist.",
     "languageMatch": "Sprache des Nutzers übernehmen",
     "languages": {
       "english": "Englisch",

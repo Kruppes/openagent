@@ -139,6 +139,15 @@
                   <p class="text-xs text-muted-foreground">{{ $t('settings.languageHint') }}</p>
                 </div>
 
+                <!-- Timezone -->
+                <div class="flex flex-col gap-2">
+                  <Label for="timezone-select">{{ $t('settings.timezone') }}</Label>
+                  <Select id="timezone-select" v-model="form.timezone">
+                    <option v-for="tz in timezones" :key="tz" :value="tz">{{ tz }}</option>
+                  </Select>
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.timezoneHint') }}</p>
+                </div>
+
               </div>
             </div>
 
@@ -605,6 +614,38 @@ const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 
+const timezones = [
+  'UTC',
+  'Europe/London',
+  'Europe/Berlin',
+  'Europe/Paris',
+  'Europe/Madrid',
+  'Europe/Rome',
+  'Europe/Amsterdam',
+  'Europe/Zurich',
+  'Europe/Vienna',
+  'Europe/Warsaw',
+  'Europe/Moscow',
+  'Europe/Istanbul',
+  'Asia/Dubai',
+  'Asia/Kolkata',
+  'Asia/Bangkok',
+  'Asia/Singapore',
+  'Asia/Shanghai',
+  'Asia/Tokyo',
+  'Asia/Seoul',
+  'Australia/Sydney',
+  'Pacific/Auckland',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Anchorage',
+  'Pacific/Honolulu',
+  'America/Sao_Paulo',
+  'America/Argentina/Buenos_Aires',
+]
+
 const VALID_TABS = ['agent', 'memory', 'heartbeat', 'telegram'] as const
 type TabId = (typeof VALID_TABS)[number]
 
@@ -724,6 +765,7 @@ async function handleRunConsolidation() {
 interface SettingsForm {
   sessionTimeoutMinutes: number
   language: string
+  timezone: string
   heartbeatIntervalMinutes: number
   batchingDelayMs: number
   telegramEnabled: boolean
@@ -740,6 +782,7 @@ function hydrateForm() {
   form.value = {
     sessionTimeoutMinutes: s.sessionTimeoutMinutes,
     language: s.language,
+    timezone: s.timezone,
     heartbeatIntervalMinutes: s.heartbeatIntervalMinutes,
     batchingDelayMs: s.batchingDelayMs,
     telegramEnabled: s.telegramEnabled,
