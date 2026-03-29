@@ -25,6 +25,7 @@ export interface HeartbeatSettings {
 export interface Settings {
   sessionTimeoutMinutes: number
   language: string
+  timezone: string
   heartbeatIntervalMinutes: number
   yoloMode: boolean
   batchingDelayMs: number
@@ -68,6 +69,7 @@ export function useSettings() {
       settings.value = {
         sessionTimeoutMinutes: result.sessionTimeoutMinutes,
         language: result.language,
+        timezone: result.timezone,
         heartbeatIntervalMinutes: result.heartbeatIntervalMinutes,
         yoloMode: result.yoloMode,
         batchingDelayMs: result.batchingDelayMs,
