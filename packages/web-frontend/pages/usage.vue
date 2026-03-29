@@ -208,6 +208,112 @@
               </CardContent>
             </Card>
 
+            <!-- ─── Main Agent vs. Task Agent breakdown ─── -->
+            <Card v-if="hasTaskUsage" class="mb-4">
+              <CardContent class="p-5">
+                <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 class="text-base font-semibold text-foreground">{{ $t('usage.sourceChart.title') }}</h2>
+                    <p class="mt-1 text-sm text-muted-foreground">{{ $t('usage.sourceChart.description') }}</p>
+                  </div>
+                  <!-- Legend -->
+                  <div class="flex items-center gap-4 text-xs text-muted-foreground">
+                    <span class="flex items-center gap-1.5">
+                      <span class="h-2.5 w-2.5 rounded-sm bg-primary" />
+                      {{ $t('usage.sourceChart.mainAgent') }}
+                    </span>
+                    <span class="flex items-center gap-1.5">
+                      <span class="h-2.5 w-2.5 rounded-sm bg-amber-500" />
+                      {{ $t('usage.sourceChart.taskAgent') }}
+                    </span>
+                  </div>
+                </div>
+
+                <!-- Empty chart -->
+                <div
+                  v-if="sourceChartSeries.length === 0 || sourceChartMax === 0"
+                  class="flex min-h-[180px] items-center justify-center text-sm text-muted-foreground"
+                >
+                  {{ $t('usage.chart.empty') }}
+                </div>
+
+                <!-- Chart body -->
+                <div v-else class="flex gap-3">
+                  <!-- Y-axis labels -->
+                  <div class="flex w-14 shrink-0 flex-col justify-between pb-7 text-right">
+                    <span class="text-xs tabular-nums text-muted-foreground">{{ formatNumber(sourceChartMax) }}</span>
+                    <span class="text-xs tabular-nums text-muted-foreground">{{ formatNumber(Math.round(sourceChartMax / 2)) }}</span>
+                    <span class="text-xs tabular-nums text-muted-foreground">0</span>
+                  </div>
+
+                  <!-- Grid + bars -->
+                  <div class="relative min-h-[220px] flex-1 sm:min-h-[280px]">
+                    <!-- Horizontal grid lines -->
+                    <div class="pointer-events-none absolute inset-0 flex flex-col justify-between pb-7">
+                      <div class="border-t border-dashed border-border/60" />
+                      <div class="border-t border-dashed border-border/60" />
+                      <div class="border-t border-dashed border-border/60" />
+                    </div>
+
+                    <!-- Bars -->
+                    <div
+                      class="absolute inset-0"
+                      :style="{
+                        display: 'grid',
+                        gridTemplateColumns: `repeat(${sourceChartSeries.length}, minmax(0, 1fr))`,
+                        alignItems: 'end',
+                        paddingBottom: '28px',
+                      }"
+                    >
+                      <div
+                        v-for="point in sourceChartSeries"
+                        :key="point.day"
+                        class="group flex min-w-0 flex-col items-center justify-end"
+                        style="height: 100%"
+                        :title="sourceChartTooltip(point)"
+                      >
+                        <div
+                          class="flex w-full max-w-[26px] flex-col justify-end overflow-hidden rounded-t-sm transition-opacity group-hover:opacity-80"
+                          :style="{ height: `${point.height}%` }"
+                        >
+                          <!-- Task (top) -->
+                          <div
+                            v-if="point.taskShare > 0"
+                            class="w-full bg-amber-500"
+                            :style="{ height: `${point.taskShare}%` }"
+                          />
+                          <!-- Main (bottom) -->
+                          <div
+                            v-if="point.mainShare > 0"
+                            class="w-full bg-primary"
+                            :style="{ height: `${point.mainShare}%` }"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- X-axis labels -->
+                    <div
+                      class="absolute bottom-0 left-0 right-0 h-7"
+                      :style="{
+                        display: 'grid',
+                        gridTemplateColumns: `repeat(${sourceChartXAxisLabels.length}, minmax(0, 1fr))`,
+                        alignItems: 'end',
+                      }"
+                    >
+                      <span
+                        v-for="lbl in sourceChartXAxisLabels"
+                        :key="lbl.day"
+                        class="overflow-hidden text-center text-[10px] text-muted-foreground"
+                      >
+                        {{ lbl.label }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             <!-- ─── Provider / model breakdown table ─── -->
             <Card class="mb-4">
               <CardContent class="p-5">
@@ -299,6 +405,8 @@ const {
   error,
   filters,
   daily,
+  dailyMainAgent,
+  dailyTaskAgent,
   breakdown,
   availableProviders,
   availableModels,
@@ -432,6 +540,86 @@ const xAxisLabels = computed(() => {
 
 function chartTooltip(point: ChartPoint): string {
   return `${formatFullDate(point.day)} · ${formatNumber(point.promptTokens)} prompt · ${formatNumber(point.completionTokens)} completion · ${formatCurrency(point.estimatedCost)}`
+}
+
+// ── Source breakdown chart (Main Agent vs. Task Agent) ──────
+const hasTaskUsage = computed(() => {
+  return dailyTaskAgent.value.totals.totalTokens > 0
+})
+
+interface SourceChartPoint {
+  day: string
+  label: string
+  mainTokens: number
+  taskTokens: number
+  totalTokens: number
+  height: number
+  mainShare: number
+  taskShare: number
+}
+
+const sourceChartSeries = computed<SourceChartPoint[]>(() => {
+  if (!filters.dateFrom || !filters.dateTo) return []
+
+  const start = new Date(`${filters.dateFrom}T00:00:00`)
+  const end = new Date(`${filters.dateTo}T00:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return []
+
+  const mainMap = new Map(
+    dailyMainAgent.value.rows
+      .filter((row) => row.day)
+      .map((row) => [row.day as string, row.totalTokens]),
+  )
+  const taskMap = new Map(
+    dailyTaskAgent.value.rows
+      .filter((row) => row.day)
+      .map((row) => [row.day as string, row.totalTokens]),
+  )
+
+  const points: Array<{ day: string; label: string; mainTokens: number; taskTokens: number; totalTokens: number }> = []
+  const cursor = new Date(start)
+
+  while (cursor <= end) {
+    const day = fmtDateKey(cursor)
+    const mainTokens = mainMap.get(day) ?? 0
+    const taskTokens = taskMap.get(day) ?? 0
+    points.push({
+      day,
+      label: formatShortDate(day),
+      mainTokens,
+      taskTokens,
+      totalTokens: mainTokens + taskTokens,
+    })
+    cursor.setDate(cursor.getDate() + 1)
+  }
+
+  const max = Math.max(...points.map((p) => p.totalTokens), 0)
+
+  return points.map((point) => {
+    const total = point.totalTokens
+    return {
+      ...point,
+      height: max > 0 ? Math.max((total / max) * 100, total > 0 ? 8 : 0) : 0,
+      mainShare: total > 0 ? (point.mainTokens / total) * 100 : 0,
+      taskShare: total > 0 ? (point.taskTokens / total) * 100 : 0,
+    }
+  })
+})
+
+const sourceChartMax = computed(() => Math.max(...sourceChartSeries.value.map((p) => p.totalTokens), 0))
+
+const sourceChartXAxisLabels = computed(() => {
+  const series = sourceChartSeries.value
+  if (series.length === 0) return []
+  const step = series.length <= 14 ? 1 : series.length <= 31 ? 3 : 7
+  return series.map((point, i) => ({
+    day: point.day,
+    label: i % step === 0 ? point.label : '',
+  }))
+})
+
+function sourceChartTooltip(point: SourceChartPoint): string {
+  return `${formatFullDate(point.day)} · Main: ${formatNumber(point.mainTokens)} · Tasks: ${formatNumber(point.taskTokens)}`
 }
 
 // ── Table helpers ───────────────────────────────────────────
