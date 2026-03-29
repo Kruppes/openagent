@@ -1,3 +1,8 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+const rootPkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8'))
+
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   compatibilityDate: '2025-01-01',
@@ -48,6 +53,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       apiBase: process.env.NUXT_PUBLIC_API_BASE || '',
+      appVersion: rootPkg.version || '0.0.0',
     },
   },
 

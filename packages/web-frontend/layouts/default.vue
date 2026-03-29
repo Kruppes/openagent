@@ -38,7 +38,7 @@
               {{ $t('app.title') }}
             </span>
             <p class="mt-0.5 text-xs text-muted-foreground">
-              {{ isAdmin ? $t('app.adminConsole') : $t('app.workspace') }}
+              v{{ appVersion }}
             </p>
           </div>
         </div>
@@ -270,6 +270,8 @@
 import { useMediaQuery } from '@vueuse/core'
 
 const route = useRoute()
+const runtimeConfig = useRuntimeConfig()
+const appVersion = runtimeConfig.public.appVersion as string
 const { user, logout } = useAuth()
 const { status: globalStatus, providerName: globalProviderName, operatingMode: globalOperatingMode, fallbackProviderName: globalFallbackProviderName, start: startStatusPolling, stop: stopStatusPolling } = useConnectionStatus()
 
