@@ -9,6 +9,22 @@ export interface CronjobToolsOptions {
   taskScheduler: TaskScheduler
 }
 
+function looksLikeDynamicTaskRequest(name: string, message: string): boolean {
+  const text = `${name}\n${message}`.toLowerCase()
+
+  const dynamicPatterns = [
+    /\b(current|latest|aktuell(?:e|en|er)?|neueste[nsmr]?)\b/u,
+    /\b(weather|wetter|forecast|temperature|temperatur)\b/u,
+    /\b(check|prüf(?:e|en)?|verify|look up|lookup|fetch|get|hole|ermittle)\b/u,
+    /\b(search|research|analy[sz]e|analysiere|summari[sz]e|fasse .* zusammen)\b/u,
+    /\b(use skill|verwende skill|nutze skill|mit skill)\b/u,
+    /\b(report|berichte|teile .* mit|send me the result|schick .* ergebnis)\b/u,
+    /\b(call|invoke|run)\b.{0,40}\b(tool|agent|skill)\b/u,
+  ]
+
+  return dynamicPatterns.some(pattern => pattern.test(text))
+}
+
 /**
  * Create the `create_cronjob` agent tool
  */
@@ -20,11 +36,11 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
       'Create a recurring scheduled task (cronjob). The task will run automatically on the given schedule. ' +
       'Convert the user\'s natural language schedule description into a standard cron expression (5 fields: minute hour day-of-month month day-of-week). ' +
       'Examples: "every day at 9:00" → "0 9 * * *", "every 15 minutes" → "*/15 * * * *", "weekdays at 14:30" → "30 14 * * 1-5". ' +
-      'Use action_type "injection" for lightweight actions (reminders, notifications, simple messages) that inject a message into the main chat. ' +
-      'Use action_type "task" (default) for complex work that needs its own agent (file operations, research, builds).',
+      'Use action_type "injection" only for lightweight static messages (reminders, notifications, simple alerts) that should be delivered 1:1 with no agent run. ' +
+      'Use action_type "task" (default) whenever the scheduled action must think, use tools/skills, fetch current data, check status, analyze something, or produce a fresh result at run time.',
     parameters: Type.Object({
       prompt: Type.String({
-        description: 'Detailed prompt describing what the cronjob should do on each run. For injection type, this is the message that will be injected into the main chat.',
+        description: 'Detailed prompt describing what the cronjob should do on each run. For injection type, this must be a static message to deliver verbatim. If the run should fetch current data, use tools/skills, or perform work first, use action_type "task" instead.',
       }),
       name: Type.String({
         description: 'Short, descriptive name for the cronjob (e.g., "Daily News Summary", "Hourly Health Check")',
@@ -34,7 +50,7 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
       }),
       action_type: Type.Optional(
         Type.String({
-          description: 'Type of action: "task" (default) spawns a full background agent, "injection" injects a message into the main chat (lightweight, no agent spawned — ideal for reminders/notifications).',
+          description: 'Type of action: "task" (default) spawns a full background agent. "injection" only delivers a static message verbatim into the main chat (lightweight, no agent spawned). Use "task" for current data, tool/skill usage, checks, analysis, or any dynamic work.',
         })
       ),
       provider: Type.Optional(
@@ -404,16 +420,14 @@ export function createReminderTool(options: CronjobToolsOptions): AgentTool {
     label: 'Create Reminder',
     description:
       'Create a scheduled reminder that will be injected into the chat at the specified time. ' +
-      'This is a lightweight alternative to background tasks — no agent is spawned, the reminder message ' +
-      'is simply injected into the main conversation so you can notify the user. ' +
+      'Important: this delivers a static message verbatim. No agent is spawned, no tools are used, no skills are loaded, and no fresh data is fetched at run time. ' +
       'Convert the user\'s desired time into a cron expression. ' +
       'For one-time reminders, use a specific date/time cron (e.g., "30 11 30 3 *" for March 30 at 11:30). ' +
       'For recurring reminders, use a repeating cron (e.g., "0 9 * * 1-5" for weekday mornings). ' +
-      'Use this tool whenever the user asks to be reminded of something, wants a notification at a specific time, ' +
-      'or wants a periodic ping/alert.',
+      'Use this tool only when the user wants a literal reminder/notification/ping. If the scheduled action should check something, fetch current information, use a skill/tool, analyze data, or generate a fresh response at run time, do NOT use create_reminder — use create_cronjob with action_type "task" instead.',
     parameters: Type.Object({
       message: Type.String({
-        description: 'The reminder message to deliver to the user. Be clear and include context.',
+        description: 'The exact reminder message to deliver verbatim to the user. This must be static text, not instructions for a future agent run.',
       }),
       name: Type.String({
         description: 'Short name for the reminder (e.g., "Pack bags reminder", "Daily standup alert")',
@@ -430,6 +444,16 @@ export function createReminderTool(options: CronjobToolsOptions): AgentTool {
       }
 
       try {
+        if (looksLikeDynamicTaskRequest(name, message)) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: 'Error: create_reminder only supports static reminder text delivered verbatim. This request looks dynamic (for example checking current data, using a skill/tool, or doing work at run time). Use create_cronjob with action_type "task" instead.',
+            }],
+            details: { error: true, suggestedActionType: 'task' },
+          }
+        }
+
         // Validate cron expression
         const validationError = validateCronExpression(schedule)
         if (validationError) {
