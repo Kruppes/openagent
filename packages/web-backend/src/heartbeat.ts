@@ -114,6 +114,10 @@ export class HeartbeatService {
     }
   }
 
+  setProviderManager(providerManager: ProviderManager | null): void {
+    this.providerManager = providerManager
+  }
+
   restart(options: { resetState?: boolean } = {}): void {
     if (options.resetState) {
       this.lastCheck = null
