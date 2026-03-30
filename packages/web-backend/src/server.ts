@@ -513,6 +513,7 @@ function wireAgentCoreEvents(): void {
       toolIsError: chunk.toolIsError,
       error: chunk.error,
       telegramDelivered: chunk.type === 'done' ? lastTelegramDelivered : undefined,
+      isTaskInjection: true,
     })
   })
 }
