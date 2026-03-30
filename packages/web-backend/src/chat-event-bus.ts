@@ -51,6 +51,8 @@ export interface ChatEvent {
   cronjobId?: string
   /** Whether this message was also delivered to Telegram */
   telegramDelivered?: boolean
+  /** Whether this event is part of a task injection response */
+  isTaskInjection?: boolean
 }
 
 /**

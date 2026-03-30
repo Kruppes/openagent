@@ -48,6 +48,8 @@ interface ChatResponse {
   cronjobId?: string
   /** Whether this message was also delivered to Telegram */
   telegramDelivered?: boolean
+  /** Whether this is a task injection response */
+  isTaskInjection?: boolean
 }
 
 function saveChatMessage(
@@ -397,6 +399,7 @@ export function setupWebSocketChat(
             toolIsError: event.toolIsError,
             error: event.error,
             telegramDelivered: event.telegramDelivered,
+            isTaskInjection: event.isTaskInjection,
           })
         }
       }
