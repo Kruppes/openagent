@@ -102,8 +102,8 @@ Guidelines:
 - Work independently for as long as possible
 - Do not ask unnecessary questions — make reasonable decisions yourself
 - Only pause with a question if you truly cannot proceed without user input
-- When finished, provide a concise but complete summary of what you did
-- Include: what was accomplished, key decisions made, files created/modified, and any important notes`)
+- When finished, your final message must contain ALL your actual findings, data, and results
+- Do NOT just describe what you did — include the full content of your work`)
 
   if (memoryDir) {
     sections.push(`<memory_reference>
@@ -115,7 +115,8 @@ You can read SOUL.md and MEMORY.md if you need context about the user's preferen
   sections.push(`Your final message MUST follow this exact format:
 
 STATUS: completed | failed
-SUMMARY: <concise description of the result>
+SUMMARY:
+<your complete, detailed results here — this is the ONLY thing the user will see, so include ALL data, analysis, findings, content, etc. Do NOT write a meta-description of what you did. Instead, write the actual output the user asked for.>
 
 If you encounter an unrecoverable error, use STATUS: failed and explain what went wrong.`)
 
@@ -123,16 +124,30 @@ If you encounter an unrecoverable error, use STATUS: failed and explain what wen
 }
 
 /**
- * Parse the task agent's final output to extract status and summary
+ * Parse the task agent's final output to extract status and summary.
+ * Returns the FULL content after the SUMMARY: marker (multi-line) so that
+ * detailed results are preserved and forwarded to the main agent.
  */
 function parseTaskOutput(text: string): { status: TaskResultStatus; summary: string } {
   const statusMatch = text.match(/STATUS:\s*(completed|failed|question)/i)
-  const summaryMatch = text.match(/SUMMARY:\s*([\s\S]*?)$/im)
-
   const status = (statusMatch?.[1]?.toLowerCase() as TaskResultStatus) ?? 'completed'
-  const summary = summaryMatch?.[1]?.trim() ?? text.trim().slice(0, 500)
 
-  return { status, summary }
+  // Capture everything after SUMMARY: to end of string (greedy, no m-flag)
+  const summaryMatch = text.match(/SUMMARY:\s*([\s\S]*)$/i)
+  if (summaryMatch) {
+    const summary = summaryMatch[1].trim()
+    if (summary.length > 0) {
+      return { status, summary }
+    }
+  }
+
+  // Fallback: use the full text with STATUS line stripped (no length cap)
+  const fullText = text
+    .replace(/STATUS:\s*(completed|failed|question)\s*/i, '')
+    .replace(/SUMMARY:\s*/i, '')
+    .trim()
+
+  return { status, summary: fullText || text.trim() }
 }
 
 /**
