@@ -15,8 +15,8 @@ export interface TaskSchedulerOptions {
   getDefaultProvider: () => ProviderConfig
   /** Resolve a provider by name/id */
   resolveProvider: (nameOrId: string) => ProviderConfig | null
-  /** Callback for injection-type cronjobs — injects a message into the main agent */
-  onInjection?: (scheduledTaskId: string, injection: string) => void
+  /** Callback for injection-type cronjobs — delivers the reminder to the user */
+  onInjection?: (scheduledTask: ScheduledTask) => void
 }
 
 interface ScheduleEntry {
@@ -24,6 +24,20 @@ interface ScheduleEntry {
   timer: ReturnType<typeof setTimeout>
   nextRunTime: Date
 }
+
+/**
+ * Maximum safe timeout value for setTimeout (24 days).
+ * Values above ~2^31-1 ms (~24.8 days) overflow in Node.js and fire immediately.
+ * We use 24 hours as a safe maximum to periodically re-evaluate.
+ */
+const MAX_SAFE_TIMEOUT_MS = 24 * 60 * 60 * 1000 // 24 hours
+
+/**
+ * Threshold for auto-disabling "one-time" scheduled tasks.
+ * If the next run is more than 364 days away, we consider it effectively one-time
+ * and auto-disable after firing.
+ */
+const ONE_TIME_THRESHOLD_MS = 364 * 24 * 60 * 60 * 1000
 
 /**
  * Task Scheduler — loads cron-based scheduled tasks and fires them via TaskRunner.
@@ -157,7 +171,11 @@ export class TaskScheduler {
   }
 
   /**
-   * Calculate next run time and set a timer for a scheduled task
+   * Calculate next run time and set a timer for a scheduled task.
+   *
+   * For delays > MAX_SAFE_TIMEOUT_MS (24h), sets an intermediate wake-up timer
+   * that re-evaluates when to fire, avoiding Node.js setTimeout overflow
+   * (values > ~2^31 ms fire immediately).
    */
   private setNextTimer(scheduledTask: ScheduledTask): void {
     try {
@@ -178,9 +196,27 @@ export class TaskScheduler {
         return
       }
 
+      // Guard: if the delay exceeds the safe setTimeout limit, set an
+      // intermediate wake-up timer that re-evaluates when closer to the target.
+      // This prevents the Node.js 32-bit integer overflow that causes
+      // setTimeout to fire immediately for very large values.
+      const effectiveDelay = Math.max(0, delayMs)
+      const timerDelay = effectiveDelay > MAX_SAFE_TIMEOUT_MS
+        ? MAX_SAFE_TIMEOUT_MS
+        : effectiveDelay
+
       const timer = setTimeout(() => {
-        this.onCronFired(scheduledTask.id)
-      }, Math.max(0, delayMs))
+        if (effectiveDelay > MAX_SAFE_TIMEOUT_MS) {
+          // Intermediate wake-up: re-read from DB and re-schedule
+          this.schedules.delete(scheduledTask.id)
+          const refreshed = this.scheduledTaskStore.getById(scheduledTask.id)
+          if (refreshed && refreshed.enabled && this.running) {
+            this.setNextTimer(refreshed)
+          }
+        } else {
+          this.onCronFired(scheduledTask.id)
+        }
+      }, timerDelay)
 
       // Don't keep the process alive for timers
       if (typeof timer === 'object' && 'unref' in timer) {
@@ -193,7 +229,11 @@ export class TaskScheduler {
         nextRunTime: nextRun,
       })
 
-      console.log(`[openagent] Scheduled "${scheduledTask.name}" next run at ${nextRun.toISOString()} (in ${Math.round(delayMs / 60000)} min)`)
+      if (effectiveDelay > MAX_SAFE_TIMEOUT_MS) {
+        console.log(`[openagent] Scheduled "${scheduledTask.name}" next run at ${nextRun.toISOString()} (in ${Math.round(delayMs / 86400000)} days, wake-up in 24h)`)
+      } else {
+        console.log(`[openagent] Scheduled "${scheduledTask.name}" next run at ${nextRun.toISOString()} (in ${Math.round(delayMs / 60000)} min)`)
+      }
     } catch (err) {
       console.error(`[openagent] Failed to schedule "${scheduledTask.name}":`, (err as Error).message)
     }
@@ -245,15 +285,10 @@ export class TaskScheduler {
   }
 
   /**
-   * Fire an injection — send the prompt directly into the main agent
+   * Fire an injection — deliver the reminder/injection message.
    */
   private fireInjection(scheduledTask: ScheduledTask): void {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
-
-    // Build the injection message
-    const injection = `<scheduled_reminder cronjob_id="${scheduledTask.id}" cronjob_name="${scheduledTask.name}">
-${scheduledTask.prompt}
-</scheduled_reminder>`
 
     // Update last_run fields
     this.scheduledTaskStore.update(scheduledTask.id, {
@@ -263,9 +298,41 @@ ${scheduledTask.prompt}
 
     // Deliver via callback
     if (this.options.onInjection) {
-      this.options.onInjection(scheduledTask.id, injection)
+      this.options.onInjection(scheduledTask)
     } else {
       console.warn(`[openagent] Injection cronjob "${scheduledTask.name}" fired but no onInjection handler is set`)
+    }
+
+    // Auto-disable if this is effectively a one-time schedule
+    // (next run > 364 days away — e.g. a specific date/time cron)
+    this.autoDisableIfOneTime(scheduledTask)
+  }
+
+  /**
+   * Check if a scheduled task's next run is far in the future (> 364 days)
+   * and auto-disable it if so. This handles "one-time" reminders that use
+   * specific date/time cron expressions like "35 13 30 3 *".
+   */
+  private autoDisableIfOneTime(scheduledTask: ScheduledTask): void {
+    try {
+      const fields = parseCronExpression(scheduledTask.schedule)
+      const nextRun = getNextRunTime(fields)
+      if (!nextRun) {
+        // No next run at all — disable
+        this.scheduledTaskStore.update(scheduledTask.id, { enabled: false })
+        this.unregisterSchedule(scheduledTask.id)
+        console.log(`[openagent] Auto-disabled one-time schedule "${scheduledTask.name}" (no future run found)`)
+        return
+      }
+
+      const delayMs = nextRun.getTime() - Date.now()
+      if (delayMs > ONE_TIME_THRESHOLD_MS) {
+        this.scheduledTaskStore.update(scheduledTask.id, { enabled: false })
+        this.unregisterSchedule(scheduledTask.id)
+        console.log(`[openagent] Auto-disabled one-time schedule "${scheduledTask.name}" (next run ${Math.round(delayMs / 86400000)} days away)`)
+      }
+    } catch {
+      // ignore parse errors
     }
   }
 

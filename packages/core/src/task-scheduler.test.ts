@@ -197,14 +197,12 @@ describe('TaskScheduler', () => {
       const result = await injectionScheduler.triggerNow(scheduledTask.id)
 
       expect(result).toBe(`injection-${scheduledTask.id}`)
-      expect(injectionCallback).toHaveBeenCalledWith(
-        scheduledTask.id,
-        expect.stringContaining('Pack your bags!')
-      )
-      expect(injectionCallback).toHaveBeenCalledWith(
-        scheduledTask.id,
-        expect.stringContaining('<scheduled_reminder')
-      )
+      expect(injectionCallback).toHaveBeenCalledTimes(1)
+      const passedTask = injectionCallback.mock.calls[0][0]
+      expect(passedTask.id).toBe(scheduledTask.id)
+      expect(passedTask.prompt).toBe('Pack your bags!')
+      expect(passedTask.name).toBe('Reminder')
+      expect(passedTask.actionType).toBe('injection')
       // Should NOT start a task
       expect(mockTaskRunner.startTask).not.toHaveBeenCalled()
     })
@@ -254,12 +252,11 @@ describe('TaskScheduler', () => {
       await injectionScheduler.triggerNow(scheduledTask.id)
 
       const call = injectionCallback.mock.calls[0]
-      expect(call[0]).toBe(scheduledTask.id)
-      expect(call[1]).toContain('<scheduled_reminder')
-      expect(call[1]).toContain(`cronjob_id="${scheduledTask.id}"`)
-      expect(call[1]).toContain(`cronjob_name="XML Check"`)
-      expect(call[1]).toContain('Check this!')
-      expect(call[1]).toContain('</scheduled_reminder>')
+      const passedTask = call[0]
+      expect(passedTask.id).toBe(scheduledTask.id)
+      expect(passedTask.name).toBe('XML Check')
+      expect(passedTask.prompt).toBe('Check this!')
+      expect(passedTask.actionType).toBe('injection')
     })
 
     it('deduplication: does not re-fire if lastRunAt is very recent', async () => {
