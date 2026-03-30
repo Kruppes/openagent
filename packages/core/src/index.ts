@@ -147,10 +147,10 @@ export {
 } from './cron-parser.js'
 export type { CronFields } from './cron-parser.js'
 export { ScheduledTaskStore, initScheduledTasksTable } from './scheduled-task-store.js'
-export type { ScheduledTask, CreateScheduledTaskInput, UpdateScheduledTaskInput } from './scheduled-task-store.js'
+export type { ScheduledTask, ScheduledTaskActionType, CreateScheduledTaskInput, UpdateScheduledTaskInput } from './scheduled-task-store.js'
 export { TaskScheduler } from './task-scheduler.js'
 export type { TaskSchedulerOptions } from './task-scheduler.js'
-export { createCronjobTool, editCronjobTool, removeCronjobTool, listCronjobsTool } from './cronjob-tools.js'
+export { createCronjobTool, editCronjobTool, removeCronjobTool, listCronjobsTool, createReminderTool } from './cronjob-tools.js'
 export type { CronjobToolsOptions } from './cronjob-tools.js'
 export {
   formatTaskTelegramMessage,
