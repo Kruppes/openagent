@@ -9,7 +9,7 @@
     <p class="max-w-xs text-sm">{{ $t('admin.description') }}</p>
   </div>
 
-  <div v-else class="flex h-full flex-col overflow-hidden">
+  <div v-else class="flex h-full flex-col overflow-y-auto">
     <PageHeader :title="$t('usage.title')" :subtitle="$t('usage.subtitle')">
       <template #actions>
         <Button variant="outline" :disabled="loading" class="gap-2" @click="loadStats">
@@ -41,7 +41,7 @@
     </div>
 
     <!-- Content area -->
-    <div class="mx-auto flex w-full max-w-6xl flex-1 flex-col overflow-y-auto p-6">
+    <div class="mx-auto flex w-full max-w-6xl flex-col p-6">
       <!-- Error banner -->
       <Alert v-if="error" variant="destructive" class="mb-4">
         <AlertDescription class="flex items-center justify-between">
