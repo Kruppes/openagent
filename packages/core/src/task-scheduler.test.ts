@@ -164,4 +164,126 @@ describe('TaskScheduler', () => {
       expect(result).toBeNull()
     })
   })
+
+  describe('injection mode', () => {
+    let injectionCallback: ReturnType<typeof vi.fn>
+    let injectionScheduler: TaskScheduler
+
+    beforeEach(() => {
+      injectionCallback = vi.fn()
+      injectionScheduler = new TaskScheduler({
+        db,
+        taskStore,
+        taskRunner: mockTaskRunner,
+        getDefaultProvider: () => mockProvider,
+        resolveProvider: (name: string) => name === 'test' ? mockProvider : null,
+        onInjection: injectionCallback,
+      })
+    })
+
+    afterEach(() => {
+      injectionScheduler.dispose()
+    })
+
+    it('fires injection callback instead of task for injection-type cronjobs', async () => {
+      injectionScheduler.start()
+      const scheduledTask = scheduledTaskStore.create({
+        name: 'Reminder',
+        prompt: 'Pack your bags!',
+        schedule: '0 9 * * *',
+        actionType: 'injection',
+      })
+
+      const result = await injectionScheduler.triggerNow(scheduledTask.id)
+
+      expect(result).toBe(`injection-${scheduledTask.id}`)
+      expect(injectionCallback).toHaveBeenCalledWith(
+        scheduledTask.id,
+        expect.stringContaining('Pack your bags!')
+      )
+      expect(injectionCallback).toHaveBeenCalledWith(
+        scheduledTask.id,
+        expect.stringContaining('<scheduled_reminder')
+      )
+      // Should NOT start a task
+      expect(mockTaskRunner.startTask).not.toHaveBeenCalled()
+    })
+
+    it('updates last_run fields for injection-type cronjobs', async () => {
+      injectionScheduler.start()
+      const scheduledTask = scheduledTaskStore.create({
+        name: 'Status Ping',
+        prompt: 'Time to check in!',
+        schedule: '0 9 * * *',
+        actionType: 'injection',
+      })
+
+      await injectionScheduler.triggerNow(scheduledTask.id)
+
+      const updated = scheduledTaskStore.getById(scheduledTask.id)!
+      expect(updated.lastRunAt).toBeTruthy()
+      expect(updated.lastRunStatus).toBe('completed')
+    })
+
+    it('fires task for task-type cronjobs even with injection callback set', async () => {
+      injectionScheduler.start()
+      const scheduledTask = scheduledTaskStore.create({
+        name: 'Heavy Job',
+        prompt: 'Do complex work',
+        schedule: '0 9 * * *',
+        actionType: 'task',
+      })
+
+      const taskId = await injectionScheduler.triggerNow(scheduledTask.id)
+
+      expect(taskId).toBeTruthy()
+      expect(taskId).not.toContain('injection')
+      expect(mockTaskRunner.startTask).toHaveBeenCalled()
+      expect(injectionCallback).not.toHaveBeenCalled()
+    })
+
+    it('triggerNow fires injection with correct XML wrapper', async () => {
+      injectionScheduler.start()
+      const scheduledTask = scheduledTaskStore.create({
+        name: 'XML Check',
+        prompt: 'Check this!',
+        schedule: '0 9 * * *',
+        actionType: 'injection',
+      })
+
+      await injectionScheduler.triggerNow(scheduledTask.id)
+
+      const call = injectionCallback.mock.calls[0]
+      expect(call[0]).toBe(scheduledTask.id)
+      expect(call[1]).toContain('<scheduled_reminder')
+      expect(call[1]).toContain(`cronjob_id="${scheduledTask.id}"`)
+      expect(call[1]).toContain(`cronjob_name="XML Check"`)
+      expect(call[1]).toContain('Check this!')
+      expect(call[1]).toContain('</scheduled_reminder>')
+    })
+
+    it('deduplication: does not re-fire if lastRunAt is very recent', async () => {
+      injectionScheduler.start()
+      const scheduledTask = scheduledTaskStore.create({
+        name: 'Dedup Test',
+        prompt: 'Dont spam!',
+        schedule: '0 9 * * *',
+        actionType: 'injection',
+      })
+
+      // First trigger — should fire
+      await injectionScheduler.triggerNow(scheduledTask.id)
+      expect(injectionCallback).toHaveBeenCalledTimes(1)
+
+      // Simulate cron-fired (not manual triggerNow) — the dedup guard should block
+      // We access the private method via bracket notation for testing
+      const scheduler = injectionScheduler as unknown as {
+        onCronFired: (id: string) => Promise<void>
+      }
+      await scheduler.onCronFired(scheduledTask.id)
+
+      // Should still be 1 (blocked by dedup)
+      expect(injectionCallback).toHaveBeenCalledTimes(1)
+    })
+  })
 })
