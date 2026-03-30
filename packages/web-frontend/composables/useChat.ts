@@ -21,7 +21,7 @@ export interface ChatMessage {
 }
 
 interface WsMessage {
-  type: 'text' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end'
+  type: 'text' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'reminder'
   text?: string
   toolName?: string
   toolCallId?: string
@@ -34,6 +34,12 @@ interface WsMessage {
   source?: string
   /** Sender display name */
   senderName?: string
+  /** Reminder message */
+  reminderMessage?: string
+  /** Reminder name */
+  reminderName?: string
+  /** Cronjob ID */
+  cronjobId?: string
 }
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
@@ -144,6 +150,33 @@ export function useChat() {
           }]
         }
         break
+
+      case 'reminder': {
+        const reminderContent = [
+          msg.reminderName ? `⏰ ${msg.reminderName}` : '⏰',
+          msg.reminderMessage ?? '',
+        ].filter(Boolean).join('\n\n')
+
+        if (reminderContent) {
+          messages.value = [...messages.value, {
+            role: 'system',
+            content: reminderContent,
+            timestamp: new Date().toISOString(),
+          }]
+
+          if (
+            typeof window !== 'undefined'
+            && typeof Notification !== 'undefined'
+            && document.visibilityState !== 'visible'
+            && Notification.permission === 'granted'
+          ) {
+            new Notification(msg.reminderName || 'Reminder', {
+              body: msg.reminderMessage,
+            })
+          }
+        }
+        break
+      }
 
       case 'text':
         if (msg.text) {
