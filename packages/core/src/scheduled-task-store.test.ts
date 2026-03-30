@@ -159,6 +159,48 @@ describe('ScheduledTaskStore', () => {
     })
   })
 
+  describe('actionType', () => {
+    it('defaults to task when not specified', () => {
+      const task = store.create({
+        name: 'Default Action',
+        prompt: 'test',
+        schedule: '0 9 * * *',
+      })
+      expect(task.actionType).toBe('task')
+    })
+
+    it('creates with injection action type', () => {
+      const task = store.create({
+        name: 'Reminder',
+        prompt: 'Pack your bags!',
+        schedule: '30 11 * * *',
+        actionType: 'injection',
+      })
+      expect(task.actionType).toBe('injection')
+    })
+
+    it('creates with task action type', () => {
+      const task = store.create({
+        name: 'Heavy Job',
+        prompt: 'Do complex work',
+        schedule: '0 9 * * *',
+        actionType: 'task',
+      })
+      expect(task.actionType).toBe('task')
+    })
+
+    it('updates action type', () => {
+      const task = store.create({
+        name: 'Switchable',
+        prompt: 'test',
+        schedule: '0 9 * * *',
+        actionType: 'task',
+      })
+      const updated = store.update(task.id, { actionType: 'injection' })
+      expect(updated!.actionType).toBe('injection')
+    })
+  })
+
   describe('schema', () => {
     it('has all required columns', () => {
       const cols = db.prepare("PRAGMA table_info(scheduled_tasks)").all() as { name: string }[]
@@ -168,6 +210,7 @@ describe('ScheduledTaskStore', () => {
       expect(colNames).toContain('name')
       expect(colNames).toContain('prompt')
       expect(colNames).toContain('schedule')
+      expect(colNames).toContain('action_type')
       expect(colNames).toContain('provider')
       expect(colNames).toContain('enabled')
       expect(colNames).toContain('tools_override')
