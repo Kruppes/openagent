@@ -361,11 +361,14 @@ export class AgentCore {
         return this.generateSessionSummary(userId)
       },
       onSessionEnd: (session: SessionInfo, summary: string | null) => {
-        // Clear agent messages when session ends
-        this.agent.clearMessages()
-
-        // Rebuild system prompt with fresh memory context
-        this.refreshSystemPrompt()
+        // Only clear agent messages for non-system sessions.
+        // System sessions (from task injections) share the same agent instance,
+        // and clearing messages here would wipe the user's conversation history
+        // before their session has a chance to generate a summary.
+        if (session.userId !== 'system') {
+          this.agent.clearMessages()
+          this.refreshSystemPrompt()
+        }
 
         // Notify external listener (e.g. ws-chat)
         if (this.onSessionEndCallback) {
