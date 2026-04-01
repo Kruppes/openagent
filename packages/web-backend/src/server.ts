@@ -81,8 +81,6 @@ try {
     sessionTimeoutMinutes?: number
     tasks?: typeof taskSettings
     builtinTools?: BuiltinToolsConfig
-    braveSearchApiKey?: string
-    searxngUrl?: string
   }>('settings.json')
   if (settings.sessionTimeoutMinutes && settings.sessionTimeoutMinutes > 0) {
     sessionTimeoutMinutes = settings.sessionTimeoutMinutes
@@ -90,11 +88,7 @@ try {
   if (settings.tasks) {
     taskSettings = { ...taskSettings, ...settings.tasks }
   }
-  builtinToolsConfig = {
-    ...settings.builtinTools,
-    braveSearchApiKey: settings.braveSearchApiKey ?? settings.builtinTools?.braveSearchApiKey,
-    searxngUrl: settings.searxngUrl ?? settings.builtinTools?.searxngUrl,
-  }
+  builtinToolsConfig = settings.builtinTools
 } catch { /* use default */ }
 
 // Helper: resolve a provider by name or ID

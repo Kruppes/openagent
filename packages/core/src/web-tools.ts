@@ -23,10 +23,13 @@ export interface WebFetchConfig {
 }
 
 export interface BuiltinToolsConfig {
-  webSearch?: { enabled?: boolean; provider?: string }
+  webSearch?: {
+    enabled?: boolean
+    provider?: string
+    braveSearchApiKey?: string
+    searxngUrl?: string
+  }
   webFetch?: { enabled?: boolean }
-  braveSearchApiKey?: string
-  searxngUrl?: string
 }
 
 // ─── HTML-to-Text Extraction ─────────────────────────────────────────────────
@@ -442,8 +445,8 @@ export function createBuiltinWebTools(config?: BuiltinToolsConfig): AgentTool[] 
     const provider = (config?.webSearch?.provider ?? 'duckduckgo') as SearchProvider
     tools.push(createWebSearchTool({
       provider,
-      braveSearchApiKey: config?.braveSearchApiKey,
-      searxngUrl: config?.searxngUrl,
+      braveSearchApiKey: config?.webSearch?.braveSearchApiKey,
+      searxngUrl: config?.webSearch?.searxngUrl,
     }))
   }
 
