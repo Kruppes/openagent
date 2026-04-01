@@ -5,6 +5,7 @@ import { ensureConfigTemplates } from '@openagent/core'
 import { ensureMemoryStructure } from '@openagent/core'
 import {
   AgentCore,
+  injectSecretsIntoEnv,
   getActiveProvider,
   getFallbackProvider,
   buildModel,
@@ -53,6 +54,9 @@ ensureConfigTemplates()
 
 console.log('[openagent] Ensuring memory structure...')
 ensureMemoryStructure()
+
+console.log('[openagent] Injecting global secrets into environment...')
+injectSecretsIntoEnv()
 
 const runtimeMetrics = new RuntimeMetrics()
 
