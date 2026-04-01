@@ -104,6 +104,17 @@ export {
 } from './skill-config.js'
 export type { SkillConfig, SkillsFile } from './skill-config.js'
 export {
+  loadSecrets,
+  saveSecrets,
+  loadSecretsDecrypted,
+  loadSecretsMasked,
+  setSecret,
+  setSecrets,
+  deleteSecret,
+  injectSecretsIntoEnv,
+} from './secrets-config.js'
+export type { SecretsFile } from './secrets-config.js'
+export {
   createWebSearchTool,
   createWebFetchTool,
   createBuiltinWebTools,
