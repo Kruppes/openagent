@@ -65,7 +65,7 @@ RUN chmod +x /usr/local/bin/track-packages.sh \
 ARG USERNAME=agent
 ARG USER_UID=1000
 ARG USER_GID=1000
-RUN groupadd --gid ${USER_GID} ${USERNAME} \
+RUN groupadd --force --gid ${USER_GID} ${USERNAME} \
     && useradd --uid ${USER_UID} --gid ${USER_GID} -d /workspace ${USERNAME} -s /bin/bash \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${USERNAME} \
     && chmod 0440 /etc/sudoers.d/${USERNAME} \
