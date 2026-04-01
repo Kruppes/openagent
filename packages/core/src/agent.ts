@@ -80,7 +80,7 @@ export function createYoloTools(): AgentTool[] {
   const shellTool: AgentTool = {
     name: 'shell',
     label: 'Execute Shell Command',
-    description: 'Execute a shell command and return stdout/stderr. Use this for any system operation.',
+    description: 'Execute a shell command and return stdout/stderr. Use this for any system operation. You run as a non-root user; use sudo for privileged operations (e.g. sudo apt-get install, sudo systemctl).',
     parameters: Type.Object({
       command: Type.String({ description: 'The shell command to execute' }),
       timeout: Type.Optional(Type.Number({ description: 'Timeout in milliseconds (default: 60000)' })),
