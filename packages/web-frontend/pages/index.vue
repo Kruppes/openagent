@@ -84,17 +84,19 @@
                     </a>
                     <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span>{{ attachment.originalName }}</span>
+                      <span v-if="attachment.width && attachment.height">{{ attachment.width }}×{{ attachment.height }}</span>
+                      <span>{{ formatBytes(attachment.size) }}</span>
                       <a :href="attachment.urlPath" target="_blank" rel="noopener" class="text-primary underline">Original öffnen</a>
                       <a :href="`${attachment.urlPath}?download=1`" class="text-primary underline">Download</a>
                     </div>
                   </template>
                   <template v-else>
                     <div class="flex items-center justify-between gap-3">
-                      <div>
-                        <p class="font-medium text-foreground">{{ attachment.originalName }}</p>
-                        <p class="text-xs text-muted-foreground">{{ attachment.mimeType }}</p>
+                      <div class="min-w-0 flex-1">
+                        <p class="truncate font-medium text-foreground">{{ attachment.originalName }}</p>
+                        <p class="text-xs text-muted-foreground">{{ attachment.mimeType }} · {{ formatBytes(attachment.size) }}</p>
                       </div>
-                      <a :href="`${attachment.urlPath}?download=1`" class="text-sm text-primary underline">Download</a>
+                      <a :href="`${attachment.urlPath}?download=1`" class="shrink-0 text-sm text-primary underline">Download</a>
                     </div>
                   </template>
                 </div>
@@ -190,4 +192,10 @@ function autoResize() { const el = inputRef.value; if (!el) return; el.style.hei
 function handleFileSelection(event: Event) { const target = event.target as HTMLInputElement; const files = Array.from(target.files || []); pendingFiles.value = [...pendingFiles.value, ...files]; target.value = '' }
 function removePendingFile(index: number) { pendingFiles.value.splice(index, 1) }
 function formatMessageTime(timestamp: string): string { const d = new Date(timestamp); if (isNaN(d.getTime())) return ''; return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }
+function formatBytes(size: number): string {
+  if (!Number.isFinite(size) || size < 0) return ''
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
 </script>

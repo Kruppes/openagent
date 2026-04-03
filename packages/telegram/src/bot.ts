@@ -1,9 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { Bot, GrammyError, HttpError } from 'grammy'
+import { Bot, GrammyError, HttpError, InputFile } from 'grammy'
 import type { Context } from 'grammy'
 import type { AgentCore, Database } from '@openagent/core'
-import { loadConfig, saveUpload, serializeUploadsMetadata } from '@openagent/core'
+import { loadConfig, saveUpload, serializeUploadsMetadata, parseUploadsMetadata } from '@openagent/core'
 
 /**
  * Telegram config stored in /data/config/telegram.json
@@ -681,6 +681,50 @@ export class TelegramBot {
     }
   }
 
+  private async sendUploadToTelegram(chatId: string | number, file: ReturnType<typeof parseUploadsMetadata>[number]): Promise<void> {
+    const absolutePath = path.join(process.env.DATA_DIR ?? '/data', 'uploads', file.relativePath)
+    if (!fs.existsSync(absolutePath)) {
+      throw new Error(`Upload file not found: ${file.relativePath}`)
+    }
+
+    const inputFile = new InputFile(absolutePath, file.originalName)
+    if (file.kind === 'image') {
+      await this.bot.api.sendPhoto(chatId, inputFile)
+    } else {
+      await this.bot.api.sendDocument(chatId, inputFile)
+    }
+  }
+
+  private async sendAssistantResponseToTelegram(chatId: string | number, text: string, uploads: ReturnType<typeof parseUploadsMetadata>): Promise<void> {
+    for (const file of uploads) {
+      try {
+        await this.sendUploadToTelegram(chatId, file)
+      } catch (err) {
+        console.error(`[telegram] Failed to send assistant upload to ${chatId}:`, err)
+      }
+    }
+
+    if (text.trim()) {
+      await this.sendLongMessageToChatId(chatId, text.trim())
+    }
+  }
+
+  private async sendLongMessageToChatId(chatId: string | number, text: string): Promise<void> {
+    const parts = splitMessage(text)
+    for (const part of parts) {
+      await this.sendPlainOrFormatted(chatId, part)
+    }
+  }
+
+  private async sendPlainOrFormatted(chatId: string | number, text: string): Promise<void> {
+    const htmlText = markdownToTelegramHtml(text)
+    try {
+      await this.bot.api.sendMessage(chatId, htmlText, { parse_mode: 'HTML' })
+    } catch {
+      await this.bot.api.sendMessage(chatId, text)
+    }
+  }
+
   private async processQueuedMessage(chatKey: string, queuedMessage: QueuedMessage): Promise<void> {
     const state = this.chatStates.get(chatKey)
     if (!state) return
@@ -716,6 +760,7 @@ export class TelegramBot {
 
       // Collect the full response from agent
       let fullResponse = ''
+      let assistantUploads = [] as ReturnType<typeof parseUploadsMetadata>
       // Track pending tool calls to save input+output together
       const pendingToolCalls = new Map<string, { toolName: string; toolArgs: unknown }>()
 
@@ -778,8 +823,22 @@ export class TelegramBot {
         clearInterval(typingInterval)
       }
 
-      if (!state.abortRequested && fullResponse.trim()) {
-        await this.sendLongMessage(ctx, fullResponse.trim())
+      if (this.db && numericUserId) {
+        const latestAssistant = this.db.prepare(
+          `SELECT content, metadata
+           FROM chat_messages
+           WHERE user_id = ? AND role = 'assistant'
+           ORDER BY id DESC
+           LIMIT 1`
+        ).get(numericUserId) as { content: string; metadata: string | null } | undefined
+
+        if (latestAssistant && latestAssistant.content === fullResponse.trim()) {
+          assistantUploads = parseUploadsMetadata(latestAssistant.metadata)
+        }
+      }
+
+      if (!state.abortRequested && (fullResponse.trim() || assistantUploads.length > 0)) {
+        await this.sendAssistantResponseToTelegram(ctx.chat!.id, fullResponse, assistantUploads)
       }
 
       // Save assistant response to chat_messages (if linked to a web user)

@@ -25,6 +25,7 @@ export interface ChatMessage {
   content: string
   timestamp?: string
   streaming?: boolean
+  attachments?: ChatAttachment[]
   /** The source channel (for cross-channel messages) */
   source?: 'web' | 'telegram'
   /** Sender display name (for cross-channel messages) */
@@ -33,7 +34,7 @@ export interface ChatMessage {
   toolData?: ToolCallData
   /** Whether this message was also delivered to Telegram */
   telegramDelivered?: boolean
-  /** Whether this message is a task injection response */
+  /** Whether this is a task injection response */
   isTaskInjection?: boolean
   /** Whether this is a task result notification (system message) */
   isTaskResult?: boolean
@@ -269,9 +270,7 @@ export function useChat() {
       case 'task_question': {
         const emoji = msg.type === 'task_completed' ? '✅' : msg.type === 'task_failed' ? '❌' : '❓'
         const statusLabel = msg.type.replace('task_', '')
-        const content = `${emoji} Task ${statusLabel}: ${msg.taskName ?? 'Unknown'}
-
-${msg.taskSummary ?? msg.text ?? 'No summary available.'}`
+        const content = `${emoji} Task ${statusLabel}: ${msg.taskName ?? 'Unknown'}\n\n${msg.taskSummary ?? msg.text ?? 'No summary available.'}`
         messages.value = [...messages.value, {
           role: 'system',
           content,
