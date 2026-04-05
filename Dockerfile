@@ -37,7 +37,7 @@ COPY packages/web-backend/package.json packages/web-backend/
 COPY packages/web-frontend/package.json packages/web-frontend/
 
 # Install dependencies
-RUN npm install
+RUN npm ci
 
 # Copy source code
 COPY . .
