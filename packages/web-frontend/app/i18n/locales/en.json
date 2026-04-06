@@ -15,7 +15,8 @@
     "users": "Users",
     "skills": "Skills",
     "tasks": "Tasks",
-    "cronjobs": "Cronjobs"
+    "cronjobs": "Cronjobs",
+    "plugins": "Plugins"
   },
   "roles": {
     "admin": "Admin",
@@ -558,6 +559,14 @@
     "agentEmptyDescription": "The agent can create its own skills during conversations. They will appear here.",
     "agentLoading": "Loading agent skills..."
   },
+  "plugins": {
+    "title": "Plugins",
+    "subtitle": "Manage installed plugins",
+    "enabled": "Active",
+    "disabled": "Inactive",
+    "comingSoon": "Plugin management via API coming soon",
+    "noPlugins": "No plugins installed"
+  },
   "usage": {
     "kicker": "Consumption analytics",
     "title": "Token Usage",
@@ -698,6 +707,22 @@
       "customTools": "custom tools",
       "customSkills": "custom skills",
       "customPrompt": "custom prompt"
+    }
+  },
+  "voice": {
+    "startRecording": "Start voice input",
+    "stopRecording": "Stop recording",
+    "processing": "Processing…",
+    "selectVariant": "Select a variant",
+    "errorMicNotAvailable": "Microphone not available. Please grant microphone permission.",
+    "errorWhisper": "Voice input unavailable. Could not reach transcription service.",
+    "errorOllamaFallback": "Rewrite service unavailable — showing raw transcript only.",
+    "variants": {
+      "corrected": "Corrected",
+      "rewritten": "Rewritten",
+      "formal": "Formal",
+      "short": "Short",
+      "raw": "Raw transcript"
     }
   },
   "taskViewer": {

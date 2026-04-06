@@ -11,6 +11,8 @@
 // before first paint based on localStorage preference or system preference.
 const { mode } = useTheme()
 
+// Note: Frontend plugins are initialized automatically via ~/plugins/index.ts (Nuxt plugin)
+
 // Apply class on the HTML element immediately (SSR-safe no-op since ssr: false)
 if (import.meta.client) {
   const stored = localStorage.getItem('openagent-color-mode')
