@@ -11,6 +11,7 @@
 <script setup lang="ts">
 import {
   Activity,
+  Blocks,
   Mic,
   MicOff,
   Bot,
@@ -120,6 +121,7 @@ const iconMap = {
   zap: Zap,
   volume: Volume2,
   loader: Loader,
+  blocks: Blocks,
   mic: Mic,
   micOff: MicOff,
 } as const
