@@ -55,6 +55,9 @@
     "statusConnected": "Chat verbunden",
     "statusConnecting": "Verbinde",
     "statusDisconnected": "Chat getrennt",
+    "displayFilters": "Anzeigefilter",
+    "filterToolCalls": "Tool-Aufrufe",
+    "filterInjections": "Injektionen",
     "scrollToBottom": "Nach unten scrollen",
     "attachments": {
       "openOriginal": "Original öffnen",
