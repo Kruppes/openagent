@@ -11,6 +11,9 @@
 <script setup lang="ts">
 import {
   Activity,
+  Blocks,
+  Mic,
+  MicOff,
   Bot,
   Brain,
   CalendarDays,
@@ -112,6 +115,9 @@ const iconMap = {
   externalLink: ExternalLink,
   image: Image,
   zap: Zap,
+  blocks: Blocks,
+  mic: Mic,
+  micOff: MicOff,
 } as const
 
 const props = withDefaults(defineProps<{

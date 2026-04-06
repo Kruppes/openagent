@@ -15,7 +15,8 @@
     "users": "Benutzer",
     "skills": "Skills",
     "tasks": "Aufgaben",
-    "cronjobs": "Cronjobs"
+    "cronjobs": "Cronjobs",
+    "plugins": "Plugins"
   },
   "roles": {
     "admin": "Admin",
@@ -558,6 +559,14 @@
     "agentEmptyDescription": "Der Agent kann während Unterhaltungen eigene Skills erstellen. Sie werden hier angezeigt.",
     "agentLoading": "Lade Agent-Skills..."
   },
+  "plugins": {
+    "title": "Plugins",
+    "subtitle": "Installierte Plugins verwalten",
+    "enabled": "Aktiv",
+    "disabled": "Inaktiv",
+    "comingSoon": "Plugin-Verwaltung via API demnächst verfügbar",
+    "noPlugins": "Keine Plugins installiert"
+  },
   "usage": {
     "kicker": "Verbrauchsanalysen",
     "title": "Token-Verbrauch",
@@ -698,6 +707,22 @@
       "customTools": "eigene Tools",
       "customSkills": "eigene Skills",
       "customPrompt": "eigener Prompt"
+    }
+  },
+  "voice": {
+    "startRecording": "Spracheingabe starten",
+    "stopRecording": "Aufnahme stoppen",
+    "processing": "Wird verarbeitet…",
+    "selectVariant": "Variante auswählen",
+    "errorMicNotAvailable": "Mikrofon nicht verfügbar. Bitte Mikrofonzugriff erlauben.",
+    "errorWhisper": "Spracheingabe nicht verfügbar. Transkriptionsdienst nicht erreichbar.",
+    "errorOllamaFallback": "Umschreib-Dienst nicht verfügbar — zeige nur Roh-Transkript.",
+    "variants": {
+      "corrected": "Korrigiert",
+      "rewritten": "Umformuliert",
+      "formal": "Formal",
+      "short": "Kurz",
+      "raw": "Roh-Transkript"
     }
   },
   "taskViewer": {

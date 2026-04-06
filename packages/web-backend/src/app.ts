@@ -25,6 +25,7 @@ import type { HealthMonitorService } from './health-monitor.js'
 import type { RuntimeMetrics } from './runtime-metrics.js'
 import type { MemoryConsolidationScheduler } from './memory-consolidation-scheduler.js'
 import { createUploadsRouter } from './routes/uploads.js'
+import { loadPlugins } from './plugins/loader.js'
 
 const startTime = Date.now()
 
