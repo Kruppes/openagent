@@ -29,3 +29,13 @@ coverage/
 .output/
 
 packages/web-frontend/dist
+
+# Secrets & credentials (never commit)
+*.env*
+!*.env.example
+/data/secrets/
+**/secrets/
+id_ed25519
+id_rsa
+*.pem
+*.key
