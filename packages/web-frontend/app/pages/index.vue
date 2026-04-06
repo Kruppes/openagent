@@ -21,6 +21,26 @@
         <AppIcon name="sparkles" class="h-4 w-4" />
         <span class="hidden sm:inline">{{ $t('chat.newSession') }}</span>
       </Button>
+      <Popover v-model:open="filterOpen">
+        <PopoverTrigger as-child>
+          <Button variant="outline" size="sm" class="gap-2">
+            <AppIcon name="settings" class="h-4 w-4" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent class="w-56">
+          <div class="flex flex-col gap-3">
+            <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{{ $t('chat.displayFilters') }}</p>
+            <div class="flex items-center justify-between gap-3">
+              <Label class="cursor-pointer text-sm" for="filter-tools">{{ $t('chat.filterToolCalls') }}</Label>
+              <Switch id="filter-tools" v-model:checked="showToolCalls" />
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <Label class="cursor-pointer text-sm" for="filter-injections">{{ $t('chat.filterInjections') }}</Label>
+              <Switch id="filter-injections" v-model:checked="showInjections" />
+            </div>
+          </div>
+        </PopoverContent>
+      </Popover>
     </div>
 
     <div ref="messagesContainer" class="relative flex flex-1 flex-col gap-4 overflow-y-auto p-4" @scroll="onMessagesScroll" @copy="handleCopyAsMarkdown">
@@ -172,7 +192,17 @@ function toolIconName(toolData: ToolCallData): string {
   if (memInfo.isMemoryFile) return memInfo.icon
   return 'settings'
 }
-const filteredMessages = computed(() => messages.value)
+const filterOpen = ref(false)
+const showToolCalls = ref(true)
+const showInjections = ref(false)
+
+const filteredMessages = computed(() => {
+  return messages.value.filter((msg) => {
+    if (!showToolCalls.value && msg.role === 'tool' && msg.toolData) return false
+    if (!showInjections.value && msg.role === 'system' && msg.isTaskResult) return false
+    return true
+  })
+})
 const expandedTools = ref<Set<string>>(new Set())
 function toggleTool(toolCallId: string) { const updated = new Set(expandedTools.value); updated.has(toolCallId) ? updated.delete(toolCallId) : updated.add(toolCallId); expandedTools.value = updated }
 const { messages, connectionStatus, isStreaming, connect, disconnect, sendMessage, newSession, stopTask } = useChat()
