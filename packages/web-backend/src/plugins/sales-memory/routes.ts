@@ -7,12 +7,83 @@ import {
   getSalesMemoryStats,
 } from './db.js'
 import { summarizeResults, generateDigest } from './llm.js'
+import type { SalesMemorySettings } from './config.js'
+import { loadSalesMemoryConfig, saveSalesMemoryConfig } from './config.js'
 
 export function createSalesMemoryRouter(db: Database): Router {
   const router = Router()
 
   // All routes require a valid JWT
   router.use(jwtMiddleware)
+
+  // ── Config endpoints ────────────────────────────────────────────────────────
+
+  /**
+   * GET /api/plugins/salesmemory/config
+   * Returns the current effective config (saved file + env defaults merged).
+   * The openai/anthropic keys are masked for security.
+   */
+  router.get('/config', (_req, res) => {
+    try {
+      const config = loadSalesMemoryConfig()
+      // Mask secrets in the response (non-empty → "***")
+      const masked = {
+        ...config,
+        openaiKey: config.openaiKey ? '***' : '',
+        anthropicKey: config.anthropicKey ? '***' : '',
+      }
+      res.json(masked)
+    } catch (err) {
+      console.error('[sales-memory] GET /config error:', err)
+      res.status(500).json({ error: 'Failed to load config', detail: (err as Error).message })
+    }
+  })
+
+  /**
+   * POST /api/plugins/salesmemory/config
+   * Saves the provided settings to /data/config/salesmemory.json.
+   * Partial updates are merged with existing config.
+   * If openaiKey / anthropicKey is "***" (masked), the existing stored value is preserved.
+   */
+  router.post('/config', (req, res) => {
+    try {
+      const existing = loadSalesMemoryConfig()
+      const body = req.body as Partial<SalesMemorySettings>
+
+      const next: SalesMemorySettings = {
+        provider: body.provider ?? existing.provider,
+        ollamaUrl: body.ollamaUrl ?? existing.ollamaUrl,
+        ollamaModel: body.ollamaModel ?? existing.ollamaModel,
+        // Preserve existing secret if the client sends the masked placeholder
+        openaiKey: (body.openaiKey !== undefined && body.openaiKey !== '***')
+          ? body.openaiKey
+          : existing.openaiKey,
+        openaiModel: body.openaiModel ?? existing.openaiModel,
+        anthropicKey: (body.anthropicKey !== undefined && body.anthropicKey !== '***')
+          ? body.anthropicKey
+          : existing.anthropicKey,
+        anthropicModel: body.anthropicModel ?? existing.anthropicModel,
+        autoInject: body.autoInject ?? existing.autoInject,
+        injectMaxResults: body.injectMaxResults ?? existing.injectMaxResults,
+        injectThreshold: body.injectThreshold ?? existing.injectThreshold,
+      }
+
+      saveSalesMemoryConfig(next)
+
+      // Return the saved config (with masked secrets)
+      const masked = {
+        ...next,
+        openaiKey: next.openaiKey ? '***' : '',
+        anthropicKey: next.anthropicKey ? '***' : '',
+      }
+      res.json(masked)
+    } catch (err) {
+      console.error('[sales-memory] POST /config error:', err)
+      res.status(500).json({ error: 'Failed to save config', detail: (err as Error).message })
+    }
+  })
+
+  // ── Search & recall endpoints ───────────────────────────────────────────────
 
   /**
    * GET /api/plugins/salesmemory/search?q=...&limit=5
@@ -40,6 +111,8 @@ export function createSalesMemoryRouter(db: Database): Router {
    * GET /api/plugins/salesmemory/recall?q=...
    * FTS5 search + LLM summarisation — returns a human-readable summary plus
    * the raw results for reference.
+   *
+   * Optional JSON body or query params: settings overrides (provider, ollamaUrl, etc.)
    */
   router.get('/recall', async (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
@@ -49,9 +122,15 @@ export function createSalesMemoryRouter(db: Database): Router {
       return
     }
 
+    // Accept optional per-request settings overrides from query params
+    const settingsOverrides: Partial<SalesMemorySettings> = {}
+    if (typeof req.query.provider === 'string') settingsOverrides.provider = req.query.provider as SalesMemorySettings['provider']
+    if (typeof req.query.ollamaUrl === 'string') settingsOverrides.ollamaUrl = req.query.ollamaUrl
+    if (typeof req.query.ollamaModel === 'string') settingsOverrides.ollamaModel = req.query.ollamaModel
+
     try {
       const results = searchMemory(db, q, 10)
-      const summary = await summarizeResults(results, q)
+      const summary = await summarizeResults(results, q, settingsOverrides)
       res.json({ summary, results, count: results.length, query: q })
     } catch (err) {
       console.error('[sales-memory] /recall error:', err)
@@ -61,18 +140,24 @@ export function createSalesMemoryRouter(db: Database): Router {
 
   /**
    * POST /api/plugins/salesmemory/digest
-   * Body: { date?: "YYYY-MM-DD" }  — defaults to today
+   * Body: { date?: "YYYY-MM-DD", settings?: SalesMemorySettings }  — defaults to today
    * Generates a daily digest via LLM and persists it.
    */
   router.post('/digest', async (req, res) => {
     const today = new Date().toISOString().slice(0, 10)
+    const body = req.body as Record<string, unknown>
     const date =
-      typeof (req.body as Record<string, unknown>)?.date === 'string'
-        ? ((req.body as Record<string, unknown>).date as string).trim() || today
+      typeof body?.date === 'string'
+        ? (body.date as string).trim() || today
         : today
 
+    // Accept optional per-request settings overrides from body
+    const settingsOverrides = (typeof body?.settings === 'object' && body.settings !== null)
+      ? body.settings as Partial<SalesMemorySettings>
+      : {}
+
     try {
-      const content = await generateDigest(db, date)
+      const content = await generateDigest(db, date, settingsOverrides)
       res.status(201).json({ date, content })
     } catch (err) {
       console.error('[sales-memory] /digest error:', err)
