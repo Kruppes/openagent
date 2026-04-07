@@ -30,6 +30,9 @@ coverage/
 
 packages/web-frontend/dist
 
+# Canary/local deployment overrides
+docker-compose.canary.yml
+
 # Secrets & credentials (never commit)
 *.env*
 !*.env.example
