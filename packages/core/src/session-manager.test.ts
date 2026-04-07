@@ -109,7 +109,7 @@ describe('SessionManager', () => {
       vi.useRealTimers()
     })
 
-    it('fires timeout after configured inactivity period', async () => {
+    it('marks session as dormant after timeout (soft signal, not hard reset)', async () => {
       const onSessionEnd = vi.fn()
       const manager = new SessionManager({
         db,
@@ -124,16 +124,20 @@ describe('SessionManager', () => {
       // Advance past timeout
       await vi.advanceTimersByTimeAsync(61 * 1000)
 
-      expect(onSessionEnd).toHaveBeenCalledWith(expect.objectContaining({
-        id: session.id,
-        userId: 'user1',
-      }), null)
+      // Timeout is now a soft signal — session stays in map but marked dormant
+      // onSessionEnd should NOT have been called by the timeout
+      expect(onSessionEnd).not.toHaveBeenCalled()
 
-      // Session should be gone
-      expect(manager.hasActiveSession('user1')).toBe(false)
+      // Session should still be in the active map (as dormant)
+      expect(manager.hasActiveSession('user1')).toBe(true)
+
+      // The session should be marked as dormant
+      const activeSession = manager.getSession('user1')
+      expect(activeSession?.dormant).toBe(true)
+      expect(activeSession?.id).toBe(session.id)
     })
 
-    it('resets timer on new message', async () => {
+    it('resets timer on new message before timeout fires', async () => {
       const onSessionEnd = vi.fn()
       const manager = new SessionManager({
         db,
@@ -154,14 +158,13 @@ describe('SessionManager', () => {
 
       // Advance 50 more seconds (still within new timer)
       await vi.advanceTimersByTimeAsync(50 * 1000)
+      // Session should not be dormant yet (timer was reset)
+      const sessionAfter50 = manager.getSession('user1')
+      expect(sessionAfter50?.dormant).toBeFalsy()
       expect(onSessionEnd).not.toHaveBeenCalled()
-
-      // Advance past new timeout
-      await vi.advanceTimersByTimeAsync(11 * 1000)
-      expect(onSessionEnd).toHaveBeenCalled()
     })
 
-    it('calls onSummarize on timeout when messages exist', async () => {
+    it('does not call onSummarize on soft timeout (dormant, not ended)', async () => {
       const onSummarize = vi.fn().mockResolvedValue('This session discussed testing.')
       const manager = new SessionManager({
         db,
@@ -175,24 +178,19 @@ describe('SessionManager', () => {
 
       await vi.advanceTimersByTimeAsync(61 * 1000)
 
-      expect(onSummarize).toHaveBeenCalled()
+      // Soft timeout does NOT trigger summarization
+      expect(onSummarize).not.toHaveBeenCalled()
 
-      // Check that summary was appended to daily file
-      const today = new Date().toISOString().split('T')[0]
-      const dailyPath = path.join(memoryDir, 'daily', `${today}.md`)
-      expect(fs.existsSync(dailyPath)).toBe(true)
-      const dailyContent = fs.readFileSync(dailyPath, 'utf-8')
-      expect(dailyContent).toContain('Session Summary')
-      expect(dailyContent).toContain('This session discussed testing.')
+      // Session is dormant, not ended — ended_at should be NULL
+      const dormant = manager.getSession('user1')
+      expect(dormant?.dormant).toBe(true)
     })
 
-    it('updates SQLite on session end with summary flag', async () => {
-      const onSummarize = vi.fn().mockResolvedValue('Summary text')
+    it('session stays in SQLite as active (no ended_at) when dormant', async () => {
       const manager = new SessionManager({
         db,
         memoryDir,
         timeoutMinutes: 1,
-        onSummarize,
       })
 
       const session = manager.getOrCreateSession('user1')
@@ -200,9 +198,9 @@ describe('SessionManager', () => {
 
       await vi.advanceTimersByTimeAsync(61 * 1000)
 
+      // ended_at should still be NULL (session not archived, just dormant)
       const metadata = manager.getSessionMetadata(session.id)
-      expect(metadata!.ended_at).not.toBeNull()
-      expect(metadata!.summary_written).toBe(1)
+      expect(metadata!.ended_at).toBeNull()
       expect(metadata!.message_count).toBe(1)
     })
 

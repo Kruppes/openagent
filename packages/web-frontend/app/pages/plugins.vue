@@ -83,21 +83,13 @@
 </template>
 
 <script setup lang="ts">
-import { pluginEnabledStates, setPluginEnabled } from '~/utils/pluginRegistry'
+import { pluginEnabledStates, setPluginEnabled, getRegisteredPlugins } from '~/utils/pluginRegistry'
 
 const { user } = useAuth()
 const isAdmin = computed(() => user.value?.role === 'admin')
 
-// Static plugin metadata list (UI metadata only; enabled state comes from the registry)
-const plugins = [
-  {
-    id: 'voice-input',
-    name: 'Voice Input',
-    version: '1.0.0',
-    description: 'Record audio and transcribe it via Whisper. Inserts transcription with [Diktat] prefix into the chat input.',
-    configurable: true,
-  },
-]
+// Plugins come from the live registry — registered via plugins/index.ts at app start
+const plugins = computed(() => getRegisteredPlugins())
 
 /** Which plugin's settings modal is currently open (null = none) */
 const activeSettingsPlugin = ref<string | null>(null)

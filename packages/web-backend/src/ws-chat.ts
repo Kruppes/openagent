@@ -8,6 +8,8 @@ import { URL } from 'node:url'
 import crypto from 'node:crypto'
 import type { RuntimeMetrics } from './runtime-metrics.js'
 import type { ChatEventBus, ChatEvent } from './chat-event-bus.js'
+import { searchMemory } from './plugins/sales-memory/db.js'
+import { loadSalesMemoryConfig } from './plugins/sales-memory/config.js'
 
 interface ChatMessage {
   type: 'message' | 'command'
@@ -254,6 +256,36 @@ export function setupWebSocketChat(
         return
       }
 
+      // ── SalesMemory Auto-Inject ───────────────────────────────────────────────
+      // When autoInject is enabled in the SalesMemory config, prepend relevant
+      // memory context to the user message before sending it to the agent.
+      // Errors are non-fatal.
+      let messageContent = parsed.content
+      if (process.env.SALESMEMORY_ENABLED === 'true' && parsed.content.trim()) {
+        try {
+          const smConfig = loadSalesMemoryConfig()
+          if (smConfig.enabled && smConfig.autoInject) {
+            const injectMaxResults = smConfig.injectMaxResults
+            const injectThreshold = smConfig.injectThreshold
+            const memResults = searchMemory(db, parsed.content, injectMaxResults + 5)
+            const filtered = memResults.filter(r => r.rank < injectThreshold).slice(0, injectMaxResults)
+            if (filtered.length > 0) {
+              const contextLines = filtered.map(r => {
+                const date = r.created_at ? r.created_at.slice(0, 10) : 'unbekannt'
+                const snippet = r.content.slice(0, 200).replace(/\n/g, ' ')
+                return `- [${date}] ${snippet}`
+              }).join('\n')
+              const contextBlock = `[SalesMemory-Kontext]\n${contextLines}\n[Ende SalesMemory-Kontext]`
+              messageContent = `${contextBlock}\n\n${parsed.content}`
+            }
+          }
+        } catch (memErr) {
+          // Never block the chat request due to memory errors
+          console.warn('[sales-memory] Auto-inject error (ignored):', (memErr as Error).message)
+        }
+      }
+      // ── End SalesMemory Auto-Inject ───────────────────────────────────────────
+
       const abortController = new AbortController()
       activeStreams.set(ws, abortController)
       runtimeMetrics?.startRequest()
@@ -264,7 +296,7 @@ export function setupWebSocketChat(
       const pendingToolCalls = new Map<string, { toolName: string; toolArgs: unknown }>()
 
       try {
-        for await (const chunk of agentCore.sendMessage(String(currentUser.userId), parsed.content, 'web', parsed.attachments)) {
+        for await (const chunk of agentCore.sendMessage(String(currentUser.userId), messageContent, 'web', parsed.attachments)) {
           if (abortController.signal.aborted) break
 
           if (chunk.type === 'text' && chunk.text) {

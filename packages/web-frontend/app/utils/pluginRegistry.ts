@@ -3,6 +3,9 @@ import type { Ref } from 'vue'
 import type { Component } from 'vue'
 import type { OpenAgentFrontendPlugin } from './pluginTypes'
 
+/** Full plugin metadata keyed by plugin ID */
+const pluginRegistry: Record<string, OpenAgentFrontendPlugin> = {}
+
 /** Components registered per plugin ID per slot */
 const pluginSlots: Record<string, Record<string, Component>> = {}
 
@@ -12,7 +15,15 @@ export const pluginEnabledStates: Ref<Record<string, boolean>> = ref({})
 /**
  * Register a frontend plugin and store its slot components keyed by plugin ID.
  */
+/**
+ * Returns all registered plugins with their metadata.
+ */
+export function getRegisteredPlugins(): OpenAgentFrontendPlugin[] {
+  return Object.values(pluginRegistry)
+}
+
 export function registerPlugin(plugin: OpenAgentFrontendPlugin): void {
+  pluginRegistry[plugin.id] = plugin
   pluginSlots[plugin.id] = {}
 
   const slotMap = pluginSlots[plugin.id]!

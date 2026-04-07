@@ -568,7 +568,19 @@ export class TelegramBot {
 
     if (!await this.checkAuthorized(ctx)) return
 
-    this.bufferMessage(ctx, text)
+    // Embed reply context so the agent knows what the user is responding to
+    let messageText = text
+    const replyMsg = ctx.message?.reply_to_message
+    if (replyMsg) {
+      const quotedText = ('text' in replyMsg ? replyMsg.text : undefined)
+        ?? ('caption' in replyMsg ? replyMsg.caption : undefined)
+      if (quotedText) {
+        const truncated = quotedText.length > 300 ? quotedText.slice(0, 300) + '...' : quotedText
+        messageText = `[Reply zu: "${truncated}"]\n${text}`
+      }
+    }
+
+    this.bufferMessage(ctx, messageText)
   }
 
   private async downloadTelegramFile(fileId: string): Promise<{ buffer: Buffer; mimeType?: string }> {
@@ -607,7 +619,10 @@ export class TelegramBot {
     const userId = this.resolveUserId(ctx)
     const numericUserId = this.resolveNumericUserId(ctx)
     const caption = ctx.msg?.caption?.trim() ?? ''
-    const sessionId = `telegram-${userId}-${Date.now()}`
+
+    // Ensure a session exists in AgentCore before we need the session ID
+    const agentSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram')
+    const sessionId = agentSession.id
 
     try {
       let upload
@@ -800,8 +815,13 @@ export class TelegramBot {
     const isDM = this.isDMChat(ctx)
     const username = isDM ? this.resolveUsername(ctx) : null
 
-    // Generate a session ID for chat_messages storage
-    const sessionId = `telegram-${userId}-${Date.now()}`
+    // Ensure the session exists in AgentCore before sendMessage, so we can get the session ID
+    // for chat_messages storage. sendMessage will call getOrCreateSession internally too.
+    this.agentCore.getSessionManager().getOrCreateSession(userId, isDM ? 'telegram' : 'telegram-group')
+
+    // Get the session ID from AgentCore (same session used by sendMessage)
+    const agentSession = this.agentCore.getSessionManager().getSession(userId)
+    const sessionId = agentSession?.id ?? `telegram-${userId}-${Date.now()}`
 
     // Save user message to chat_messages (if linked to a web user)
     // Skip if this came from handleIncomingAttachment (already saved)

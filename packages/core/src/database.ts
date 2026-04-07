@@ -117,6 +117,15 @@ export function initDatabase(dbPath?: string): Database {
   db.pragma('foreign_keys = ON')
   db.exec(SCHEMA)
 
+  // Migration: add topic_tags and token_count columns to sessions if missing
+  const sessionCols = db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]
+  if (!sessionCols.find(c => c.name === 'topic_tags')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN topic_tags TEXT DEFAULT NULL')
+  }
+  if (!sessionCols.find(c => c.name === 'token_count')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN token_count INTEGER NOT NULL DEFAULT 0')
+  }
+
   // Migration: add status column to tool_calls if missing
   const cols = db.prepare("PRAGMA table_info(tool_calls)").all() as { name: string }[]
   if (!cols.find(c => c.name === 'status')) {

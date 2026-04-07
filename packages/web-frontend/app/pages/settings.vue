@@ -8,9 +8,9 @@
 
   <!-- Settings page -->
   <div v-else class="flex h-full flex-col overflow-hidden">
-    <!-- Header with save action (hidden on secrets tab which has its own save flow) -->
+    <!-- Header with save action (hidden on secrets/salesMemory tabs which have their own save flow) -->
     <PageHeader :title="$t('settings.title')" :subtitle="$t('settings.subtitle')">
-      <template v-if="activeTab !== 'secrets'" #actions>
+      <template v-if="activeTab !== 'secrets' && activeTab !== 'salesMemory'" #actions>
         <Button :disabled="saving || !form" @click="handleSave">
           <span
             v-if="saving"
@@ -22,8 +22,8 @@
       </template>
     </PageHeader>
 
-    <!-- Feedback alerts — only for non-secrets tabs (secrets tab handles its own feedback) -->
-    <div v-if="activeTab !== 'secrets' && (error || successMessage)" class="shrink-0 border-b border-border px-6 py-3">
+    <!-- Feedback alerts — only for non-secrets/non-salesMemory tabs (those handle their own feedback) -->
+    <div v-if="activeTab !== 'secrets' && activeTab !== 'salesMemory' && (error || successMessage)" class="shrink-0 border-b border-border px-6 py-3">
       <Alert v-if="error" variant="destructive">
         <AlertDescription class="flex items-center justify-between">
           <span>{{ error }}</span>
@@ -1138,6 +1138,219 @@
               />
             </div>
 
+          <!-- ═══ SalesMemory ═══ -->
+            <div v-else-if="activeTab === 'salesMemory'">
+              <div class="mb-8">
+                <h2 class="text-lg font-semibold tracking-tight text-foreground">
+                  {{ $t('settings.tabs.salesMemory') }}
+                </h2>
+                <p class="mt-1 text-sm text-muted-foreground">
+                  {{ $t('settings.tabs.salesMemoryDescription') }}
+                </p>
+              </div>
+
+              <div v-if="smLoading" class="flex flex-col gap-6">
+                <Skeleton class="h-12 w-full rounded-lg" />
+                <Skeleton class="h-10 w-full" />
+                <Skeleton class="h-10 w-full" />
+              </div>
+
+              <template v-else>
+                <div v-if="smError || smSuccess" class="mb-6">
+                  <Alert v-if="smError" variant="destructive">
+                    <AlertDescription class="flex items-center justify-between">
+                      <span>{{ smError }}</span>
+                      <button type="button" class="ml-2 opacity-70 hover:opacity-100" @click="smError = null">
+                        <AppIcon name="close" class="h-4 w-4" />
+                      </button>
+                    </AlertDescription>
+                  </Alert>
+                  <Alert v-if="smSuccess" variant="success">
+                    <AlertDescription>{{ $t('settings.salesMemorySaveSuccess') }}</AlertDescription>
+                  </Alert>
+                </div>
+
+              <div class="flex flex-col gap-8">
+                <!-- Enabled toggle -->
+                <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
+                  <div class="flex flex-col gap-0.5 pr-4">
+                    <Label for="sm-enabled" class="cursor-pointer">
+                      {{ $t('settings.salesMemoryEnabled') }}
+                    </Label>
+                    <p class="text-xs text-muted-foreground">
+                      {{ $t('settings.salesMemoryEnabledHint') }}
+                    </p>
+                  </div>
+                  <Switch
+                    id="sm-enabled"
+                    v-model:checked="smForm.enabled"
+                    @update:checked="handleSmPartialSave({ enabled: $event })"
+                  />
+                </div>
+
+                <template v-if="smForm.enabled">
+                  <!-- Provider -->
+                  <div class="flex flex-col gap-2">
+                    <Label for="sm-provider">{{ $t('settings.salesMemoryProvider') }}</Label>
+                    <Select v-model="smForm.provider">
+                      <SelectTrigger id="sm-provider">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ollama">Ollama</SelectItem>
+                        <SelectItem value="openai">OpenAI</SelectItem>
+                        <SelectItem value="anthropic">Anthropic</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p class="text-xs text-muted-foreground">{{ $t('settings.salesMemoryProviderHint') }}</p>
+                  </div>
+
+                  <!-- Ollama Section -->
+                  <div v-if="smForm.provider === 'ollama'" class="flex flex-col gap-4 rounded-lg border border-border bg-muted/30 p-4">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {{ $t('settings.salesMemoryOllamaSection') }}
+                    </p>
+                    <div class="flex flex-col gap-2">
+                      <Label for="sm-ollama-url">{{ $t('settings.salesMemoryOllamaUrl') }}</Label>
+                      <Input
+                        id="sm-ollama-url"
+                        v-model="smForm.ollamaUrl"
+                        type="url"
+                        placeholder="http://localhost:11434"
+                      />
+                    </div>
+                    <div class="flex flex-col gap-2">
+                      <Label for="sm-ollama-model">{{ $t('settings.salesMemoryOllamaModel') }}</Label>
+                      <Input
+                        id="sm-ollama-model"
+                        v-model="smForm.ollamaModel"
+                        type="text"
+                        placeholder="llama3.2"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- OpenAI Section -->
+                  <div v-else-if="smForm.provider === 'openai'" class="flex flex-col gap-4 rounded-lg border border-border bg-muted/30 p-4">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {{ $t('settings.salesMemoryOpenaiSection') }}
+                    </p>
+                    <div class="flex flex-col gap-2">
+                      <Label for="sm-openai-key">{{ $t('settings.salesMemoryOpenaiKey') }}</Label>
+                      <Input
+                        id="sm-openai-key"
+                        v-model="smForm.openaiKey"
+                        type="password"
+                        autocomplete="off"
+                        placeholder="sk-..."
+                      />
+                    </div>
+                    <div class="flex flex-col gap-2">
+                      <Label for="sm-openai-model">{{ $t('settings.salesMemoryOpenaiModel') }}</Label>
+                      <Input
+                        id="sm-openai-model"
+                        v-model="smForm.openaiModel"
+                        type="text"
+                        placeholder="gpt-4o-mini"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- Anthropic Section -->
+                  <div v-else-if="smForm.provider === 'anthropic'" class="flex flex-col gap-4 rounded-lg border border-border bg-muted/30 p-4">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {{ $t('settings.salesMemoryAnthropicSection') }}
+                    </p>
+                    <div class="flex flex-col gap-2">
+                      <Label for="sm-anthropic-key">{{ $t('settings.salesMemoryAnthropicKey') }}</Label>
+                      <Input
+                        id="sm-anthropic-key"
+                        v-model="smForm.anthropicKey"
+                        type="password"
+                        autocomplete="off"
+                        placeholder="sk-ant-..."
+                      />
+                    </div>
+                    <div class="flex flex-col gap-2">
+                      <Label for="sm-anthropic-model">{{ $t('settings.salesMemoryAnthropicModel') }}</Label>
+                      <Input
+                        id="sm-anthropic-model"
+                        v-model="smForm.anthropicModel"
+                        type="text"
+                        placeholder="claude-3-haiku-20240307"
+                      />
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  <!-- Auto-Inject Section -->
+                  <div>
+                    <h3 class="text-base font-semibold tracking-tight text-foreground">
+                      {{ $t('settings.salesMemoryAutoInjectSection') }}
+                    </h3>
+                  </div>
+
+                  <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
+                    <div class="flex flex-col gap-0.5 pr-4">
+                      <Label for="sm-auto-inject" class="cursor-pointer">
+                        {{ $t('settings.salesMemoryAutoInject') }}
+                      </Label>
+                      <p class="text-xs text-muted-foreground">
+                        {{ $t('settings.salesMemoryAutoInjectHint') }}
+                      </p>
+                    </div>
+                    <Switch
+                      id="sm-auto-inject"
+                      v-model:checked="smForm.autoInject"
+                    />
+                  </div>
+
+                  <template v-if="smForm.autoInject">
+                    <div class="flex flex-col gap-2">
+                      <Label for="sm-inject-max">{{ $t('settings.salesMemoryInjectMaxResults') }}</Label>
+                      <Input
+                        id="sm-inject-max"
+                        v-model.number="smForm.injectMaxResults"
+                        type="number"
+                        min="1"
+                        max="10"
+                        class="w-full"
+                      />
+                      <p class="text-xs text-muted-foreground">{{ $t('settings.salesMemoryInjectMaxResultsHint') }}</p>
+                    </div>
+
+                    <div class="flex flex-col gap-2">
+                      <Label for="sm-inject-threshold">{{ $t('settings.salesMemoryInjectThreshold') }}</Label>
+                      <Input
+                        id="sm-inject-threshold"
+                        v-model.number="smForm.injectThreshold"
+                        type="number"
+                        min="-5.0"
+                        max="0.0"
+                        step="0.1"
+                        class="w-full"
+                      />
+                      <p class="text-xs text-muted-foreground">{{ $t('settings.salesMemoryInjectThresholdHint') }}</p>
+                    </div>
+                  </template>
+
+                  <!-- Save button -->
+                  <div class="flex justify-end">
+                    <Button :disabled="smSaving" @click="handleSmSave">
+                      <span
+                        v-if="smSaving"
+                        class="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+                        aria-hidden="true"
+                      />
+                      {{ $t('settings.save') }}
+                    </Button>
+                  </div>
+                </template>
+              </div>
+              </template>
+            </div>
+
           </template>
         </div>
       </div>
@@ -1148,6 +1361,7 @@
 <script setup lang="ts">
 import type { MemoryConsolidationSettings, HealthMonitorNotificationToggles, HealthMonitorSettings, AgentHeartbeatSettings, TasksSettings } from '~/composables/useSettings'
 import type { TelegramUser } from '~/composables/useTelegramUsers'
+import type { SalesMemoryPluginSettings } from '~/composables/useSalesMemorySettings'
 
 /* ── Auth ── */
 const { user } = useAuth()
@@ -1190,7 +1404,7 @@ const timezones = [
   'America/Argentina/Buenos_Aires',
 ]
 
-const VALID_TABS = ['agent', 'memory', 'agentHeartbeat', 'healthMonitor', 'telegram', 'tasks', 'secrets'] as const
+const VALID_TABS = ['agent', 'memory', 'agentHeartbeat', 'healthMonitor', 'telegram', 'tasks', 'secrets', 'salesMemory'] as const
 type TabId = (typeof VALID_TABS)[number]
 
 const activeTab = computed<TabId>({
@@ -1208,6 +1422,7 @@ const tabs = computed(() => [
   { id: 'healthMonitor' as TabId, icon: 'activity', label: t('settings.tabs.healthMonitor') },
   { id: 'memory' as TabId, icon: 'brain', label: t('settings.tabs.memory') },
   { id: 'agentHeartbeat' as TabId, icon: 'activity', label: t('settings.tabs.agentHeartbeat') },
+  { id: 'salesMemory' as TabId, icon: 'brain', label: t('settings.tabs.salesMemory') },
   { id: 'secrets' as TabId, icon: 'key', label: t('settings.tabs.secrets') },
   { id: 'tasks' as TabId, icon: 'bot', label: t('settings.tabs.tasks') },
   { id: 'telegram' as TabId, icon: 'send', label: t('settings.tabs.telegram') },
@@ -1479,6 +1694,74 @@ async function handleSave() {
   }, 3000)
 }
 
+/* ── SalesMemory state ── */
+const {
+  settings: smSettings,
+  loading: smLoadingRef,
+  fetchSettings: fetchSmSettings,
+  saveSettings: saveSmSettings,
+  getDefaults: getSmDefaults,
+} = useSalesMemorySettings()
+
+const smLoading = computed(() => smLoadingRef.value)
+const smSaving = ref(false)
+const smError = ref<string | null>(null)
+const smSuccess = ref(false)
+
+const smForm = reactive<SalesMemoryPluginSettings>({
+  ...getSmDefaults(),
+})
+
+// Sync form when settings load
+watch(smSettings, (s) => {
+  smForm.enabled = s.enabled
+  smForm.provider = s.provider
+  smForm.ollamaUrl = s.ollamaUrl
+  smForm.ollamaModel = s.ollamaModel
+  smForm.openaiKey = s.openaiKey
+  smForm.openaiModel = s.openaiModel
+  smForm.anthropicKey = s.anthropicKey
+  smForm.anthropicModel = s.anthropicModel
+  smForm.autoInject = s.autoInject
+  smForm.injectMaxResults = s.injectMaxResults
+  smForm.injectThreshold = s.injectThreshold
+}, { immediate: true })
+
+async function handleSmSave() {
+  smSaving.value = true
+  smError.value = null
+  try {
+    const defaults = getSmDefaults()
+    const payload: SalesMemoryPluginSettings = {
+      enabled: smForm.enabled,
+      provider: smForm.provider,
+      ollamaUrl: smForm.ollamaUrl?.trim() || defaults.ollamaUrl,
+      ollamaModel: smForm.ollamaModel?.trim() || defaults.ollamaModel,
+      openaiKey: smForm.openaiKey,
+      openaiModel: smForm.openaiModel?.trim() || defaults.openaiModel,
+      anthropicKey: smForm.anthropicKey,
+      anthropicModel: smForm.anthropicModel?.trim() || defaults.anthropicModel,
+      autoInject: smForm.autoInject,
+      injectMaxResults: Math.max(1, Math.min(10, smForm.injectMaxResults)),
+      injectThreshold: Math.max(-5.0, Math.min(0.0, smForm.injectThreshold)),
+    }
+    const ok = await saveSmSettings(payload)
+    if (!ok) {
+      smError.value = 'Failed to save SalesMemory settings.'
+    } else {
+      smSuccess.value = true
+      setTimeout(() => { smSuccess.value = false }, 3000)
+    }
+  } finally {
+    smSaving.value = false
+  }
+}
+
+async function handleSmPartialSave(partial: Partial<SalesMemoryPluginSettings>) {
+  Object.assign(smForm, partial)
+  await handleSmSave()
+}
+
 /* ── Init ── */
 onMounted(async () => {
   if (!isAdmin.value) return
@@ -1489,6 +1772,7 @@ onMounted(async () => {
     fetchTelegramUsers(),
     fetchConsolidationStatus(),
     fetchSecrets(),
+    fetchSmSettings(),
   ])
   hydrateForm()
 })
