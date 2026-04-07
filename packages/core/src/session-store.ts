@@ -111,6 +111,7 @@ export function getRecentArchivedSessions(
   db: Database,
   userId: string,
   limit: number,
+  maxAgeDays: number = 7,
 ): ArchivedSession[] {
   const rows = db.prepare(
     `SELECT
@@ -124,10 +125,11 @@ export function getRecentArchivedSessions(
        token_count AS tokenCount
      FROM sessions
      WHERE ended_at IS NOT NULL
+       AND ended_at >= datetime('now', ? || ' days')
        AND (user_id = ? OR user_id IS NULL AND ? IS NULL)
      ORDER BY ended_at DESC
      LIMIT ?`,
-  ).all(userId, userId, limit) as Array<{
+  ).all(`-${maxAgeDays}`, userId, userId, limit) as Array<{
     id: string
     rawUserId: string | null
     source: string

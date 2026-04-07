@@ -385,6 +385,7 @@ export class AgentCore {
   private providerConfig?: ProviderConfig
   private providerManager?: ProviderManager
   private onSessionEndCallback?: (userId: string, summary: string | null) => void
+  private reactivationNotice: string | null = null
   private onTaskInjectionChunkCallback?: (chunk: ResponseChunk) => void
   private messageQueue: MessageQueue
 
@@ -477,6 +478,13 @@ export class AgentCore {
       onSummarize: async (_sessionId: string, userId: string) => {
         return this.generateSessionSummary(userId)
       },
+      onSessionReactivated: (session: SessionInfo, overlap: number) => {
+        // Emit a visible system message so the user knows context was restored
+        const time = new Date(session.startedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+        const tags = session.topicTags?.length ? session.topicTags.join(', ') : 'unbekannt'
+        const pct = Math.round(overlap * 100)
+        this.reactivationNotice = `🔄 Session von ${time} Uhr reaktiviert (${pct}% Übereinstimmung) — Thema: ${tags}`
+      },
       onSessionEnd: (session: SessionInfo, summary: string | null) => {
         // Only clear agent messages for non-system sessions.
         // System sessions (from task injections) share the same agent instance,
@@ -564,7 +572,13 @@ export class AgentCore {
    * Process a user message (called from the queue)
    */
   private async *processUserMessage(userId: string, text: string, source: string, attachments?: UploadDescriptor[]): AsyncIterable<ResponseChunk> {
-    const session = this.sessionManager.getOrCreateSession(userId, source)
+    const session = this.sessionManager.resolveSession(userId, source, text)
+
+    // If a session was reactivated, emit the notice as the first chunk
+    if (this.reactivationNotice) {
+      yield { type: 'text', text: `${this.reactivationNotice}\n\n` }
+      this.reactivationNotice = null
+    }
     const sessionId = session.id
 
     // Resolve username for user profile injection (skip for group chats)

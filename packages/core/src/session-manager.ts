@@ -34,12 +34,16 @@ export interface SessionManagerOptions {
   onSummarize?: (sessionId: string, userId: string) => Promise<string>
   /** Called when a session is disposed (after summary if applicable) */
   onSessionEnd?: (session: SessionInfo, summary: string | null) => void
+  /** Called when an archived session is reactivated */
+  onSessionReactivated?: (session: SessionInfo, overlap: number) => void
   /** Topic-overlap threshold for reactivation (0.0–1.0, default: 0.25) */
   topicReactivationThreshold?: number
   /** Max token count before hard reset (default: 80000) */
   maxTokenCount?: number
   /** How many archived sessions to search for reactivation (default: 10) */
   reactivationSearchDepth?: number
+  /** Max age in days for session reactivation search (default: 7) */
+  reactivationMaxAgeDays?: number
 }
 
 /**
@@ -64,10 +68,12 @@ export class SessionManager {
   private memoryDir?: string
   private onSummarize?: (sessionId: string, userId: string) => Promise<string>
   private onSessionEnd?: (session: SessionInfo, summary: string | null) => void
+  private onSessionReactivated?: (session: SessionInfo, overlap: number) => void
   private _skipSessionSummary = false
   private topicReactivationThreshold: number
   private maxTokenCount: number
   private reactivationSearchDepth: number
+  private reactivationMaxAgeDays: number
 
   constructor(options: SessionManagerOptions) {
     this.db = options.db
@@ -76,9 +82,11 @@ export class SessionManager {
     this.memoryDir = options.memoryDir
     this.onSummarize = options.onSummarize
     this.onSessionEnd = options.onSessionEnd
+    this.onSessionReactivated = options.onSessionReactivated
     this.topicReactivationThreshold = options.topicReactivationThreshold ?? 0.25
     this.maxTokenCount = options.maxTokenCount ?? 80_000
     this.reactivationSearchDepth = options.reactivationSearchDepth ?? 10
+    this.reactivationMaxAgeDays = options.reactivationMaxAgeDays ?? 7
 
     // Close any orphaned sessions from a previous server run
     this.closeOrphanedSessions()
@@ -215,7 +223,7 @@ export class SessionManager {
     if (messageText) {
       const newTags = extractTopicTags([messageText])
       if (newTags.length > 0) {
-        const archived = getRecentArchivedSessions(this.db, userId, this.reactivationSearchDepth)
+        const archived = getRecentArchivedSessions(this.db, userId, this.reactivationSearchDepth, this.reactivationMaxAgeDays)
         let bestMatch: { session: typeof archived[0]; overlap: number } | null = null
 
         for (const archivedSession of archived) {
@@ -331,6 +339,7 @@ export class SessionManager {
       status: 'success',
     })
 
+    this.onSessionReactivated?.(session, overlap)
     this.resetTimer(userId)
     return session
   }
