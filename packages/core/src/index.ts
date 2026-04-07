@@ -46,6 +46,17 @@ export type { MemoryConsolidationOptions, ConsolidationResult } from './memory-c
 export { SessionManager } from './session-manager.js'
 export type { SessionInfo, SessionManagerOptions } from './session-manager.js'
 export {
+  extractTopicTags,
+  topicOverlap,
+  getRecentArchivedSessions,
+  reactivateSession,
+  saveTopicTags,
+  updateTokenCount,
+  getTokenCount,
+  getSessionMessageTexts,
+} from './session-store.js'
+export type { ArchivedSession } from './session-store.js'
+export {
   loadProviders,
   loadProvidersDecrypted,
   loadProvidersMasked,

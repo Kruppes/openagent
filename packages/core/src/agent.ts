@@ -875,6 +875,20 @@ Rules:
             estimatedCost: finalCost,
             sessionId,
           })
+
+          // Update token count for topic-aware session management
+          // Find the userId by looking up which user owns this sessionId
+          const totalTokens = assistantMsg.usage.input + assistantMsg.usage.output
+          if (totalTokens > 0) {
+            // Update via DB directly since we have the sessionId
+            try {
+              this.db.prepare(
+                `UPDATE sessions SET token_count = token_count + ? WHERE id = ?`
+              ).run(totalTokens, sessionId)
+            } catch {
+              // Non-critical: token count update failed
+            }
+          }
         }
         break
       }
