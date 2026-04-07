@@ -260,7 +260,7 @@
             <input class="hidden" type="file" multiple @change="handleFileSelection">
             <AppIcon name="paperclip" class="h-4 w-4" />
           </label>
-          <textarea ref="inputRef" v-model="inputText" class="min-h-[42px] max-h-[150px] flex-1 resize-none rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm" :placeholder="$t('chat.placeholder')" rows="1" @keydown.enter.exact.prevent="handleSend" @input="autoResize" />
+          <textarea ref="inputRef" v-model="inputText" class="min-h-[42px] max-h-[150px] flex-1 resize-none rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm" :placeholder="$t('chat.placeholder')" rows="1" @keydown.enter.exact="handleEnterKey" @input="autoResize" />
           <component
             :is="component"
             v-for="(component, idx) in chatInputActionComponents"
@@ -361,6 +361,13 @@ const chatStatusText = computed(() => connectionStatus.value === 'connected' ? t
 const inputText = ref('')
 const pendingFiles = ref<File[]>([])
 const inputRef = ref<HTMLTextAreaElement | null>(null)
+
+// On mobile (touch devices), Enter should insert a newline — not send.
+// Sending is done via the Send button only.
+const isMobile = ref(false)
+onMounted(() => {
+  isMobile.value = window.matchMedia('(hover: none) and (pointer: coarse)').matches
+})
 const messagesContainer = ref<HTMLDivElement | null>(null)
 const loadingHistory = ref(false)
 const isNearBottom = ref(true)
@@ -424,6 +431,11 @@ async function loadHistory() {
       })
     }
   } finally { loadingHistory.value = false; nextTick(() => scrollToBottom()) }
+}
+function handleEnterKey(e: KeyboardEvent) {
+  if (isMobile.value) return // mobile: Enter = newline, send via button only
+  e.preventDefault()
+  void handleSend()
 }
 async function handleSend() {
   const files = [...pendingFiles.value]
