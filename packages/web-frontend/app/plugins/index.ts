@@ -1,5 +1,6 @@
 import { registerPlugin, setPluginEnabled } from '~/utils/pluginRegistry'
 import voiceInputPlugin from './voice-input/index'
+import salesMemoryPlugin from './sales-memory/index'
 
 /**
  * Nuxt plugin: registers all frontend plugins at app startup.
@@ -7,7 +8,7 @@ import voiceInputPlugin from './voice-input/index'
  */
 export default defineNuxtPlugin(() => {
   // List of all plugins to register
-  const allPlugins = [voiceInputPlugin]
+  const allPlugins = [voiceInputPlugin, salesMemoryPlugin]
 
   for (const plugin of allPlugins) {
     // Register the plugin (components stored, default enabled = true)
