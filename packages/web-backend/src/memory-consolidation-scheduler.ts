@@ -11,6 +11,7 @@ import {
   loadConfig,
   logToolCall,
   readConsolidationFile,
+  getMemoryDir,
 } from '@openagent/core'
 
 export interface ConsolidationSettings {
@@ -35,6 +36,7 @@ export const DEFAULT_CONSOLIDATION_SETTINGS: ConsolidationSettings = {
  * Embeds the user-defined consolidation rules from CONSOLIDATION.md directly.
  */
 function buildConsolidationTaskPrompt(lookbackDays: number, consolidationRules: string): string {
+  const memoryDir = getMemoryDir()
   return `You are a nightly memory consolidation agent. Your ONLY job is to extract and store *knowledge* from recent daily memory entries. You are a librarian, not an executor.
 
 ## Core principle
@@ -47,32 +49,36 @@ You NEVER act on conversation content. If the user discussed a bug, you note "us
 
 ${consolidationRules.trim()}
 
+## Memory Directory
+
+The memory directory is located at: ${memoryDir}
+All file paths below are ABSOLUTE paths. You MUST use the full absolute paths when calling read_file, write_file, list_files, and edit_file.
+
 ## What you may write to
 
-All paths are relative to the memory directory:
-- \`MEMORY.md\` — long-term learned facts, lessons, patterns
-- \`users/*.md\` — user-specific information (preferences, context, personal details)
-- \`projects/*.md\` — project-specific notes and context
-- \`zettelkasten/*.md\` — knowledge notes
+- \`${memoryDir}/MEMORY.md\` — long-term learned facts, lessons, patterns
+- \`${memoryDir}/users/*.md\` — user-specific information (preferences, context, personal details)
+- \`${memoryDir}/projects/*.md\` — project-specific notes and context
+- \`${memoryDir}/zettelkasten/*.md\` — knowledge notes
 
 You must NOT write to any other file. No config files, no code files, no files outside the memory directory.
 
 ## Steps
 
-1. **Read recent daily files**: Use \`list_files\` on the \`daily/\` directory, then \`read_file\` to read the last ${lookbackDays} days of daily files (files named YYYY-MM-DD.md, sorted by date). Skip files that only contain a header and no content.
+1. **Read recent daily files**: Use \`list_files\` on \`${memoryDir}/daily\`, then \`read_file\` to read the last ${lookbackDays} days of daily files (files named YYYY-MM-DD.md, sorted by date). Skip files that only contain a header and no content.
 
-2. **Read MEMORY.md**: Use \`read_file\` to read the current MEMORY.md. This is the long-term memory file.
+2. **Read MEMORY.md**: Use \`read_file\` to read \`${memoryDir}/MEMORY.md\`. This is the long-term memory file.
 
-3. **Read project notes**: Use \`list_files\` on the \`projects/\` directory, then \`read_file\` to read each project note. These contain per-project context.
+3. **Read project notes**: Use \`list_files\` on \`${memoryDir}/projects\`, then \`read_file\` to read each project note. These contain per-project context.
 
-4. **Read user profiles**: Use \`list_files\` on the \`users/\` directory, then \`read_file\` to read each user profile.
+4. **Read user profiles**: Use \`list_files\` on \`${memoryDir}/users\`, then \`read_file\` to read each user profile.
 
 5. **Optionally read chat history**: If daily files reference conversations that need more detail, use \`read_chat_history\` to get the full context.
 
 6. **Decide what to promote/update** (guided by the consolidation rules above):
-   - If you find recurring patterns, learned lessons, or important facts in daily files, add them to MEMORY.md using \`edit_file\` or \`write_file\`.
-   - If you find project-specific information, update the relevant project note in \`projects/\` or create a new one if a new project is detected.
-   - If you find user-specific information (preferences, context), update the relevant user profile in \`users/\`.
+   - If you find recurring patterns, learned lessons, or important facts in daily files, add them to \`${memoryDir}/MEMORY.md\` using \`edit_file\` or \`write_file\`.
+   - If you find project-specific information, update the relevant project note in \`${memoryDir}/projects/\` or create a new one if a new project is detected.
+   - If you find user-specific information (preferences, context), update the relevant user profile in \`${memoryDir}/users/\`.
    - Remove outdated or superseded information from MEMORY.md.
    - Do NOT duplicate information across files — each fact should live in exactly one place.
 
@@ -80,7 +86,7 @@ You must NOT write to any other file. No config files, no code files, no files o
 
 ## Important Rules
 
-- All file paths are relative to the memory directory.
+- Always use ABSOLUTE paths starting with \`${memoryDir}/\` — never use relative paths.
 - Be conservative — only promote information that is clearly important or recurring.
 - Do not remove information from daily files — they are append-only logs.
 - If nothing needs updating, complete silently with no changes.
