@@ -1,5 +1,6 @@
+import fs from 'node:fs'
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { AgentHeartbeatService, DEFAULT_AGENT_HEARTBEAT_SETTINGS } from './agent-heartbeat.js'
+import { AgentHeartbeatService, DEFAULT_AGENT_HEARTBEAT_SETTINGS, isHeartbeatContentEffectivelyEmpty } from './agent-heartbeat.js'
 import type { AgentHeartbeatSettings, AgentHeartbeatServiceOptions } from './agent-heartbeat.js'
 import type { TaskStore } from './task-store.js'
 import type { TaskRunner } from './task-runner.js'
@@ -43,6 +44,68 @@ function createMocks() {
   return { mockTaskStore, mockTaskRunner }
 }
 
+describe('isHeartbeatContentEffectivelyEmpty', () => {
+  it('returns true for empty string', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('')).toBe(true)
+  })
+
+  it('returns true for blank lines only', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('\n\n  \n\n')).toBe(true)
+  })
+
+  it('returns true for headings only', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('# Heartbeat Tasks\n## Section\n### Sub')).toBe(true)
+  })
+
+  it('returns true for headings and empty checkboxes', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('# Tasks\n- [ ]\n- [ ]  \n')).toBe(true)
+  })
+
+  it('returns true for mixed blank lines, headings, and empty checkboxes', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('\n# Heartbeat\n\n- [ ]\n\n## Another\n- [ ]\n')).toBe(true)
+  })
+
+  it('returns false for checkbox with text', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('- [ ] Do something')).toBe(false)
+  })
+
+  it('returns false for plain text', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('Some actionable content')).toBe(false)
+  })
+
+  it('returns false for completed checkboxes', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('- [x] Done item')).toBe(false)
+  })
+
+  it('returns false when mixed with actionable content', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('# Tasks\n- [ ] Do the thing\n')).toBe(false)
+  })
+
+  it('returns true for heading without space after hashes (bare heading)', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('##')).toBe(true)
+  })
+
+  it('returns false for list items without checkbox', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('- some item')).toBe(false)
+  })
+
+  it('returns false for numbered list items', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('1. First item')).toBe(false)
+  })
+
+  it('returns true for HTML comments only', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('<!-- This is a comment -->')).toBe(true)
+  })
+
+  it('returns true for headings and HTML comments', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('# Heartbeat Tasks\n\n<!-- Define tasks here -->\n<!-- Another comment -->\n')).toBe(true)
+  })
+
+  it('returns false for multi-line HTML comments (not single-line)', () => {
+    expect(isHeartbeatContentEffectivelyEmpty('<!-- start\nstill comment\n-->')).toBe(false)
+  })
+})
+
 describe('AgentHeartbeatService', () => {
   let service: AgentHeartbeatService
   let mocks: ReturnType<typeof createMocks>
@@ -50,6 +113,8 @@ describe('AgentHeartbeatService', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     mocks = createMocks()
+    // Default: HEARTBEAT.md has actionable content
+    vi.spyOn(fs, 'readFileSync').mockReturnValue('# Tasks\n- [ ] Do something\n')
   })
 
   afterEach(() => {
@@ -182,15 +247,68 @@ describe('AgentHeartbeatService', () => {
       )
     })
 
-    it('prompt instructs to use task injection', async () => {
+    it('prompt is a minimal delegation prompt', async () => {
       service = createService()
 
       await service.executeHeartbeat()
 
       const createCall = (mocks.mockTaskStore.create as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      expect(createCall.prompt).toContain('HEARTBEAT.md')
       expect(createCall.prompt).toContain('task injection')
-      expect(createCall.prompt).toContain('read_file')
-      expect(createCall.prompt).toContain('write_file')
+      // Should NOT contain old memory-maintenance instructions
+      expect(createCall.prompt).not.toContain('Daily Memory Update')
+      expect(createCall.prompt).not.toContain('Memory Hygiene')
+      expect(createCall.prompt).not.toContain('read_chat_history')
+    })
+
+    it('skips when HEARTBEAT.md is effectively empty', async () => {
+      vi.mocked(fs.readFileSync).mockReturnValue('# Heartbeat Tasks\n- [ ]\n\n')
+      service = createService()
+
+      const taskId = await service.executeHeartbeat()
+      expect(taskId).toBeNull()
+      expect(mocks.mockTaskStore.create).not.toHaveBeenCalled()
+      expect(mocks.mockTaskRunner.startTask).not.toHaveBeenCalled()
+    })
+
+    it('skips when HEARTBEAT.md does not exist', async () => {
+      vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error('ENOENT') })
+      service = createService()
+
+      const taskId = await service.executeHeartbeat()
+      expect(taskId).toBeNull()
+      expect(mocks.mockTaskStore.create).not.toHaveBeenCalled()
+    })
+
+    it('proceeds when HEARTBEAT.md has actionable content', async () => {
+      vi.mocked(fs.readFileSync).mockReturnValue('# Tasks\n- [ ] Update memory\n')
+      service = createService()
+
+      const taskId = await service.executeHeartbeat()
+      expect(taskId).toBe('task-123')
+      expect(mocks.mockTaskStore.create).toHaveBeenCalled()
+    })
+
+    it('checks night mode before reading HEARTBEAT.md', async () => {
+      const readSpy = vi.mocked(fs.readFileSync)
+      service = createService({
+        now: () => new Date('2024-06-15T02:00:00Z'),
+      })
+
+      vi.spyOn(await import('./config.js'), 'loadConfig').mockReturnValue({
+        agentHeartbeat: { enabled: true, intervalMinutes: 60, nightMode: { enabled: true, startHour: 23, endHour: 8 } },
+        timezone: 'UTC',
+      })
+      vi.spyOn(await import('./config.js'), 'ensureConfigTemplates').mockImplementation(() => {})
+      service.stop()
+      service = createService({ now: () => new Date('2024-06-15T02:00:00Z') })
+      service.restart()
+
+      const taskId = await service.executeHeartbeat()
+      expect(taskId).toBeNull()
+      // readFileSync should NOT have been called since night mode check comes first
+      // (it was called during mock setup but not during executeHeartbeat)
+      expect(readSpy).not.toHaveBeenCalledWith(expect.stringContaining('HEARTBEAT.md'), 'utf-8')
     })
 
     it('skips heartbeat during night mode', async () => {

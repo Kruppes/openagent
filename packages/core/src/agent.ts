@@ -10,7 +10,7 @@ import { logTokenUsage, logToolCall } from './token-logger.js'
 import { estimateCost, getApiKeyForProvider, buildModel } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import type { ProviderManager } from './provider-manager.js'
-import { assembleSystemPrompt, ensureMemoryStructure, getMemoryDir } from './memory.js'
+import { assembleSystemPrompt, ensureMemoryStructure, ensureConfigStructure, getMemoryDir } from './memory.js'
 import type { SkillPromptEntry } from './memory.js'
 import { getWorkspaceDir } from './workspace.js'
 import { loadConfig, ensureConfigTemplates } from './config.js'
@@ -50,7 +50,7 @@ export interface AgentCoreOptions {
   providerConfig?: ProviderConfig // For OAuth token refresh
   providerManager?: ProviderManager // For fallback retry support
   /** Called when a session ends (timeout or /new command) with the summary text */
-  onSessionEnd?: (userId: string, summary: string | null) => void
+  onSessionEnd?: (userId: string, sessionId: string, summary: string | null) => void
 }
 
 // Re-export for backward compatibility
@@ -384,7 +384,7 @@ export class AgentCore {
   private baseInstructions?: string
   private providerConfig?: ProviderConfig
   private providerManager?: ProviderManager
-  private onSessionEndCallback?: (userId: string, summary: string | null) => void
+  private onSessionEndCallback?: (userId: string, sessionId: string, summary: string | null) => void
   private onTaskInjectionChunkCallback?: (chunk: ResponseChunk) => void
   private messageQueue: MessageQueue
 
@@ -400,6 +400,7 @@ export class AgentCore {
 
     // Ensure memory structure exists
     ensureMemoryStructure(options.memoryDir)
+    ensureConfigStructure()
 
     // Load language, timezone, and builtinTools settings from config
     let language: string | undefined
@@ -474,8 +475,8 @@ export class AgentCore {
       db: this.db,
       timeoutMinutes: options.sessionTimeoutMinutes ?? 15,
       memoryDir: options.memoryDir,
-      onSummarize: async (_sessionId: string, userId: string) => {
-        return this.generateSessionSummary(userId)
+      onSummarize: async (_sessionId: string, userId: string, conversationHistory?: string) => {
+        return this.generateSessionSummary(userId, conversationHistory)
       },
       onSessionEnd: (session: SessionInfo, summary: string | null) => {
         // Only clear agent messages for non-system sessions.
@@ -489,10 +490,18 @@ export class AgentCore {
 
         // Notify external listener (e.g. ws-chat)
         if (this.onSessionEndCallback) {
-          this.onSessionEndCallback(session.userId, summary)
+          this.onSessionEndCallback(session.userId, session.id, summary)
         }
       },
     })
+  }
+
+  /**
+   * Initialize async components (must be called after construction).
+   * Handles orphaned sessions from previous server runs.
+   */
+  async init(): Promise<void> {
+    await this.sessionManager.init()
   }
 
   /**
@@ -607,6 +616,9 @@ export class AgentCore {
 
     const enrichedText = fileHints.length > 0 ? `${text}\n\n${fileHints.join('\n')}` : text
     yield* this.executePromptWithRetry(enrichedText, sessionId, false, images.length > 0 ? images : undefined)
+
+    // Count the agent response as a message too
+    this.sessionManager.recordMessage(userId)
   }
 
   /**
@@ -619,6 +631,9 @@ export class AgentCore {
     this.sessionManager.recordMessage('system')
 
     yield* this.executePromptWithRetry(injection, sessionId)
+
+    // Count the agent response as a message too
+    this.sessionManager.recordMessage('system')
   }
 
   /**
@@ -764,41 +779,26 @@ export class AgentCore {
   /**
    * Generate a summary of the current conversation using the LLM
    */
-  private async generateSessionSummary(_userId: string): Promise<string> {
-    const messages = this.agent.state.messages
-    if (messages.length === 0) return 'Empty session.'
-
-    // Build a compact representation of the conversation for summarization
-    const conversationLines: string[] = []
-    for (const msg of messages) {
-      if ('role' in msg) {
-        if (msg.role === 'user') {
-          const text = 'content' in msg && typeof msg.content === 'string'
-            ? msg.content
-            : Array.isArray(msg.content)
-              ? msg.content.filter((c: { type: string }) => c.type === 'text').map((c: { type: string; text?: string }) => c.text ?? '').join('')
-              : ''
-          if (text) conversationLines.push(`User: ${text}`)
-        } else if (msg.role === 'assistant') {
-          const text = 'content' in msg && Array.isArray(msg.content)
-            ? msg.content.filter((c: { type: string }) => c.type === 'text').map((c: { type: string; text?: string }) => c.text ?? '').join('')
-            : ''
-          if (text) conversationLines.push(`Assistant: ${text.slice(0, 500)}`)
-        }
-      }
-    }
-
-    if (conversationLines.length === 0) return 'Empty session.'
-
-    // Truncate to avoid excessive token usage
-    const conversationText = conversationLines.join('\n').slice(0, 4000)
+  private async generateSessionSummary(_userId: string, conversationHistory?: string): Promise<string> {
+    // Always use DB conversation history (single source of truth).
+    // In-memory agent messages can disappear on provider change or restart,
+    // but chat_messages in the DB are always reliable.
+    if (!conversationHistory) return 'Empty session.'
 
     try {
       const response = await completeSimple(this.model, {
-        systemPrompt: 'You are a concise summarizer. Summarize the following conversation in 2-4 bullet points. Focus on key topics discussed, decisions made, and any action items. Respond only with the bullet points, no preamble.',
+        systemPrompt: `Summarize this conversation for the agent's daily memory log.
+
+Rules:
+- Write 1–3 short bullet points (not paragraphs). Max 150 words total.
+- Focus on: decisions made, action items, key facts learned, and open questions.
+- Omit greetings, small talk, and anything the agent already knows from its core memory.
+- Use neutral, factual tone. No filler words.
+- If nothing noteworthy happened, write "No significant content."
+- Do NOT repeat the full conversation — extract only what matters for future sessions.`,
         messages: [{
           role: 'user' as const,
-          content: conversationText,
+          content: conversationHistory,
           timestamp: Date.now(),
         }],
       }, { apiKey: this.apiKey })
@@ -819,7 +819,7 @@ export class AgentCore {
   /**
    * Set the callback for session end events
    */
-  setOnSessionEnd(callback: (userId: string, summary: string | null) => void): void {
+  setOnSessionEnd(callback: (userId: string, sessionId: string, summary: string | null) => void): void {
     this.onSessionEndCallback = callback
   }
 

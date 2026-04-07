@@ -58,6 +58,8 @@
     "displayFilters": "Display Filters",
     "filterToolCalls": "Tool Calls",
     "filterInjections": "Injections",
+    "filterSessionSummaries": "Session Summaries",
+    "sessionSummary": "Session Summary",
     "scrollToBottom": "Scroll to bottom",
     "attachments": {
       "openOriginal": "Open original",
@@ -122,6 +124,8 @@
     "oauthManualCode": "Or paste the redirect URL here (for remote servers):",
     "oauthManualCodePlaceholder": "Paste redirect URL or code...",
     "oauthSubmitCode": "Submit",
+    "oauthRenewToken": "Renew Token",
+    "oauthRenewing": "Renewing...",
     "statusConnected": "Connected",
     "statusError": "Error",
     "statusUntested": "Untested",
@@ -303,6 +307,12 @@
     "telegramUsersUnassigned": "Not assigned",
     "telegramUsersNoUsername": "No username",
     "telegramUsersRefresh": "Refresh Telegram users",
+    "agentRulesTitle": "Agent Rules",
+    "agentRulesDescription": "Define how the agent should behave, communicate, and execute tasks. The agent reads these rules on every conversation.",
+    "heartbeatTasksTitle": "Heartbeat Tasks",
+    "heartbeatTasksDescription": "Define periodic tasks for the agent to execute during each heartbeat cycle.",
+    "consolidationRulesTitle": "Consolidation Rules",
+    "consolidationRulesDescription": "Define what the nightly memory consolidation should focus on — what to promote, update, or ignore.",
     "consolidationSection": "Memory consolidation",
     "consolidationSectionDescription": "Automatically review daily memory entries and promote lasting insights into core memory (MEMORY.md).",
     "consolidationEnabled": "Enable automatic consolidation",
@@ -675,7 +685,8 @@
       "user": "User",
       "agent": "Agent",
       "cronjob": "Cronjob",
-      "heartbeat": "Heartbeat"
+      "heartbeat": "Heartbeat",
+      "consolidation": "Consolidation"
     }
   },
   "cronjobs": {

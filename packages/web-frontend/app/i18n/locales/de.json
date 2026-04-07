@@ -58,6 +58,8 @@
     "displayFilters": "Anzeigefilter",
     "filterToolCalls": "Tool-Aufrufe",
     "filterInjections": "Injektionen",
+    "filterSessionSummaries": "Sitzungszusammenfassungen",
+    "sessionSummary": "Sitzungszusammenfassung",
     "scrollToBottom": "Nach unten scrollen",
     "attachments": {
       "openOriginal": "Original öffnen",
@@ -122,6 +124,8 @@
     "oauthManualCode": "Oder fügen Sie die Redirect-URL hier ein (für Remote-Server):",
     "oauthManualCodePlaceholder": "Redirect-URL oder Code einfügen...",
     "oauthSubmitCode": "Absenden",
+    "oauthRenewToken": "Token erneuern",
+    "oauthRenewing": "Erneuere...",
     "statusConnected": "Verbunden",
     "statusError": "Fehler",
     "statusUntested": "Ungetestet",
@@ -303,6 +307,12 @@
     "telegramUsersUnassigned": "Nicht zugewiesen",
     "telegramUsersNoUsername": "Kein Benutzername",
     "telegramUsersRefresh": "Telegram-Benutzer aktualisieren",
+    "agentRulesTitle": "Agent-Regeln",
+    "agentRulesDescription": "Lege fest, wie sich der Agent verhalten, kommunizieren und Aufgaben ausführen soll. Der Agent liest diese Regeln bei jeder Konversation.",
+    "heartbeatTasksTitle": "Heartbeat-Aufgaben",
+    "heartbeatTasksDescription": "Definiere periodische Aufgaben, die der Agent bei jedem Heartbeat-Zyklus ausführen soll.",
+    "consolidationRulesTitle": "Konsolidierungs-Regeln",
+    "consolidationRulesDescription": "Lege fest, worauf sich die nächtliche Memory-Konsolidierung konzentrieren soll \u2014 was übernommen, aktualisiert oder ignoriert werden soll.",
     "consolidationSection": "Memory-Konsolidierung",
     "consolidationSectionDescription": "Überprüft automatisch tägliche Einträge und übernimmt dauerhafte Erkenntnisse in das Kerngedächtnis (MEMORY.md).",
     "consolidationEnabled": "Automatische Konsolidierung aktivieren",
@@ -675,7 +685,8 @@
       "user": "Benutzer",
       "agent": "Agent",
       "cronjob": "Cronjob",
-      "heartbeat": "Heartbeat"
+      "heartbeat": "Heartbeat",
+      "consolidation": "Konsolidierung"
     }
   },
   "cronjobs": {
