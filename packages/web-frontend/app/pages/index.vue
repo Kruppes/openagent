@@ -143,7 +143,20 @@
               <p v-else class="whitespace-pre-wrap break-words">{{ msg.content }}</p>
               <ChatAttachments v-if="msg.attachments?.length" :attachments="msg.attachments" />
               <div v-if="msg.streaming" class="mt-1.5 flex items-center gap-1"><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /><span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current opacity-60" /></div>
-              <p v-if="msg.timestamp && !msg.streaming" class="mt-1 text-right text-[10px] leading-none text-muted-foreground/70">{{ formatMessageTime(msg.timestamp) }}</p>
+              <div v-if="msg.timestamp && !msg.streaming" class="mt-1 flex items-center justify-end gap-1.5">
+                <button
+                  v-if="ttsEnabled && msg.role === 'assistant' && msg.content"
+                  type="button"
+                  class="inline-flex items-center justify-center rounded-md p-0.5 text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+                  :title="ttsPlayingIndex === i ? $t('chat.ttsStop') : $t('chat.ttsPlay')"
+                  @click.stop="handleTtsPlay(msg.content, i)"
+                >
+                  <AppIcon v-if="ttsLoading && ttsPlayingIndex === i" name="loader" size="sm" class="animate-spin" />
+                  <AppIcon v-else-if="ttsPlayingIndex === i" name="square" size="sm" />
+                  <AppIcon v-else name="volume" size="sm" />
+                </button>
+                <span class="text-[10px] leading-none text-muted-foreground/70">{{ formatMessageTime(msg.timestamp) }}</span>
+              </div>
             </div>
           </template>
         </div>
@@ -223,6 +236,11 @@ const filteredMessages = computed(() => {
 const expandedTools = ref<Set<string>>(new Set())
 function toggleTool(toolCallId: string) { const updated = new Set(expandedTools.value); updated.has(toolCallId) ? updated.delete(toolCallId) : updated.add(toolCallId); expandedTools.value = updated }
 const { messages, connectionStatus, isStreaming, connect, disconnect, sendMessage, newSession, stopTask } = useChat()
+const { playingIndex: ttsPlayingIndex, loading: ttsLoading, ttsEnabled, fetchTtsSettings, play: ttsPlay, stop: ttsStop } = useTts()
+
+function handleTtsPlay(content: string, index: number) {
+  ttsPlay(content, index)
+}
 const chatStatusText = computed(() => connectionStatus.value === 'connected' ? t('chat.statusConnected') : connectionStatus.value === 'connecting' ? t('chat.statusConnecting') : t('chat.statusDisconnected'))
 const inputText = ref('')
 const pendingFiles = ref<File[]>([])
@@ -233,8 +251,8 @@ const isNearBottom = ref(true)
 const SCROLL_THRESHOLD = 120
 function onMessagesScroll() { const el = messagesContainer.value; if (!el) return; isNearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight <= SCROLL_THRESHOLD }
 function jumpToBottom() { isNearBottom.value = true; nextTick(() => scrollToBottom()) }
-onMounted(async () => { connect(); await loadHistory() })
-onUnmounted(() => { disconnect() })
+onMounted(async () => { connect(); await Promise.all([loadHistory(), fetchTtsSettings()]) })
+onUnmounted(() => { disconnect(); ttsStop() })
 watch(() => messages.value.length, () => { if (isNearBottom.value) nextTick(() => scrollToBottom()) })
 watch(() => messages.value[messages.value.length - 1]?.content?.length ?? 0, () => { if (isNearBottom.value) nextTick(() => scrollToBottom()) })
 async function loadHistory() {
