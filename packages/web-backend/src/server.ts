@@ -713,7 +713,7 @@ const app = createApp({
 })
 
 // Load plugins (registers plugin routes onto the app)
-await loadPlugins(app)
+await loadPlugins(app, db)
 
 const server = http.createServer(app)
 
