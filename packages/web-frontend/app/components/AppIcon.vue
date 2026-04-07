@@ -65,6 +65,7 @@ import {
   Zap,
   Volume2,
   Loader,
+  Link,
 } from 'lucide-vue-next'
 
 const iconMap = {
@@ -124,6 +125,7 @@ const iconMap = {
   blocks: Blocks,
   mic: Mic,
   micOff: MicOff,
+  link: Link,
 } as const
 
 const props = withDefaults(defineProps<{
