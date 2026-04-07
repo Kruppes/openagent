@@ -568,7 +568,19 @@ export class TelegramBot {
 
     if (!await this.checkAuthorized(ctx)) return
 
-    this.bufferMessage(ctx, text)
+    // Embed reply context so the agent knows what the user is responding to
+    let messageText = text
+    const replyMsg = ctx.message?.reply_to_message
+    if (replyMsg) {
+      const quotedText = ('text' in replyMsg ? replyMsg.text : undefined)
+        ?? ('caption' in replyMsg ? replyMsg.caption : undefined)
+      if (quotedText) {
+        const truncated = quotedText.length > 300 ? quotedText.slice(0, 300) + '...' : quotedText
+        messageText = `[Reply zu: "${truncated}"]\n${text}`
+      }
+    }
+
+    this.bufferMessage(ctx, messageText)
   }
 
   private async downloadTelegramFile(fileId: string): Promise<{ buffer: Buffer; mimeType?: string }> {
