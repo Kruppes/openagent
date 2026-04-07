@@ -9,6 +9,7 @@ import crypto from 'node:crypto'
 import type { RuntimeMetrics } from './runtime-metrics.js'
 import type { ChatEventBus, ChatEvent } from './chat-event-bus.js'
 import { searchMemory } from './plugins/sales-memory/db.js'
+import { loadSalesMemoryConfig } from './plugins/sales-memory/config.js'
 
 interface ChatMessage {
   type: 'message' | 'command'
@@ -256,23 +257,27 @@ export function setupWebSocketChat(
       }
 
       // ── SalesMemory Auto-Inject ───────────────────────────────────────────────
-      // When SALESMEMORY_AUTO_INJECT=true, prepend relevant memory context to the
-      // user message before sending it to the agent. Errors are non-fatal.
+      // When autoInject is enabled in the SalesMemory config, prepend relevant
+      // memory context to the user message before sending it to the agent.
+      // Errors are non-fatal.
       let messageContent = parsed.content
-      if (process.env.SALESMEMORY_AUTO_INJECT === 'true' && parsed.content.trim()) {
+      if (process.env.SALESMEMORY_ENABLED === 'true' && parsed.content.trim()) {
         try {
-          const injectMaxResults = Math.max(1, parseInt(process.env.SALESMEMORY_INJECT_MAX_RESULTS ?? '3') || 3)
-          const injectThreshold = parseFloat(process.env.SALESMEMORY_INJECT_THRESHOLD ?? '-1.0')
-          const memResults = searchMemory(db, parsed.content, injectMaxResults + 5)
-          const filtered = memResults.filter(r => r.rank < injectThreshold).slice(0, injectMaxResults)
-          if (filtered.length > 0) {
-            const contextLines = filtered.map(r => {
-              const date = r.created_at ? r.created_at.slice(0, 10) : 'unbekannt'
-              const snippet = r.content.slice(0, 200).replace(/\n/g, ' ')
-              return `- [${date}] ${snippet}`
-            }).join('\n')
-            const contextBlock = `[SalesMemory-Kontext]\n${contextLines}\n[Ende SalesMemory-Kontext]`
-            messageContent = `${contextBlock}\n\n${parsed.content}`
+          const smConfig = loadSalesMemoryConfig()
+          if (smConfig.autoInject) {
+            const injectMaxResults = smConfig.injectMaxResults
+            const injectThreshold = smConfig.injectThreshold
+            const memResults = searchMemory(db, parsed.content, injectMaxResults + 5)
+            const filtered = memResults.filter(r => r.rank < injectThreshold).slice(0, injectMaxResults)
+            if (filtered.length > 0) {
+              const contextLines = filtered.map(r => {
+                const date = r.created_at ? r.created_at.slice(0, 10) : 'unbekannt'
+                const snippet = r.content.slice(0, 200).replace(/\n/g, ' ')
+                return `- [${date}] ${snippet}`
+              }).join('\n')
+              const contextBlock = `[SalesMemory-Kontext]\n${contextLines}\n[Ende SalesMemory-Kontext]`
+              messageContent = `${contextBlock}\n\n${parsed.content}`
+            }
           }
         } catch (memErr) {
           // Never block the chat request due to memory errors

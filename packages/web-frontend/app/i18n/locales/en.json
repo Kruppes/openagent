@@ -747,6 +747,31 @@
       "reset": "Reset to Defaults"
     }
   },
+  "salesMemory": {
+    "settings": {
+      "title": "SalesMemory Plugin Settings",
+      "description": "Configure the LLM provider and auto-inject options for the SalesMemory plugin.",
+      "provider": "LLM Provider",
+      "providerHint": "The AI provider used for recall summarisation and digest generation.",
+      "ollamaSection": "Ollama Settings",
+      "ollamaUrl": "Ollama Base URL",
+      "ollamaModel": "Ollama Model",
+      "openaiSection": "OpenAI Settings",
+      "openaiKey": "OpenAI API Key",
+      "openaiModel": "OpenAI Model",
+      "anthropicSection": "Anthropic Settings",
+      "anthropicKey": "Anthropic API Key",
+      "anthropicModel": "Anthropic Model",
+      "autoInjectSection": "Auto-Inject",
+      "autoInject": "Enable Auto-Inject",
+      "autoInjectHint": "Automatically prepend relevant memory context to each chat message before sending to the agent.",
+      "injectMaxResults": "Max Results",
+      "injectMaxResultsHint": "Maximum number of memory snippets to inject (1–10).",
+      "injectThreshold": "Relevance Threshold",
+      "injectThresholdHint": "FTS5 rank threshold for injection. More negative = stricter matching. Range: −5.0 to 0.0.",
+      "reset": "Reset to Defaults"
+    }
+  },
   "taskViewer": {
     "back": "Back to tasks",
     "live": "Live",

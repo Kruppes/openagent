@@ -1,16 +1,8 @@
 import type { Database } from '@openagent/core'
 import type { SearchResult } from './db.js'
 import { getMessagesForDate, saveDigest } from './db.js'
-
-// ── Config ────────────────────────────────────────────────────────────────────
-
-type Provider = 'ollama' | 'openai' | 'anthropic'
-
-const PROVIDER = (process.env.SALESMEMORY_PROVIDER ?? 'ollama') as Provider
-const OLLAMA_URL = (process.env.SALESMEMORY_OLLAMA_URL ?? 'http://192.168.10.222:11434').replace(/\/+$/, '')
-const OLLAMA_MODEL = process.env.SALESMEMORY_OLLAMA_MODEL ?? 'qwen3:32b'
-const OPENAI_KEY = process.env.SALESMEMORY_OPENAI_KEY ?? ''
-const OPENAI_MODEL = process.env.SALESMEMORY_OPENAI_MODEL ?? 'gpt-4o-mini'
+import type { SalesMemorySettings } from './config.js'
+import { loadSalesMemoryConfig } from './config.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -22,27 +14,38 @@ function stripThinkTags(text: string): string {
 }
 
 /**
+ * Resolves the effective settings by merging saved config with any per-request overrides.
+ */
+function resolveSettings(overrides?: Partial<SalesMemorySettings>): SalesMemorySettings {
+  const saved = loadSalesMemoryConfig()
+  return { ...saved, ...(overrides ?? {}) }
+}
+
+/**
  * Calls the configured LLM provider with the given prompt and returns the
  * plain-text response (think-tags stripped for Ollama/qwen3).
  */
-async function callLLM(prompt: string): Promise<string> {
-  if (PROVIDER === 'openai') {
-    return callOpenAI(prompt)
+async function callLLM(prompt: string, settings: SalesMemorySettings): Promise<string> {
+  if (settings.provider === 'openai') {
+    return callOpenAI(prompt, settings)
   }
-  if (PROVIDER === 'anthropic') {
-    return callAnthropic(prompt)
+  if (settings.provider === 'anthropic') {
+    return callAnthropic(prompt, settings)
   }
   // Default: ollama
-  return callOllama(prompt)
+  return callOllama(prompt, settings)
 }
 
-async function callOllama(prompt: string): Promise<string> {
-  const url = `${OLLAMA_URL}/api/generate`
+async function callOllama(prompt: string, settings: SalesMemorySettings): Promise<string> {
+  const ollamaUrl = (settings.ollamaUrl ?? 'http://192.168.10.222:11434').replace(/\/+$/, '')
+  const ollamaModel = settings.ollamaModel ?? 'qwen3:32b'
+  const url = `${ollamaUrl}/api/generate`
+
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: OLLAMA_MODEL,
+      model: ollamaModel,
       prompt,
       stream: false,
       options: {
@@ -61,17 +64,20 @@ async function callOllama(prompt: string): Promise<string> {
   return stripThinkTags(data.response?.trim() ?? '')
 }
 
-async function callOpenAI(prompt: string): Promise<string> {
-  if (!OPENAI_KEY) throw new Error('SALESMEMORY_OPENAI_KEY not set')
+async function callOpenAI(prompt: string, settings: SalesMemorySettings): Promise<string> {
+  const apiKey = settings.openaiKey ?? ''
+  if (!apiKey) throw new Error('OpenAI API key not configured')
+
+  const model = settings.openaiModel ?? 'gpt-4o-mini'
 
   const response = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${OPENAI_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: OPENAI_MODEL,
+      model,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
       max_tokens: 2048,
@@ -89,11 +95,11 @@ async function callOpenAI(prompt: string): Promise<string> {
   return data.choices[0]?.message?.content?.trim() ?? ''
 }
 
-async function callAnthropic(prompt: string): Promise<string> {
-  const apiKey = process.env.SALESMEMORY_ANTHROPIC_KEY ?? ''
-  if (!apiKey) throw new Error('SALESMEMORY_ANTHROPIC_KEY not set')
+async function callAnthropic(prompt: string, settings: SalesMemorySettings): Promise<string> {
+  const apiKey = settings.anthropicKey ?? ''
+  if (!apiKey) throw new Error('Anthropic API key not configured')
 
-  const model = process.env.SALESMEMORY_ANTHROPIC_MODEL ?? 'claude-3-haiku-20240307'
+  const model = settings.anthropicModel ?? 'claude-3-haiku-20240307'
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -125,14 +131,21 @@ async function callAnthropic(prompt: string): Promise<string> {
 /**
  * Sends search results to the LLM and asks it to produce a natural-language
  * summary of information relevant to the given query.
+ *
+ * @param results   - Search results from the FTS index
+ * @param query     - The original search query
+ * @param overrides - Optional per-request settings that override the saved config
  */
 export async function summarizeResults(
   results: SearchResult[],
   query: string,
+  overrides?: Partial<SalesMemorySettings>,
 ): Promise<string> {
   if (results.length === 0) {
     return 'Keine relevanten Informationen gefunden.'
   }
+
+  const settings = resolveSettings(overrides)
 
   const snippets = results
     .slice(0, 10)
@@ -153,14 +166,23 @@ ${snippets}
 
 Zusammenfassung:`
 
-  return callLLM(prompt)
+  return callLLM(prompt, settings)
 }
 
 /**
  * Generates a structured daily digest from all messages of the given date,
  * persists it to the database, and returns the digest content.
+ *
+ * @param db        - Database instance
+ * @param date      - ISO date string (YYYY-MM-DD)
+ * @param overrides - Optional per-request settings that override the saved config
  */
-export async function generateDigest(db: Database, date: string): Promise<string> {
+export async function generateDigest(
+  db: Database,
+  date: string,
+  overrides?: Partial<SalesMemorySettings>,
+): Promise<string> {
+  const settings = resolveSettings(overrides)
   const messages = getMessagesForDate(db, date)
 
   if (messages.length === 0) {
@@ -199,9 +221,18 @@ ${conversation}
 
 Digest:`
 
-  const content = await callLLM(prompt)
-  const model = PROVIDER === 'openai' ? OPENAI_MODEL : PROVIDER === 'ollama' ? OLLAMA_MODEL : 'anthropic'
+  const content = await callLLM(prompt, settings)
 
-  saveDigest(db, date, content, model)
+  // Determine model name for the digest record
+  let modelName: string
+  if (settings.provider === 'openai') {
+    modelName = settings.openaiModel ?? 'gpt-4o-mini'
+  } else if (settings.provider === 'anthropic') {
+    modelName = settings.anthropicModel ?? 'claude-3-haiku-20240307'
+  } else {
+    modelName = settings.ollamaModel ?? 'qwen3:32b'
+  }
+
+  saveDigest(db, date, content, modelName)
   return content
 }

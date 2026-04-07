@@ -80,6 +80,12 @@
     :open="activeSettingsPlugin === 'voice-input'"
     @close="activeSettingsPlugin = null"
   />
+
+  <!-- SalesMemory Plugin Settings Modal -->
+  <SalesMemoryPluginSettingsModal
+    :open="activeSettingsPlugin === 'sales-memory'"
+    @close="activeSettingsPlugin = null"
+  />
 </template>
 
 <script setup lang="ts">
@@ -95,6 +101,13 @@ const plugins = [
     name: 'Voice Input',
     version: '1.0.0',
     description: 'Record audio and transcribe it via Whisper. Inserts transcription with [Diktat] prefix into the chat input.',
+    configurable: true,
+  },
+  {
+    id: 'sales-memory',
+    name: 'SalesMemory',
+    version: '1.0.0',
+    description: 'Persistent memory with FTS5 search and LLM-powered recall. Automatically injects relevant context from past conversations.',
     configurable: true,
   },
 ]

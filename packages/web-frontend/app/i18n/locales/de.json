@@ -747,6 +747,31 @@
       "reset": "Auf Standardwerte zurücksetzen"
     }
   },
+  "salesMemory": {
+    "settings": {
+      "title": "SalesMemory-Plugin-Einstellungen",
+      "description": "LLM-Anbieter und Auto-Inject-Optionen für das SalesMemory-Plugin konfigurieren.",
+      "provider": "LLM-Anbieter",
+      "providerHint": "Der KI-Anbieter für Recall-Zusammenfassungen und Digest-Generierung.",
+      "ollamaSection": "Ollama-Einstellungen",
+      "ollamaUrl": "Ollama-Basis-URL",
+      "ollamaModel": "Ollama-Modell",
+      "openaiSection": "OpenAI-Einstellungen",
+      "openaiKey": "OpenAI-API-Schlüssel",
+      "openaiModel": "OpenAI-Modell",
+      "anthropicSection": "Anthropic-Einstellungen",
+      "anthropicKey": "Anthropic-API-Schlüssel",
+      "anthropicModel": "Anthropic-Modell",
+      "autoInjectSection": "Auto-Inject",
+      "autoInject": "Auto-Inject aktivieren",
+      "autoInjectHint": "Fügt automatisch relevanten Gedächtniskontext vor jede Chat-Nachricht ein, bevor sie an den Agenten gesendet wird.",
+      "injectMaxResults": "Maximale Ergebnisse",
+      "injectMaxResultsHint": "Maximale Anzahl einzufügender Gedächtnisschnipsel (1–10).",
+      "injectThreshold": "Relevanz-Schwellenwert",
+      "injectThresholdHint": "FTS5-Rang-Schwellenwert für die Injektion. Negativer = strengere Übereinstimmung. Bereich: -5,0 bis 0,0.",
+      "reset": "Auf Standardwerte zurücksetzen"
+    }
+  },
   "taskViewer": {
     "back": "Zurück zu Tasks",
     "live": "Live",
