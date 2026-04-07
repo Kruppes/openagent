@@ -37,8 +37,8 @@ async function callLLM(prompt: string, settings: SalesMemorySettings): Promise<s
 }
 
 async function callOllama(prompt: string, settings: SalesMemorySettings): Promise<string> {
-  const ollamaUrl = (settings.ollamaUrl ?? 'http://192.168.10.222:11434').replace(/\/+$/, '')
-  const ollamaModel = settings.ollamaModel ?? 'qwen3:32b'
+  const ollamaUrl = (settings.ollamaUrl ?? 'http://localhost:11434').replace(/\/+$/, '')
+  const ollamaModel = settings.ollamaModel ?? 'llama3.2'
   const url = `${ollamaUrl}/api/generate`
 
   const response = await fetch(url, {
@@ -230,7 +230,7 @@ Digest:`
   } else if (settings.provider === 'anthropic') {
     modelName = settings.anthropicModel ?? 'claude-3-haiku-20240307'
   } else {
-    modelName = settings.ollamaModel ?? 'qwen3:32b'
+    modelName = settings.ollamaModel ?? 'llama3.2'
   }
 
   saveDigest(db, date, content, modelName)

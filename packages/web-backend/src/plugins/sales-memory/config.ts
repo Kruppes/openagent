@@ -7,6 +7,7 @@ const CONFIG_FILENAME = 'salesmemory.json'
 export type SalesMemoryProvider = 'ollama' | 'openai' | 'anthropic'
 
 export interface SalesMemorySettings {
+  enabled: boolean
   provider: SalesMemoryProvider
   ollamaUrl: string
   ollamaModel: string
@@ -21,9 +22,10 @@ export interface SalesMemorySettings {
 
 /** Env-based defaults — used as fallback when no config file exists */
 const ENV_DEFAULTS: SalesMemorySettings = {
+  enabled: process.env.SALESMEMORY_ENABLED === 'true',
   provider: (process.env.SALESMEMORY_PROVIDER ?? 'ollama') as SalesMemoryProvider,
-  ollamaUrl: process.env.SALESMEMORY_OLLAMA_URL ?? 'http://192.168.10.222:11434',
-  ollamaModel: process.env.SALESMEMORY_OLLAMA_MODEL ?? 'qwen3:32b',
+  ollamaUrl: process.env.SALESMEMORY_OLLAMA_URL ?? 'http://localhost:11434',
+  ollamaModel: process.env.SALESMEMORY_OLLAMA_MODEL ?? 'llama3.2',
   openaiKey: process.env.SALESMEMORY_OPENAI_KEY ?? '',
   openaiModel: process.env.SALESMEMORY_OPENAI_MODEL ?? 'gpt-4o-mini',
   anthropicKey: process.env.SALESMEMORY_ANTHROPIC_KEY ?? '',

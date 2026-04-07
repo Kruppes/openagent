@@ -51,6 +51,7 @@ export function createSalesMemoryRouter(db: Database): Router {
       const body = req.body as Partial<SalesMemorySettings>
 
       const next: SalesMemorySettings = {
+        enabled: body.enabled ?? existing.enabled,
         provider: body.provider ?? existing.provider,
         ollamaUrl: body.ollamaUrl ?? existing.ollamaUrl,
         ollamaModel: body.ollamaModel ?? existing.ollamaModel,
