@@ -264,7 +264,7 @@ export function setupWebSocketChat(
       if (process.env.SALESMEMORY_ENABLED === 'true' && parsed.content.trim()) {
         try {
           const smConfig = loadSalesMemoryConfig()
-          if (smConfig.autoInject) {
+          if (smConfig.enabled && smConfig.autoInject) {
             const injectMaxResults = smConfig.injectMaxResults
             const injectThreshold = smConfig.injectThreshold
             const memResults = searchMemory(db, parsed.content, injectMaxResults + 5)

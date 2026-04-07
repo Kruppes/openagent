@@ -1,24 +1,26 @@
 /**
- * Composable for persisting and reading SalesMemory Plugin settings from localStorage.
+ * Composable for reading and persisting SalesMemory settings via the backend API.
  *
- * Settings are stored under the key `plugin:sales-memory:settings` and are reactive
- * so any component can read the latest values after a save.
+ * Settings are stored in /data/config/salesmemory.json on the server via
+ * GET/POST /api/salesmemory/config.
  */
 
 export type SalesMemoryProvider = 'ollama' | 'openai' | 'anthropic'
 
 export interface SalesMemoryPluginSettings {
+  /** Whether SalesMemory is enabled */
+  enabled: boolean
   /** LLM provider to use for recall/digest */
   provider: SalesMemoryProvider
   /** Base URL of the Ollama instance */
   ollamaUrl: string
   /** Ollama model to use */
   ollamaModel: string
-  /** OpenAI API key */
+  /** OpenAI API key (masked as "***" when returned from API) */
   openaiKey: string
   /** OpenAI model to use */
   openaiModel: string
-  /** Anthropic API key */
+  /** Anthropic API key (masked as "***" when returned from API) */
   anthropicKey: string
   /** Anthropic model to use */
   anthropicModel: string
@@ -30,12 +32,11 @@ export interface SalesMemoryPluginSettings {
   injectThreshold: number
 }
 
-const STORAGE_KEY = 'plugin:sales-memory:settings'
-
 const DEFAULTS: SalesMemoryPluginSettings = {
+  enabled: false,
   provider: 'ollama',
-  ollamaUrl: 'http://192.168.10.222:11434',
-  ollamaModel: 'qwen3:32b',
+  ollamaUrl: 'http://localhost:11434',
+  ollamaModel: 'llama3.2',
   openaiKey: '',
   openaiModel: 'gpt-4o-mini',
   anthropicKey: '',
@@ -45,47 +46,65 @@ const DEFAULTS: SalesMemoryPluginSettings = {
   injectThreshold: -1.0,
 }
 
-/** Reactive shared state — initialised once from localStorage */
+/** Reactive shared state */
 const _settings = ref<SalesMemoryPluginSettings>({ ...DEFAULTS })
-let _initialised = false
-
-function _init() {
-  if (_initialised || !import.meta.client) return
-  _initialised = true
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw) as Partial<SalesMemoryPluginSettings>
-      _settings.value = { ...DEFAULTS, ...parsed }
-    }
-  } catch {
-    // Ignore — use defaults
-  }
-}
+const _loaded = ref(false)
+const _loading = ref(false)
 
 export function useSalesMemorySettings() {
-  _init()
+  const { apiFetch } = useApi()
 
   /** Current settings (reactive) */
   const settings = computed(() => _settings.value)
 
   /**
-   * Persist new settings to localStorage and update reactive state.
+   * Load settings from the backend API.
+   * Safe to call multiple times — subsequent calls always refresh from the server.
    */
-  function saveSettings(next: SalesMemoryPluginSettings) {
-    _settings.value = { ...next }
-    if (import.meta.client) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+  async function fetchSettings() {
+    if (_loading.value) return
+    _loading.value = true
+    try {
+      const data = await apiFetch<SalesMemoryPluginSettings>('/api/salesmemory/config')
+      _settings.value = { ...DEFAULTS, ...data }
+      _loaded.value = true
+    } catch {
+      // API may not be available (feature disabled) — use defaults
+      _settings.value = { ...DEFAULTS }
+      _loaded.value = true
+    } finally {
+      _loading.value = false
     }
   }
 
-  /** Reset to defaults without persisting (caller must call saveSettings to persist) */
+  /**
+   * Persist new settings to the backend and update reactive state.
+   * Returns true on success, false on error.
+   */
+  async function saveSettings(next: Partial<SalesMemoryPluginSettings>): Promise<boolean> {
+    try {
+      const saved = await apiFetch<SalesMemoryPluginSettings>('/api/salesmemory/config', {
+        method: 'POST',
+        body: JSON.stringify(next),
+      })
+      _settings.value = { ...DEFAULTS, ...saved }
+      return true
+    } catch (err) {
+      console.error('[SalesMemory] Failed to save settings:', err)
+      return false
+    }
+  }
+
+  /** Reset to defaults without persisting */
   function getDefaults(): SalesMemoryPluginSettings {
     return { ...DEFAULTS }
   }
 
   return {
     settings,
+    loading: _loading,
+    loaded: _loaded,
+    fetchSettings,
     saveSettings,
     getDefaults,
   }

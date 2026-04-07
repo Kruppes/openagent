@@ -80,12 +80,6 @@
     :open="activeSettingsPlugin === 'voice-input'"
     @close="activeSettingsPlugin = null"
   />
-
-  <!-- SalesMemory Plugin Settings Modal -->
-  <SalesMemoryPluginSettingsModal
-    :open="activeSettingsPlugin === 'sales-memory'"
-    @close="activeSettingsPlugin = null"
-  />
 </template>
 
 <script setup lang="ts">

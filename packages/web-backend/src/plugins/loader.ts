@@ -5,11 +5,9 @@ import type { OpenAgentPlugin } from './types.js'
 // Static plugin registry — import each plugin explicitly.
 // This avoids dynamic filesystem scanning which is fragile in bundled/dist builds.
 import voiceInputPlugin from './voice-input/index.js'
-import salesMemoryPlugin from './sales-memory/index.js'
 
 const plugins: OpenAgentPlugin[] = [
   voiceInputPlugin,
-  ...(process.env.SALESMEMORY_ENABLED === 'true' ? [salesMemoryPlugin as OpenAgentPlugin] : []),
 ]
 
 /**

@@ -27,6 +27,8 @@ import type { RuntimeMetrics } from './runtime-metrics.js'
 import type { MemoryConsolidationScheduler } from './memory-consolidation-scheduler.js'
 import { createUploadsRouter } from './routes/uploads.js'
 import { loadPlugins } from './plugins/loader.js'
+import { initSalesMemoryDb } from './plugins/sales-memory/db.js'
+import { createSalesMemoryRouter } from './plugins/sales-memory/routes.js'
 
 const startTime = Date.now()
 
@@ -131,6 +133,17 @@ export function createApp(options?: AppOptions): express.Express {
       getTaskScheduler: options.getTaskScheduler,
     }))
     app.use('/api/secrets', createSecretsRouter())
+
+    // SalesMemory: initialise DB tables and mount routes when feature is enabled
+    if (process.env.SALESMEMORY_ENABLED === 'true') {
+      try {
+        initSalesMemoryDb(options.db)
+      } catch (err) {
+        console.error('[salesmemory] Failed to initialise database tables:', err)
+      }
+      app.use('/api/salesmemory', createSalesMemoryRouter(options.db))
+      console.log('[salesmemory] Routes registered at /api/salesmemory')
+    }
 
     if (options.healthMonitorService && options.runtimeMetrics) {
       app.use('/api/health', createHealthRouter({
