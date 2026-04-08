@@ -14,6 +14,7 @@
     "logs": "Activity Logs",
     "users": "Users",
     "skills": "Skills",
+    "instructions": "Instructions",
     "tasks": "Tasks",
     "cronjobs": "Cronjobs",
     "plugins": "Plugins"
@@ -32,11 +33,21 @@
     "delete": "Delete",
     "saveFailed": "Could not save changes.",
     "deleteFailed": "Could not delete item.",
-    "language": "Language"
+    "language": "Language",
+    "back": "Back"
   },
   "admin": {
     "title": "Admin access required",
     "description": "This page is only available to administrators."
+  },
+  "instructions": {
+    "title": "Instructions",
+    "subtitle": "Edit the agent's rule files with more space and restore the built-in defaults when needed.",
+    "loading": "Loading instructions...",
+    "restoreDefault": "Restore default",
+    "restoringDefault": "Restoring...",
+    "restoreDefaultConfirmTitle": "Restore default content?",
+    "restoreDefaultConfirmDescription": "This replaces the current editor content with the built-in template. Nothing is saved until you click Save changes."
   },
   "auth": {
     "logout": "Logout",
@@ -59,11 +70,16 @@
     "displayFilters": "Display Filters",
     "filterToolCalls": "Tool Calls",
     "filterInjections": "Injections",
+    "filterSessionSummaries": "Session Summaries",
+    "sessionSummary": "Session Summary",
     "scrollToBottom": "Scroll to bottom",
     "attachments": {
       "openOriginal": "Open original",
       "download": "Download"
-    }
+    },
+    "ttsPlay": "Read aloud",
+    "ttsStop": "Stop reading",
+    "ttsLoading": "Generating speech..."
   },
   "status": {
     "online": "Online",
@@ -110,6 +126,8 @@
     "modelPlaceholderCustom": "e.g. google/gemini-2.5-pro",
     "selectModel": "Select a model",
     "loadingModels": "Loading models...",
+    "modelsLoadError": "Failed to load models",
+    "modelsRetry": "↻ Retry loading models",
     "ollamaUrlHint": "Default: http://localhost:11434/v1",
     "oauthLogin": "Login & Connect",
     "oauthConnecting": "Connecting...",
@@ -118,6 +136,8 @@
     "oauthManualCode": "Or paste the redirect URL here (for remote servers):",
     "oauthManualCodePlaceholder": "Paste redirect URL or code...",
     "oauthSubmitCode": "Submit",
+    "oauthRenewToken": "Renew Token",
+    "oauthRenewing": "Renewing...",
     "statusConnected": "Connected",
     "statusError": "Error",
     "statusUntested": "Untested",
@@ -200,7 +220,7 @@
     "coreMemoryTab": "Core Memory",
     "agentRulesTab": "Agent Rules",
     "heartbeatTab": "Heartbeat",
-    "profileTab": "My Profile",
+    "profileTab": "User Profile",
     "dailyTab": "Daily",
     "loading": "Loading memory...",
     "editorPlaceholder": "Write markdown here...",
@@ -219,7 +239,11 @@
     "dailyColumnSize": "Size",
     "dailyPagination": "{from}–{to} of {total}",
     "dailyPrevPage": "Previous page",
-    "dailyNextPage": "Next page"
+    "dailyNextPage": "Next page",
+    "projectsTab": "Projects",
+    "noProjectFiles": "No project files yet.",
+    "projectColumnName": "Project",
+    "projectEditorDescription": "Project notes are used by the agent for project-specific context."
   },
   "settings": {
     "kicker": "Runtime configuration",
@@ -302,6 +326,13 @@
     "telegramUsersAutoLinked": "Auto-linked on approval",
     "telegramUsersNoUsername": "No username",
     "telegramUsersRefresh": "Refresh Telegram users",
+    "openEditor": "Open editor",
+    "agentRulesTitle": "Agent Rules",
+    "agentRulesDescription": "Define how the agent should behave, communicate, and execute tasks. The agent reads these rules on every conversation.",
+    "heartbeatTasksTitle": "Heartbeat Tasks",
+    "heartbeatTasksDescription": "Define periodic tasks for the agent to execute during each heartbeat cycle.",
+    "consolidationRulesTitle": "Consolidation Rules",
+    "consolidationRulesDescription": "Define what the nightly memory consolidation should focus on — what to promote, update, or ignore.",
     "consolidationSection": "Memory consolidation",
     "consolidationSectionDescription": "Automatically review daily memory entries and promote lasting insights into core memory (MEMORY.md).",
     "consolidationEnabled": "Enable automatic consolidation",
@@ -423,7 +454,35 @@
     "tasksStatusUpdates": "Periodic Status Updates",
     "tasksStatusUpdatesHint": "Receive periodic updates about running background tasks.",
     "tasksStatusUpdateInterval": "Status update interval",
-    "tasksStatusUpdateIntervalHint": "How often to inject a status update about running tasks into the main agent."
+    "tasksStatusUpdateIntervalHint": "How often to inject a status update about running tasks into the main agent.",
+    "ttsTitle": "Text-to-Speech",
+    "ttsSubtitle": "Read agent responses aloud using AI-powered text-to-speech.",
+    "ttsEnabled": "Enable Text-to-Speech",
+    "ttsEnabledHint": "Show a play button on assistant messages to read them aloud.",
+    "ttsProvider": "TTS Provider",
+    "ttsProviderHint": "Choose which AI provider generates the speech audio.",
+    "ttsOpenaiModel": "OpenAI Model",
+    "ttsOpenaiModelHint": "gpt-4o-mini-tts is the fastest and most expressive. tts-1-hd has higher audio quality.",
+    "ttsOpenaiVoice": "OpenAI Voice",
+    "ttsOpenaiVoiceHint": "Select a voice preset for speech generation.",
+    "ttsOpenaiInstructions": "Voice Instructions",
+    "ttsOpenaiInstructionsHint": "Optional tone/style instructions (e.g. \"Speak in a calm, friendly tone\"). Only supported by gpt-4o-mini-tts.",
+    "ttsOpenaiInstructionsPlaceholder": "e.g. Speak in a calm, friendly tone",
+    "ttsMistralVoice": "Mistral Voice",
+    "ttsMistralVoiceHint": "Select a Voxtral TTS voice preset.",
+    "ttsResponseFormat": "Audio Format",
+    "ttsResponseFormatHint": "MP3 is recommended for general use. WAV has lower latency but larger file sizes.",
+    "ttsProviderOpenaiNone": "OpenAI (no provider configured)",
+    "ttsProviderMistralNone": "Mistral Voxtral (no provider configured)",
+    "ttsVoicesLoading": "Loading voices...",
+    "ttsVoicesEmpty": "No voices available",
+    "ttsMistralSpeakerPlaceholder": "Voice",
+    "ttsMistralMoodPlaceholder": "Mood",
+    "ttsPreview": "Voice Preview",
+    "ttsPreviewPlaceholder": "Type text to preview the voice...",
+    "ttsPreviewPlay": "Play",
+    "ttsPreviewStop": "Stop",
+    "ttsPreviewHint": "Test the selected voice and mood before saving."
   },
   "users": {
     "kicker": "Access control",
@@ -678,7 +737,8 @@
       "user": "User",
       "agent": "Agent",
       "cronjob": "Cronjob",
-      "heartbeat": "Heartbeat"
+      "heartbeat": "Heartbeat",
+      "consolidation": "Consolidation"
     }
   },
   "cronjobs": {

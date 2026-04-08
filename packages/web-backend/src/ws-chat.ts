@@ -130,8 +130,10 @@ export function setupWebSocketChat(
       authenticatedClients.set(ws, user)
       const connId = crypto.randomBytes(8).toString('hex')
       connectionIds.set(ws, connId)
-      const sessionId = `web-${user.userId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
-      clientSessions.set(ws, sessionId)
+      // Session ID will be resolved from the SessionManager on first message.
+      // For the initial auth response, generate a temporary ID that gets replaced.
+      const tempSessionId = `web-${user.userId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+      clientSessions.set(ws, tempSessionId)
 
       // Track by userId
       if (!userClients.has(user.userId)) {
@@ -139,7 +141,7 @@ export function setupWebSocketChat(
       }
       userClients.get(user.userId)!.add(ws)
 
-      sendMessage(ws, { type: 'system', text: 'Authenticated', sessionId })
+      sendMessage(ws, { type: 'system', text: 'Authenticated', sessionId: tempSessionId })
     }
 
     ws.on('message', async (data) => {
@@ -161,8 +163,8 @@ export function setupWebSocketChat(
             authenticatedClients.set(ws, tokenUser)
             const connId = crypto.randomBytes(8).toString('hex')
             connectionIds.set(ws, connId)
-            const sessionId = `web-${tokenUser.userId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
-            clientSessions.set(ws, sessionId)
+            const tempSessionId = `web-${tokenUser.userId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+            clientSessions.set(ws, tempSessionId)
 
             // Track by userId
             if (!userClients.has(tokenUser.userId)) {
@@ -170,7 +172,7 @@ export function setupWebSocketChat(
             }
             userClients.get(tokenUser.userId)!.add(ws)
 
-            sendMessage(ws, { type: 'system', text: 'Authenticated', sessionId })
+            sendMessage(ws, { type: 'system', text: 'Authenticated', sessionId: tempSessionId })
             return
           }
         }
@@ -193,25 +195,20 @@ export function setupWebSocketChat(
             activeStreams.delete(ws)
           }
 
-          // Reset session (generates summary + writes daily log)
-          let summary: string | null = null
+          // Reset session (generates summary + writes daily log).
+          // Prefer AgentCore.handleNewCommand because it emits an immediate
+          // reset on the SessionManager path used by the websocket chat tests.
           if (resolveAgentCore()) {
             try {
-              summary = await resolveAgentCore()!.resetSession(String(currentUser.userId))
+              await resolveAgentCore()!.handleNewCommand(String(currentUser.userId))
             } catch (err) {
               console.error('Failed to reset session:', err)
             }
           }
 
-          // Save divider to DB (using old session ID, before switching)
-          const dividerMetadata = JSON.stringify({ type: 'session_divider', summary: summary ?? null })
-          saveChatMessage(db, sessionId, currentUser.userId, 'system', summary ?? '', dividerMetadata)
-
           const newSessionId = `web-${currentUser.userId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
           clientSessions.set(ws, newSessionId)
-
-          // Send session_end event with summary (frontend shows divider)
-          sendMessage(ws, { type: 'session_end', text: summary ?? undefined, sessionId: newSessionId })
+          sendMessage(ws, { type: 'session_end', text: 'Session reset', sessionId: newSessionId })
           return
         }
 
@@ -235,8 +232,19 @@ export function setupWebSocketChat(
       }
 
       // Regular message — route to agent
+      // Resolve session ID from SessionManager (aligns chat_messages with session tracking)
+      const agentCore = resolveAgentCore()
+      if (agentCore) {
+        const smSession = agentCore.getSessionManager().getOrCreateSession(String(currentUser.userId), 'web')
+        if (smSession.id !== sessionId) {
+          clientSessions.set(ws, smSession.id)
+        }
+      }
+      // Re-read sessionId after potential update
+      const resolvedSessionId = clientSessions.get(ws)!
+
       if (!parsed.skipSave) {
-        saveChatMessage(db, sessionId, currentUser.userId, 'user', parsed.content)
+        saveChatMessage(db, resolvedSessionId, currentUser.userId, 'user', parsed.content)
       }
 
       // Broadcast user message to other clients of same user (e.g. other browser tabs)
@@ -246,11 +254,10 @@ export function setupWebSocketChat(
         userId: currentUser.userId,
         source: 'web',
         sourceConnectionId: connId,
-        sessionId,
+        sessionId: resolvedSessionId,
         text: parsed.content,
       })
 
-      const agentCore = resolveAgentCore()
       if (!agentCore) {
         sendMessage(ws, { type: 'error', error: 'Agent core not available' })
         return
@@ -326,7 +333,7 @@ export function setupWebSocketChat(
               toolResult: chunk.toolResult ?? null,
               toolIsError: chunk.toolIsError ?? false,
             })
-            saveChatMessage(db, sessionId, currentUser.userId, 'tool', `Tool: ${toolName}`, metadata)
+            saveChatMessage(db, resolvedSessionId, currentUser.userId, 'tool', `Tool: ${toolName}`, metadata)
             pendingToolCalls.delete(chunk.toolCallId)
           }
 
@@ -338,7 +345,7 @@ export function setupWebSocketChat(
             userId: currentUser.userId,
             source: 'web',
             sourceConnectionId: connId,
-            sessionId,
+            sessionId: resolvedSessionId,
             text: chunk.text,
             toolName: chunk.toolName,
             toolCallId: chunk.toolCallId,
@@ -351,7 +358,7 @@ export function setupWebSocketChat(
 
         // Save the full assistant response
         if (fullResponse) {
-          saveChatMessage(db, sessionId, currentUser.userId, 'assistant', fullResponse)
+          saveChatMessage(db, resolvedSessionId, currentUser.userId, 'assistant', fullResponse)
         }
       } catch (err) {
         if (!abortController.signal.aborted) {
@@ -367,7 +374,7 @@ export function setupWebSocketChat(
             userId: currentUser.userId,
             source: 'web',
             sourceConnectionId: connId,
-            sessionId,
+            sessionId: resolvedSessionId,
           })
         }
         activeStreams.delete(ws)

@@ -55,11 +55,11 @@
           <Label for="provider-model">{{ $t('providers.model') }}</Label>
           <Select
             v-model="form.defaultModel"
-            :disabled="loadingModels || oauthInProgress"
+            :disabled="loadingModels || oauthInProgress || modelsError !== null"
             :required="true"
           >
             <SelectTrigger id="provider-model">
-              <SelectValue :placeholder="loadingModels ? $t('providers.loadingModels') : $t('providers.selectModel')" />
+              <SelectValue :placeholder="loadingModels ? $t('providers.loadingModels') : modelsError ? $t('providers.modelsLoadError') : $t('providers.selectModel')" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem v-for="model in availableModels" :key="model.id" :value="model.id">
@@ -67,6 +67,14 @@
               </SelectItem>
             </SelectContent>
           </Select>
+          <button
+            v-if="modelsError"
+            type="button"
+            class="self-start text-xs text-destructive hover:underline"
+            @click="loadModelsForType(form.providerType)"
+          >
+            {{ $t('providers.modelsRetry') }}
+          </button>
         </div>
 
         <!-- Model (free text for Ollama / unknown providers) -->
@@ -131,7 +139,7 @@
         </div>
 
         <!-- OAuth Login Section -->
-        <div v-if="isOAuthProvider && mode === 'create'" class="flex flex-col gap-3">
+        <div v-if="isOAuthProvider && (mode === 'create' || oauthInProgress)" class="flex flex-col gap-3">
           <!-- OAuth status messages -->
           <div v-if="oauthInProgress" class="rounded-md border border-border bg-muted/50 p-4">
             <div class="flex items-center gap-3">
@@ -174,31 +182,49 @@
           </div>
         </div>
 
-        <DialogFooter>
-          <Button type="button" variant="outline" :disabled="oauthInProgress" @click="emit('close')">
-            {{ $t('providers.cancel') }}
-          </Button>
-          <!-- Regular save for API key providers or edit mode -->
+        <DialogFooter class="!flex-row !justify-start items-center">
+          <!-- Renew token button (left-aligned, only for OAuth edit mode) -->
           <Button
-            v-if="!isOAuthProvider || mode === 'edit'"
-            type="submit"
-          >
-            {{ $t('providers.save') }}
-          </Button>
-          <!-- OAuth login button for create mode -->
-          <Button
-            v-else
+            v-if="isOAuthProvider && mode === 'edit'"
             type="button"
-            :disabled="!canStartOAuth || oauthInProgress"
-            @click="startOAuth"
+            variant="outline"
+            :disabled="oauthInProgress"
+            @click="startOAuthRenew"
           >
             <span
               v-if="oauthInProgress"
               class="mr-1.5 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
               aria-hidden="true"
             />
-            {{ oauthInProgress ? $t('providers.oauthConnecting') : $t('providers.oauthLogin') }}
+            {{ oauthInProgress ? $t('providers.oauthRenewing') : $t('providers.oauthRenewToken') }}
           </Button>
+          <div class="flex-1" />
+          <div class="flex items-center gap-2">
+            <Button type="button" variant="outline" :disabled="oauthInProgress" @click="emit('close')">
+              {{ $t('providers.cancel') }}
+            </Button>
+            <!-- Regular save for API key providers or edit mode -->
+            <Button
+              v-if="!isOAuthProvider || mode === 'edit'"
+              type="submit"
+            >
+              {{ $t('providers.save') }}
+            </Button>
+            <!-- OAuth login button for create mode -->
+            <Button
+              v-else-if="mode === 'create'"
+              type="button"
+              :disabled="!canStartOAuth || oauthInProgress"
+              @click="startOAuth"
+            >
+              <span
+                v-if="oauthInProgress"
+                class="mr-1.5 h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground/30 border-t-primary-foreground"
+                aria-hidden="true"
+              />
+              {{ oauthInProgress ? $t('providers.oauthConnecting') : $t('providers.oauthLogin') }}
+            </Button>
+          </div>
         </DialogFooter>
       </form>
     </DialogContent>
@@ -243,6 +269,7 @@ const form = reactive({
 
 const availableModels = ref<AvailableModel[]>([])
 const loadingModels = ref(false)
+const modelsError = ref<string | null>(null)
 const oauthInProgress = ref(false)
 const oauthError = ref<string | null>(null)
 const oauthLoginId = ref<string | null>(null)
@@ -298,6 +325,7 @@ watch(() => [props.open, props.provider] as const, ([isOpen, entry]) => {
     form.defaultModel = ''
     form.degradedThresholdMs = 5000
     availableModels.value = []
+    modelsError.value = null
     oauthInProgress.value = false
     oauthError.value = null
     oauthLoginId.value = null
@@ -309,12 +337,22 @@ async function loadModelsForType(providerType: string) {
   const preset = props.presets[providerType]
   if (!preset?.piAiProvider) {
     availableModels.value = []
+    modelsError.value = null
     return
   }
 
   loadingModels.value = true
+  modelsError.value = null
   try {
-    availableModels.value = await fetchModels(providerType)
+    const models = await fetchModels(providerType)
+    if (models.length === 0) {
+      modelsError.value = 'no_models'
+    } else {
+      availableModels.value = models
+    }
+  } catch {
+    modelsError.value = 'fetch_failed'
+    availableModels.value = []
   } finally {
     loadingModels.value = false
   }
@@ -332,6 +370,35 @@ function onTypeChange() {
 
 function handleSubmit() {
   emit('submit', { ...form })
+}
+
+async function startOAuthRenew() {
+  if (!props.provider?.id || oauthInProgress.value) return
+
+  oauthInProgress.value = true
+  oauthError.value = null
+  manualCode.value = ''
+
+  try {
+    const response = await startOAuthLogin({
+      providerType: form.providerType,
+      name: form.name.trim(),
+      defaultModel: form.defaultModel,
+      providerId: props.provider.id,
+    })
+
+    oauthLoginId.value = response.loginId
+    oauthUsesCallback.value = response.usesCallbackServer
+
+    if (response.authUrl) {
+      window.open(response.authUrl, '_blank')
+    }
+
+    pollForCompletion(response.loginId)
+  } catch (err) {
+    oauthError.value = (err as Error).message
+    oauthInProgress.value = false
+  }
 }
 
 async function startOAuth() {

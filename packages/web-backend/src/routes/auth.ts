@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import type { Database } from '@openagent/core'
 import {
   validateCredentials,
@@ -10,7 +10,7 @@ import {
 import type { AuthenticatedRequest } from '../auth.js'
 
 export function createAuthRouter(db: Database): Router {
-  const router = Router()
+  const router = express.Router()
 
   /**
    * POST /api/auth/login

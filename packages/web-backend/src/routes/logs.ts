@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import type { Database } from '@openagent/core'
 import { queryToolCalls, getToolCallById, getDistinctToolNames } from '@openagent/core'
 import { jwtMiddleware } from '../auth.js'
@@ -10,7 +10,7 @@ function truncate(str: string | null | undefined, maxLen: number = 200): string 
 }
 
 export function createLogsRouter(db: Database): Router {
-  const router = Router()
+  const router = express.Router()
 
   // All logs routes require admin JWT
   router.use(jwtMiddleware)

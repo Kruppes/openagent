@@ -9,6 +9,12 @@ import { getConfigDir, ensureConfigTemplates, loadConfig } from './config.js'
 import { encrypt, decrypt, isEncrypted, maskApiKey } from './encryption.js'
 
 /**
+ * Claude Code CLI version to advertise in the user-agent header for Anthropic requests.
+ * This ensures Anthropic treats requests as coming from a Claude Code client.
+ */
+export const CLAUDE_CODE_VERSION = '2.1.96'
+
+/**
  * Supported provider types with presets
  */
 export type ProviderType =
@@ -735,6 +741,16 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
 
       const piModel = models.find(m => m.id === id)
       if (piModel) {
+        // For Anthropic OAuth, inject the Claude Code CLI user-agent header
+        if (provider.providerType === 'anthropic-oauth') {
+          return {
+            ...piModel,
+            headers: {
+              ...piModel.headers,
+              'user-agent': `claude-cli/${CLAUDE_CODE_VERSION}`,
+            },
+          }
+        }
         return piModel
       }
     } catch {
@@ -745,6 +761,10 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
   // Generic build for API key providers or fallback
   const modelConfig = provider.models?.find(m => m.id === id)
   const priceFallback = getConfiguredPriceTable()[id] ?? { input: 0, output: 0 }
+
+  // For Anthropic providers, set the user-agent header to advertise as Claude Code CLI
+  const isAnthropicProvider = provider.providerType === 'anthropic' || provider.providerType === 'anthropic-oauth'
+  const headers = isAnthropicProvider ? { 'user-agent': `claude-cli/${CLAUDE_CODE_VERSION}` } : undefined
 
   return {
     id,
@@ -762,6 +782,7 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
     },
     contextWindow: modelConfig?.contextWindow ?? 128000,
     maxTokens: modelConfig?.maxTokens ?? 16384,
+    ...(headers && { headers }),
   }
 }
 

@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
@@ -9,8 +9,13 @@ import {
   writeMemoryFile,
   readAgentsRulesFile,
   writeAgentsRulesFile,
+  getDefaultAgentsRulesContent,
   readHeartbeatFile,
   writeHeartbeatFile,
+  getDefaultHeartbeatContent,
+  readConsolidationFile,
+  writeConsolidationFile,
+  getDefaultConsolidationContent,
   readUserProfile,
   ensureUserProfile,
 } from '@openagent/core'
@@ -20,7 +25,7 @@ import type { AuthenticatedRequest } from '../auth.js'
 import type { MemoryConsolidationScheduler } from '../memory-consolidation-scheduler.js'
 
 export function createMemoryRouter(getAgentCore: () => AgentCore | null = () => null, consolidationScheduler?: MemoryConsolidationScheduler | null): Router {
-  const router = Router()
+  const router = express.Router()
 
   router.use(jwtMiddleware)
   router.use((req: AuthenticatedRequest, res, next) => {
@@ -123,6 +128,14 @@ export function createMemoryRouter(getAgentCore: () => AgentCore | null = () => 
     }
   })
 
+  router.get('/agents/default', (_req, res) => {
+    try {
+      res.json({ content: getDefaultAgentsRulesContent() })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to load AGENTS.md default: ${(err as Error).message}` })
+    }
+  })
+
   router.get('/daily', (_req, res) => {
     try {
       const memoryDir = getMemoryDir()
@@ -212,6 +225,95 @@ export function createMemoryRouter(getAgentCore: () => AgentCore | null = () => 
     }
   })
 
+  // Project files endpoints (/data/memory/projects/*.md)
+  router.get('/projects', (_req, res) => {
+    try {
+      const memoryDir = getMemoryDir()
+      const projectsDir = path.join(memoryDir, 'projects')
+      ensureMemoryStructure(memoryDir)
+
+      if (!fs.existsSync(projectsDir)) {
+        res.json({ files: [] })
+        return
+      }
+
+      const entries = fs.readdirSync(projectsDir)
+        .filter(f => f.endsWith('.md'))
+        .sort()
+
+      const files = entries.map(filename => {
+        const filePath = path.join(projectsDir, filename)
+        const stats = fs.statSync(filePath)
+        const name = filename.replace('.md', '')
+        return {
+          filename,
+          name,
+          size: stats.size,
+          modifiedAt: stats.mtime.toISOString(),
+        }
+      })
+
+      res.json({ files })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to list project files: ${(err as Error).message}` })
+    }
+  })
+
+  router.get('/projects/:name', (req, res) => {
+    const { name } = req.params
+    if (!/^[\w-]+$/.test(name)) {
+      res.status(400).json({ error: 'Invalid project name. Use only alphanumeric characters, hyphens, and underscores.' })
+      return
+    }
+
+    try {
+      const memoryDir = getMemoryDir()
+      const filePath = path.join(memoryDir, 'projects', `${name}.md`)
+
+      if (!fs.existsSync(filePath)) {
+        res.status(404).json({ error: `Project file "${name}" not found` })
+        return
+      }
+
+      const content = fs.readFileSync(filePath, 'utf-8')
+      res.json({ name, content })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to read project file: ${(err as Error).message}` })
+    }
+  })
+
+  router.put('/projects/:name', (req: AuthenticatedRequest, res) => {
+    const rawName = req.params.name
+    const name = Array.isArray(rawName) ? rawName[0] : rawName
+    if (!name || !/^[\w-]+$/.test(name)) {
+      res.status(400).json({ error: 'Invalid project name. Use only alphanumeric characters, hyphens, and underscores.' })
+      return
+    }
+
+    const { content } = req.body as { content?: string }
+    if (content === undefined || content === null) {
+      res.status(400).json({ error: 'Content is required' })
+      return
+    }
+
+    try {
+      const memoryDir = getMemoryDir()
+      const projectsDir = path.join(memoryDir, 'projects')
+      ensureMemoryStructure(memoryDir)
+
+      if (!fs.existsSync(projectsDir)) {
+        fs.mkdirSync(projectsDir, { recursive: true })
+      }
+
+      const filePath = path.join(projectsDir, `${name}.md`)
+      fs.writeFileSync(filePath, content, 'utf-8')
+      refreshAgentPrompt()
+      res.json({ message: `Project file "${name}" updated`, name, content })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to write project file: ${(err as Error).message}` })
+    }
+  })
+
   // Heartbeat endpoints (HEARTBEAT.md — agent heartbeat task list)
   router.get('/heartbeat', (_req, res) => {
     try {
@@ -235,6 +337,14 @@ export function createMemoryRouter(getAgentCore: () => AgentCore | null = () => 
       res.json({ message: 'HEARTBEAT.md updated', content })
     } catch (err) {
       res.status(500).json({ error: `Failed to write HEARTBEAT.md: ${(err as Error).message}` })
+    }
+  })
+
+  router.get('/heartbeat/default', (_req, res) => {
+    try {
+      res.json({ content: getDefaultHeartbeatContent() })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to load HEARTBEAT.md default: ${(err as Error).message}` })
     }
   })
 
@@ -273,6 +383,39 @@ export function createMemoryRouter(getAgentCore: () => AgentCore | null = () => 
       res.json({ message: `Profile for ${username} updated`, username, content })
     } catch (err) {
       res.status(500).json({ error: `Failed to write user profile: ${(err as Error).message}` })
+    }
+  })
+
+  // Consolidation rules endpoints (CONSOLIDATION.md)
+  router.get('/consolidation-rules', (_req, res) => {
+    try {
+      const content = readConsolidationFile()
+      res.json({ content })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to read CONSOLIDATION.md: ${(err as Error).message}` })
+    }
+  })
+
+  router.put('/consolidation-rules', (req: AuthenticatedRequest, res) => {
+    const { content } = req.body as { content?: string }
+    if (content === undefined || content === null) {
+      res.status(400).json({ error: 'Content is required' })
+      return
+    }
+
+    try {
+      writeConsolidationFile(content)
+      res.json({ message: 'CONSOLIDATION.md updated', content })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to write CONSOLIDATION.md: ${(err as Error).message}` })
+    }
+  })
+
+  router.get('/consolidation-rules/default', (_req, res) => {
+    try {
+      res.json({ content: getDefaultConsolidationContent() })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to load CONSOLIDATION.md default: ${(err as Error).message}` })
     }
   })
 

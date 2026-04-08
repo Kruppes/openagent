@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Database } from './database.js'
+import type { Database, StatementResult } from './database.js'
 
 export type ScheduledTaskActionType = 'task' | 'injection'
 
@@ -226,7 +226,7 @@ export class ScheduledTaskStore {
     params.push(now)
 
     params.push(id)
-    const result = this.db.prepare(`UPDATE scheduled_tasks SET ${setClauses.join(', ')} WHERE id = ?`).run(...params)
+    const result = this.db.prepare(`UPDATE scheduled_tasks SET ${setClauses.join(', ')} WHERE id = ?`).run(...params) as StatementResult
 
     if (result.changes === 0) return null
     return this.getById(id)
@@ -236,7 +236,7 @@ export class ScheduledTaskStore {
    * Delete a scheduled task
    */
   delete(id: string): boolean {
-    const result = this.db.prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id)
+    const result = this.db.prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id) as StatementResult
     return result.changes > 0
   }
 }

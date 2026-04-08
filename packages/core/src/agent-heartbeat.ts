@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { ensureConfigTemplates, loadConfig } from './config.js'
 import type { TaskStore, Task } from './task-store.js'
 import type { TaskRunner } from './task-runner.js'
@@ -25,20 +27,9 @@ export const DEFAULT_AGENT_HEARTBEAT_SETTINGS: AgentHeartbeatSettings = {
   },
 }
 
-const HEARTBEAT_PROMPT = `You are running a periodic heartbeat maintenance cycle.
-
-1. Read \`/data/memory/HEARTBEAT.md\` for the list of tasks to execute.
-2. For the "Daily Memory Update" task: use the read_chat_history tool to read recent chat messages since the last heartbeat. Extract important facts, decisions, and preferences that haven't been captured yet, and write them to today's daily memory file (\`/data/memory/daily/YYYY-MM-DD.md\`). Focus on lasting value — skip ephemeral chatter.
-3. For the "Memory Hygiene" task: check MEMORY.md for outdated entries and promote important insights from daily memory if needed.
-4. Execute any other tasks defined in HEARTBEAT.md.
-
-Available tools:
-- read_chat_history: Read chat messages with optional datetime filtering (start/end), source filtering (web/telegram/task), and role filtering.
-- read_file / write_file / edit_file: Work with memory files.
-
+const HEARTBEAT_PROMPT = `Read /data/config/HEARTBEAT.md. Execute the tasks defined there.
 If you have something important to report to the user, use task injection.
-If nothing needs attention, complete silently without output.
-Be efficient — avoid unnecessary LLM calls or tool usage.`
+If nothing needs attention, complete silently.`
 
 export interface AgentHeartbeatServiceOptions {
   taskStore: TaskStore
@@ -48,6 +39,24 @@ export interface AgentHeartbeatServiceOptions {
   now?: () => Date
   /** Override for testing — returns the configured timezone */
   getTimezone?: () => string
+}
+
+/**
+ * Returns true if the HEARTBEAT.md content contains only blank lines,
+ * ATX headings (`# ...`), and empty checkbox list items (`- [ ]`).
+ * Any other content is considered "actionable".
+ */
+export function isHeartbeatContentEffectivelyEmpty(content: string): boolean {
+  const lines = content.split('\n')
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed === '') continue
+    if (/^#{1,6}\s/.test(trimmed) || /^#{1,6}$/.test(trimmed)) continue
+    if (/^-\s*\[\s*\]\s*$/.test(trimmed)) continue
+    if (/^<!--.*-->$/.test(trimmed)) continue
+    return false
+  }
+  return true
 }
 
 export class AgentHeartbeatService {
@@ -147,6 +156,20 @@ export class AgentHeartbeatService {
     // Check night mode
     if (this.isNightMode()) {
       console.log('[openagent] Agent heartbeat skipped: night mode active')
+      return null
+    }
+
+    // Pre-flight: read HEARTBEAT.md and skip if no actionable content
+    const heartbeatPath = path.join(process.env.DATA_DIR ?? '/data', 'config', 'HEARTBEAT.md')
+    try {
+      const content = fs.readFileSync(heartbeatPath, 'utf-8')
+      if (isHeartbeatContentEffectivelyEmpty(content)) {
+        console.log('[openagent] Agent heartbeat skipped: HEARTBEAT.md has no actionable content')
+        return null
+      }
+    } catch {
+      // File doesn't exist or can't be read — skip heartbeat
+      console.log('[openagent] Agent heartbeat skipped: HEARTBEAT.md not found or unreadable')
       return null
     }
 

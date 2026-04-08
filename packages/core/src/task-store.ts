@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import type { Database } from './database.js'
+import type { Database, StatementResult } from './database.js'
 
 export type TaskStatus = 'running' | 'paused' | 'completed' | 'failed'
-export type TaskTriggerType = 'user' | 'agent' | 'cronjob' | 'heartbeat'
+export type TaskTriggerType = 'user' | 'agent' | 'cronjob' | 'heartbeat' | 'consolidation'
 export type TaskResultStatus = 'completed' | 'failed' | 'question' | 'silent'
 
 export interface Task {
@@ -121,7 +121,7 @@ export function initTasksTable(db: Database): void {
       name TEXT NOT NULL,
       prompt TEXT NOT NULL,
       status TEXT NOT NULL CHECK(status IN ('running', 'paused', 'completed', 'failed')),
-      trigger_type TEXT NOT NULL CHECK(trigger_type IN ('user', 'agent', 'cronjob', 'heartbeat')),
+      trigger_type TEXT NOT NULL CHECK(trigger_type IN ('user', 'agent', 'cronjob', 'heartbeat', 'consolidation')),
       trigger_source_id TEXT,
       provider TEXT,
       model TEXT,
@@ -280,7 +280,7 @@ export class TaskStore {
     if (setClauses.length === 0) return this.getById(id)
 
     params.push(id)
-    this.db.prepare(`UPDATE tasks SET ${setClauses.join(', ')} WHERE id = ?`).run(...params)
+    this.db.prepare(`UPDATE tasks SET ${setClauses.join(', ')} WHERE id = ?`).run(...params) as StatementResult
 
     return this.getById(id)
   }
@@ -289,7 +289,7 @@ export class TaskStore {
    * Delete a task
    */
   delete(id: string): boolean {
-    const result = this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id)
+    const result = this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id) as StatementResult
     return result.changes > 0
   }
 }

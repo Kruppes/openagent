@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { getWorkspaceDir } from './workspace.js'
+import { getConfigDir } from './config.js'
 
 const SOUL_TEMPLATE = `# Soul
 
@@ -85,29 +86,75 @@ const USER_PROFILE_TEMPLATE = `# User Profile — {username}
 
 const HEARTBEAT_TEMPLATE = `# Heartbeat Tasks
 
-This file defines periodic tasks the agent runs during heartbeat cycles.
-Both the user and the agent can edit this file.
-Be efficient — if nothing needs attention, complete silently.
+<!-- Define periodic tasks here. The agent will execute them during each heartbeat cycle. -->
+<!-- Both the user and the agent can edit this file. -->
+<!-- If this file has no actionable content, the heartbeat will skip automatically. -->
+`
 
-## Daily Memory Update
+const CONSOLIDATION_TEMPLATE = `# Memory Consolidation Rules
 
-- Use the read_chat_history tool to read recent chat messages (filter by start datetime to only get messages since last heartbeat)
-- Extract important facts, decisions, preferences, and context that aren't yet captured
-- Write new observations to today's daily memory file (/data/memory/daily/YYYY-MM-DD.md)
-- Focus on: user preferences learned, project decisions made, technical facts discovered, open action items
-- Skip ephemeral chatter — only persist information with lasting value
-- Don't duplicate what session summaries already captured
+<!-- These rules guide the nightly memory consolidation process. -->
+<!-- The consolidation agent reads this file to decide what to promote, update, or ignore. -->
+<!-- You can customize these rules to match your preferences. -->
 
-## Memory Hygiene
+## Memory Architecture
 
-- Check MEMORY.md for outdated or contradictory entries
-- If daily memory has important insights not yet in MEMORY.md, promote them
-- Keep MEMORY.md well-organized and scannable
-- Skip if nothing meaningful changed since last heartbeat
+The memory system has several tiers. Each piece of information should live in exactly one place.
 
-## Open Tasks
+| File / Directory | Purpose |
+|---|---|
+| MEMORY.md | Long-term core memory: learned lessons, recurring patterns, technical notes |
+| users/*.md | Per-user profiles: name, preferences, communication style, work context |
+| projects/*.md | Per-project notes: architecture, key decisions, dependencies, status |
+| daily/*.md | Ephemeral daily logs (source for consolidation, never modified) |
 
-(Add periodic checks, reminders, or monitoring tasks here)
+## What to promote to MEMORY.md
+
+- Recurring patterns and lessons learned across multiple sessions
+- Technical decisions and their rationale
+- General preferences that apply across all projects
+- Important facts that should persist across sessions
+- Corrections to previously stored information
+
+## What to update in user profiles (users/*.md)
+
+- Discovered preferences and communication style
+- Work context changes (role, current focus areas)
+- Personal details the user has shared (name, location, timezone)
+- Skills and expertise areas
+- Do NOT store language or timezone if they are already in the central settings
+
+## What to update in project notes (projects/*.md)
+
+- New project discoveries and context
+- Architecture changes and design decisions
+- Key dependencies, integration points, and tech stack
+- Project status changes and milestones
+- Create a new project note when a previously unknown project is discussed repeatedly
+- Project notes support YAML frontmatter with aliases, e.g.:
+  \`\`\`
+  ---
+  aliases: [short-name, abbreviation]
+  ---
+  \`\`\`
+
+## What to ignore
+
+- One-off questions with no lasting value
+- Casual small talk without personal details
+- Temporary debugging sessions (unless a reusable lesson was learned)
+- Information that is already captured in the correct file
+- Redundant or duplicate information
+
+## General Principles
+
+- **Be selective**: Only promote information with clear long-term value.
+- **No duplication**: Each fact lives in exactly one place. Move, don't copy.
+- **Merge & refine**: If similar information exists, update it rather than adding a duplicate.
+- **Remove outdated info**: If daily entries contradict existing memory, update or remove the old entry.
+- **Preserve structure**: Keep existing markdown structure. Add new sections if needed.
+- **Be concise**: Use bullet points and short descriptions. Core memory should be scannable.
+- **Daily files are read-only**: Never modify daily log files — they are append-only source material.
 `
 
 
@@ -153,10 +200,23 @@ export function readUserProfile(username: string, memoryDir?: string): string {
   return fs.readFileSync(profilePath, 'utf-8')
 }
 
+export function getDefaultAgentsRulesContent(): string {
+  return AGENTS_TEMPLATE
+}
+
+export function getDefaultHeartbeatContent(): string {
+  return HEARTBEAT_TEMPLATE
+}
+
+export function getDefaultConsolidationContent(): string {
+  return CONSOLIDATION_TEMPLATE
+}
+
 export function ensureMemoryStructure(memoryDir?: string): void {
   const dir = memoryDir ?? getMemoryDir()
   const dailyDir = path.join(dir, 'daily')
   const usersDir = path.join(dir, 'users')
+  const projectsDir = path.join(dir, 'projects')
 
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
@@ -170,6 +230,10 @@ export function ensureMemoryStructure(memoryDir?: string): void {
     fs.mkdirSync(usersDir, { recursive: true })
   }
 
+  if (!fs.existsSync(projectsDir)) {
+    fs.mkdirSync(projectsDir, { recursive: true })
+  }
+
   const soulPath = path.join(dir, 'SOUL.md')
   if (!fs.existsSync(soulPath)) {
     fs.writeFileSync(soulPath, SOUL_TEMPLATE, 'utf-8')
@@ -178,7 +242,6 @@ export function ensureMemoryStructure(memoryDir?: string): void {
   const memoryPath = path.join(dir, 'MEMORY.md')
   if (!fs.existsSync(memoryPath)) {
     // Migrate legacy AGENTS.md to MEMORY.md if it exists
-    // (only if new AGENTS.md doesn't exist yet — avoid conflict)
     const legacyPath = path.join(dir, 'AGENTS.md')
     if (fs.existsSync(legacyPath)) {
       fs.renameSync(legacyPath, memoryPath)
@@ -186,16 +249,108 @@ export function ensureMemoryStructure(memoryDir?: string): void {
       fs.writeFileSync(memoryPath, MEMORY_TEMPLATE, 'utf-8')
     }
   }
+}
 
+/**
+ * Ensure the config directory structure exists with all default files.
+ * Migrates files from /data/memory/ to /data/config/ if they exist in the old location.
+ */
+export function ensureConfigStructure(configDir?: string): void {
+  const dir = configDir ?? getConfigDir()
+
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true })
+  }
+
+  // Migrate AGENTS.md from memory dir to config dir if needed
   const agentsPath = path.join(dir, 'AGENTS.md')
   if (!fs.existsSync(agentsPath)) {
-    fs.writeFileSync(agentsPath, AGENTS_TEMPLATE, 'utf-8')
+    const legacyPath = path.join(getMemoryDir(), 'AGENTS.md')
+    if (fs.existsSync(legacyPath)) {
+      fs.renameSync(legacyPath, agentsPath)
+      console.log('[config] Migrated AGENTS.md from memory/ to config/')
+    } else {
+      fs.writeFileSync(agentsPath, AGENTS_TEMPLATE, 'utf-8')
+    }
   }
 
+  // Migrate HEARTBEAT.md from memory dir to config dir if needed
   const heartbeatPath = path.join(dir, 'HEARTBEAT.md')
   if (!fs.existsSync(heartbeatPath)) {
-    fs.writeFileSync(heartbeatPath, HEARTBEAT_TEMPLATE, 'utf-8')
+    const legacyPath = path.join(getMemoryDir(), 'HEARTBEAT.md')
+    if (fs.existsSync(legacyPath)) {
+      fs.renameSync(legacyPath, heartbeatPath)
+      console.log('[config] Migrated HEARTBEAT.md from memory/ to config/')
+    } else {
+      fs.writeFileSync(heartbeatPath, HEARTBEAT_TEMPLATE, 'utf-8')
+    }
   }
+
+  // Create CONSOLIDATION.md if missing
+  const consolidationPath = path.join(dir, 'CONSOLIDATION.md')
+  if (!fs.existsSync(consolidationPath)) {
+    fs.writeFileSync(consolidationPath, CONSOLIDATION_TEMPLATE, 'utf-8')
+  }
+}
+
+/**
+ * Ensure the projects directory exists, creating it if needed.
+ */
+export function ensureProjectsDir(memoryDir?: string): string {
+  const dir = memoryDir ?? getMemoryDir()
+  const projectsDir = path.join(dir, 'projects')
+  if (!fs.existsSync(projectsDir)) {
+    fs.mkdirSync(projectsDir, { recursive: true })
+  }
+  return projectsDir
+}
+
+/**
+ * Parse aliases from YAML frontmatter in a project note.
+ * Expects format:
+ * ```
+ * ---
+ * aliases: [Alias1, alias-2]
+ * ---
+ * ```
+ */
+export function parseProjectAliases(content: string): string[] {
+  const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/)
+  if (!fmMatch) return []
+
+  const frontmatter = fmMatch[1]
+  // Match aliases: [val1, val2, ...] or aliases: val
+  const aliasMatch = frontmatter.match(/^aliases:\s*\[([^\]]*)\]/m)
+  if (aliasMatch) {
+    return aliasMatch[1]
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0)
+  }
+
+  // Single value: aliases: something
+  const singleMatch = frontmatter.match(/^aliases:\s*(.+)$/m)
+  if (singleMatch) {
+    const val = singleMatch[1].trim()
+    return val.length > 0 ? [val] : []
+  }
+
+  return []
+}
+
+/**
+ * List all project notes in the projects/ directory with their aliases.
+ */
+export function listProjectNotes(memoryDir?: string): Array<{ filename: string; aliases: string[] }> {
+  const projectsDir = ensureProjectsDir(memoryDir)
+
+  if (!fs.existsSync(projectsDir)) return []
+
+  const files = fs.readdirSync(projectsDir).filter(f => f.endsWith('.md')).sort()
+  return files.map(filename => {
+    const content = fs.readFileSync(path.join(projectsDir, filename), 'utf-8')
+    return { filename, aliases: parseProjectAliases(content) }
+  })
 }
 
 /**
@@ -237,47 +392,84 @@ export const readAgentsFile = readMemoryFile
 export const writeAgentsFile = writeMemoryFile
 
 /**
- * Read the AGENTS.md rules file
+ * Read the AGENTS.md rules file (from config directory).
+ * Falls back to template if the file/directory cannot be created.
  */
-export function readAgentsRulesFile(memoryDir?: string): string {
-  const dir = memoryDir ?? getMemoryDir()
+export function readAgentsRulesFile(configDir?: string): string {
+  const dir = configDir ?? getConfigDir()
   const agentsPath = path.join(dir, 'AGENTS.md')
-  if (!fs.existsSync(agentsPath)) {
-    ensureMemoryStructure(dir)
+  try {
+    if (!fs.existsSync(agentsPath)) {
+      ensureConfigStructure(dir)
+    }
+    return fs.readFileSync(agentsPath, 'utf-8')
+  } catch {
+    return AGENTS_TEMPLATE
   }
-  return fs.readFileSync(agentsPath, 'utf-8')
 }
 
 /**
- * Write the AGENTS.md rules file
+ * Write the AGENTS.md rules file (to config directory)
  */
-export function writeAgentsRulesFile(content: string, memoryDir?: string): void {
-  const dir = memoryDir ?? getMemoryDir()
-  ensureMemoryStructure(dir)
+export function writeAgentsRulesFile(content: string, configDir?: string): void {
+  const dir = configDir ?? getConfigDir()
+  ensureConfigStructure(dir)
   const agentsPath = path.join(dir, 'AGENTS.md')
   fs.writeFileSync(agentsPath, content, 'utf-8')
 }
 
 /**
- * Read the HEARTBEAT.md file
+ * Read the HEARTBEAT.md file (from config directory).
+ * Falls back to template if the file/directory cannot be created.
  */
-export function readHeartbeatFile(memoryDir?: string): string {
-  const dir = memoryDir ?? getMemoryDir()
+export function readHeartbeatFile(configDir?: string): string {
+  const dir = configDir ?? getConfigDir()
   const heartbeatPath = path.join(dir, 'HEARTBEAT.md')
-  if (!fs.existsSync(heartbeatPath)) {
-    ensureMemoryStructure(dir)
+  try {
+    if (!fs.existsSync(heartbeatPath)) {
+      ensureConfigStructure(dir)
+    }
+    return fs.readFileSync(heartbeatPath, 'utf-8')
+  } catch {
+    return HEARTBEAT_TEMPLATE
   }
-  return fs.readFileSync(heartbeatPath, 'utf-8')
 }
 
 /**
- * Write the HEARTBEAT.md file
+ * Write the HEARTBEAT.md file (to config directory)
  */
-export function writeHeartbeatFile(content: string, memoryDir?: string): void {
-  const dir = memoryDir ?? getMemoryDir()
-  ensureMemoryStructure(dir)
+export function writeHeartbeatFile(content: string, configDir?: string): void {
+  const dir = configDir ?? getConfigDir()
+  ensureConfigStructure(dir)
   const heartbeatPath = path.join(dir, 'HEARTBEAT.md')
   fs.writeFileSync(heartbeatPath, content, 'utf-8')
+}
+
+/**
+ * Read the CONSOLIDATION.md file (from config directory).
+ * Falls back to template if the file/directory cannot be created.
+ */
+export function readConsolidationFile(configDir?: string): string {
+  const dir = configDir ?? getConfigDir()
+  const consolidationPath = path.join(dir, 'CONSOLIDATION.md')
+  try {
+    if (!fs.existsSync(consolidationPath)) {
+      ensureConfigStructure(dir)
+    }
+    return fs.readFileSync(consolidationPath, 'utf-8')
+  } catch {
+    return CONSOLIDATION_TEMPLATE
+  }
+}
+
+/**
+ * Write the CONSOLIDATION.md file (to config directory)
+ */
+export function writeConsolidationFile(content: string, configDir?: string): void {
+  const dir = configDir ?? getConfigDir()
+  ensureConfigStructure(dir)
+  const consolidationPath = path.join(dir, 'CONSOLIDATION.md')
+  fs.writeFileSync(consolidationPath, content, 'utf-8')
 }
 
 /**
@@ -380,6 +572,7 @@ export interface BuiltinToolsPromptConfig {
 
 export function assembleSystemPrompt(options?: {
   memoryDir?: string
+  configDir?: string
   baseInstructions?: string
   recentDays?: number
   language?: string
@@ -408,8 +601,8 @@ export function assembleSystemPrompt(options?: {
     sections.push(`<instructions>\n${options.baseInstructions.trim()}\n</instructions>`)
   }
 
-  // 3. Agent rules from AGENTS.md
-  const agentsRules = readAgentsRulesFile(memoryDir)
+  // 3. Agent rules from AGENTS.md (in config directory)
+  const agentsRules = readAgentsRulesFile(options?.configDir)
   sections.push(`<agent_rules>\n${agentsRules.trim()}\n</agent_rules>`)
 
   // 4. Core memory from MEMORY.md
@@ -419,7 +612,11 @@ export function assembleSystemPrompt(options?: {
   // 5. Recent daily context
   const dailyContext = readRecentDailyFiles(recentDays, memoryDir)
   if (dailyContext) {
-    sections.push(`<recent_memory>\n${dailyContext}\n</recent_memory>`)
+    sections.push(`<recent_memory>
+These are summarized session notes from recent days. They are condensed — for full conversation details, use the read_chat_history tool.
+
+${dailyContext}
+</recent_memory>`)
   }
 
   // 6. User profile injection
@@ -472,22 +669,43 @@ export function assembleSystemPrompt(options?: {
     sections.push(`<available_tools>\nYou have the following tools available. Use the right tool for the job.\n\n${toolLines.join('\n')}\n</available_tools>`)
   }
 
-  // 8. Memory file paths for agent self-access
+  // 8. Project notes (Zettelkasten)
+  const projectNotes = listProjectNotes(memoryDir)
+  if (projectNotes.length > 0) {
+    const noteLines = projectNotes.map(n => {
+      const aliasStr = n.aliases.length > 0 ? ` (aliases: ${n.aliases.join(', ')})` : ''
+      return `- ${n.filename}${aliasStr}`
+    }).join('\n')
+    sections.push(`<project_notes>
+The following project notes are available. When discussing a project, check if a relevant project note exists and load it with read_file.
+
+${noteLines}
+</project_notes>`)
+  }
+
+  // 9. Memory and config file paths for agent self-access
   const dir = memoryDir ?? getMemoryDir()
+  const cfgDir = options?.configDir ?? getConfigDir()
   const today = new Date().toISOString().split('T')[0]
   sections.push(`<memory_paths>
-You can read and write your memory files directly using read_file, write_file, and edit_file tools.
+You can read and write your memory and config files directly using read_file, write_file, and edit_file tools.
 When modifying existing files, prefer edit_file (targeted oldText/newText replacements) over write_file (full rewrite) to save tokens and reduce errors.
+
+Memory files:
 - SOUL.md: ${path.join(dir, 'SOUL.md')}
 - MEMORY.md: ${path.join(dir, 'MEMORY.md')}
-- AGENTS.md: ${path.join(dir, 'AGENTS.md')}
-- HEARTBEAT.md: ${path.join(dir, 'HEARTBEAT.md')}
 - Daily memory directory: ${path.join(dir, 'daily/')}
 - Today's daily file: ${path.join(dir, 'daily', `${today}.md`)}
 - User profiles directory: ${path.join(dir, 'users/')}
+- Project notes directory: ${path.join(dir, 'projects/')}
+
+Config files:
+- AGENTS.md (agent rules): ${path.join(cfgDir, 'AGENTS.md')}
+- HEARTBEAT.md (heartbeat tasks): ${path.join(cfgDir, 'HEARTBEAT.md')}
+- CONSOLIDATION.md (consolidation rules): ${path.join(cfgDir, 'CONSOLIDATION.md')}
 </memory_paths>`)
 
-  // 9. Agent skill creation
+  // 10. Agent skill creation
   if (options?.agentSkillsDir) {
     sections.push(`<agent_skills>
 You can create your own reusable skills to extend your capabilities. A skill is a SKILL.md file
@@ -515,7 +733,7 @@ Created skills automatically appear in <available_skills> for future conversatio
 </agent_skills>`)
   }
 
-  // 10. Language setting
+  // 11. Language setting
   if (options?.language) {
     const lang = options.language.trim()
     if (lang.toLowerCase() === 'match' || lang.toLowerCase() === "match user's language") {
@@ -525,7 +743,7 @@ Created skills automatically appear in <available_skills> for future conversatio
     }
   }
 
-  // 11. Available skills (progressive disclosure)
+  // 12. Available skills (progressive disclosure)
   if (options?.skills && options.skills.length > 0) {
     const skillEntries = options.skills.map(s =>
       `  <skill>\n    <name>${s.name}</name>\n    <description>${s.description}</description>\n    <location>${s.location}</location>\n  </skill>`
@@ -546,7 +764,7 @@ ${skillEntries}${overflowNote}
 </available_skills>`)
   }
 
-  // 12. Task system instructions
+  // 13. Task system instructions
   sections.push(`<task_system>
 You have access to a background task system. You can start background tasks for complex,
 long-running work using the create_task tool.
@@ -596,18 +814,18 @@ Use create_reminder only for static reminder text delivered verbatim later. If t
 Do not promise that a reminder or cronjob will fetch fresh data unless the configured action type actually supports that.
 </task_system>`)
 
-  // 13. Workspace directory
+  // 14. Workspace directory
   const workspaceDir = getWorkspaceDir()
   sections.push(`<workspace>\nYour working directory is ${workspaceDir}. All shell commands execute in this directory by default.\nAll relative paths in read_file, write_file, and list_files resolve against this directory.\nUse this directory for cloning repos, creating files, and all file operations.\n</workspace>`)
 
-  // 14. Current date & time
+  // 15. Current date & time
   const tz = options?.timezone || 'UTC'
   const now = new Date()
   const date = now.toLocaleDateString('en-CA', { timeZone: tz })
   const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: tz })
   sections.push(`<current_datetime>\nCurrent date: ${date}\nCurrent time: ${time} (${tz})\n</current_datetime>`)
 
-  // 15. Channel context
+  // 16. Channel context
   if (options?.channel === 'telegram') {
     sections.push(`<channel_context>
 You are communicating with the user through Telegram. You ARE the Telegram bot — messages the user sends arrive directly to you, and your responses are sent back to the user automatically. Do not tell the user to use the Telegram Bot API, curl commands, or any external tools to communicate. Just respond naturally to their messages.

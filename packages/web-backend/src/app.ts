@@ -2,6 +2,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import express from 'express'
+import type { Express, Request, Response, NextFunction } from 'express'
 import type { Database } from '@openagent/core'
 import type { AgentCore } from '@openagent/core'
 import { createAuthRouter } from './routes/auth.js'
@@ -19,6 +20,7 @@ import { createHealthRouter } from './routes/health.js'
 import { createTasksRouter } from './routes/tasks.js'
 import { createCronjobsRouter } from './routes/cronjobs.js'
 import { createSecretsRouter } from './routes/secrets.js'
+import { createTtsRouter } from './routes/tts.js'
 import { createAdminRouter } from './routes/admin.js'
 import type { TaskRunner, TaskScheduler, TaskEventBus, AgentHeartbeatService } from '@openagent/core'
 import { ensureAdminUser } from './auth.js'
@@ -49,13 +51,13 @@ export interface AppOptions {
   taskEventBus?: TaskEventBus | null
 }
 
-export function createApp(options?: AppOptions): express.Express {
+export function createApp(options?: AppOptions): Express {
   const app = express()
 
   app.use(express.json())
 
   // CORS: allow frontend dev server (different port) to access API
-  app.use((_req, res, next) => {
+  app.use((_req: Request, res: Response, next: NextFunction) => {
     const origin = _req.headers.origin
     if (origin) {
       res.setHeader('Access-Control-Allow-Origin', origin)
@@ -133,6 +135,7 @@ export function createApp(options?: AppOptions): express.Express {
       getTaskScheduler: options.getTaskScheduler,
     }))
     app.use('/api/secrets', createSecretsRouter())
+    app.use('/api/tts', createTtsRouter())
 
     // SalesMemory: initialise DB tables and mount routes when feature is enabled
     if (process.env.SALESMEMORY_ENABLED === 'true') {

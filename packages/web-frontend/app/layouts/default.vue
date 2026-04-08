@@ -142,6 +142,15 @@
             </NuxtLink>
 
             <NuxtLink
+              to="/instructions"
+              :class="navItemClass('/instructions')"
+              @click="closeSidebarOnMobile"
+            >
+              <AppIcon name="file" class="shrink-0" />
+              <span>{{ $t('nav.instructions') }}</span>
+            </NuxtLink>
+
+            <NuxtLink
               to="/plugins"
               :class="navItemClass('/plugins')"
               @click="closeSidebarOnMobile"
@@ -205,14 +214,14 @@
                   {{ $t('common.language') }}
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent>
-                <DropdownMenuItem
-                  v-for="loc in localeList"
-                  :key="loc.code"
-                  @click="setLocale(loc.code as 'en' | 'de')"
-                >
-                  {{ loc.name }}
-                  <AppIcon v-if="locale === loc.code" name="check" size="sm" class="ml-auto" />
-                </DropdownMenuItem>
+                  <DropdownMenuItem
+                    v-for="loc in localeList"
+                    :key="loc.code"
+                    @click="setLocale(loc.code as 'en' | 'de')"
+                  >
+                    {{ loc.name }}
+                    <AppIcon v-if="locale === loc.code" name="check" size="sm" class="ml-auto" />
+                  </DropdownMenuItem>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuSeparator />
@@ -347,8 +356,9 @@ onUnmounted(() => {
   stopStatusPolling()
 })
 
-function navItemClass(path: string) {
-  const isActive = route.path === path
+function navItemClass(path: string | string[]) {
+  const paths = Array.isArray(path) ? path : [path]
+  const isActive = paths.includes(route.path)
   return [
     'flex items-center gap-3 rounded-lg px-3 py-[11px] text-sm font-medium transition-all duration-150 no-underline',
     isActive

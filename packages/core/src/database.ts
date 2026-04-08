@@ -2,7 +2,11 @@ import BetterSqlite3 from 'better-sqlite3'
 import path from 'node:path'
 import fs from 'node:fs'
 
-export type Database = BetterSqlite3.Database
+export type Database = InstanceType<typeof BetterSqlite3>
+export type StatementResult = {
+  changes: number
+  lastInsertRowid: number | bigint
+}
 
 let db: Database | null = null
 
@@ -169,7 +173,7 @@ export function initDatabase(dbPath?: string): Database {
       name TEXT NOT NULL,
       prompt TEXT NOT NULL,
       status TEXT NOT NULL CHECK(status IN ('running', 'paused', 'completed', 'failed')),
-      trigger_type TEXT NOT NULL CHECK(trigger_type IN ('user', 'agent', 'cronjob', 'heartbeat')),
+      trigger_type TEXT NOT NULL CHECK(trigger_type IN ('user', 'agent', 'cronjob', 'heartbeat', 'consolidation')),
       trigger_source_id TEXT,
       provider TEXT,
       model TEXT,
@@ -232,7 +236,7 @@ export function initDatabase(dbPath?: string): Database {
         name TEXT NOT NULL,
         prompt TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('running', 'paused', 'completed', 'failed')),
-        trigger_type TEXT NOT NULL CHECK(trigger_type IN ('user', 'agent', 'cronjob', 'heartbeat')),
+        trigger_type TEXT NOT NULL CHECK(trigger_type IN ('user', 'agent', 'cronjob', 'heartbeat', 'consolidation')),
         trigger_source_id TEXT,
         provider TEXT,
         model TEXT,
@@ -271,7 +275,7 @@ export function initDatabase(dbPath?: string): Database {
         name TEXT NOT NULL,
         prompt TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('running', 'paused', 'completed', 'failed')),
-        trigger_type TEXT NOT NULL CHECK(trigger_type IN ('user', 'agent', 'cronjob', 'heartbeat')),
+        trigger_type TEXT NOT NULL CHECK(trigger_type IN ('user', 'agent', 'cronjob', 'heartbeat', 'consolidation')),
         trigger_source_id TEXT,
         provider TEXT,
         model TEXT,
@@ -310,7 +314,7 @@ export function initDatabase(dbPath?: string): Database {
         name TEXT NOT NULL,
         prompt TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('running', 'paused', 'completed', 'failed')),
-        trigger_type TEXT NOT NULL CHECK(trigger_type IN ('user', 'agent', 'cronjob', 'heartbeat')),
+        trigger_type TEXT NOT NULL CHECK(trigger_type IN ('user', 'agent', 'cronjob', 'heartbeat', 'consolidation')),
         trigger_source_id TEXT,
         provider TEXT,
         model TEXT,
@@ -334,6 +338,53 @@ export function initDatabase(dbPath?: string): Database {
       CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
       CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
     `)
+  }
+
+  // Migration: add 'consolidation' to tasks trigger_type CHECK constraint
+  try {
+    db.exec("INSERT INTO tasks (id, name, prompt, status, trigger_type) VALUES ('__migration_test_consolidation__', 'test', 'test', 'running', 'consolidation')")
+    db.exec("DELETE FROM tasks WHERE id = '__migration_test_consolidation__'")
+  } catch {
+    db.exec(`
+      ALTER TABLE tasks RENAME TO tasks_old;
+      CREATE TABLE tasks (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('running', 'paused', 'completed', 'failed')),
+        trigger_type TEXT NOT NULL CHECK(trigger_type IN ('user', 'agent', 'cronjob', 'heartbeat', 'consolidation')),
+        trigger_source_id TEXT,
+        provider TEXT,
+        model TEXT,
+        max_duration_minutes INTEGER,
+        prompt_tokens INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        estimated_cost REAL NOT NULL DEFAULT 0.0,
+        tool_call_count INTEGER NOT NULL DEFAULT 0,
+        result_summary TEXT,
+        result_status TEXT CHECK(result_status IS NULL OR result_status IN ('completed', 'failed', 'question', 'silent')),
+        error_message TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        started_at TEXT,
+        completed_at TEXT,
+        session_id TEXT
+      );
+      INSERT INTO tasks SELECT * FROM tasks_old;
+      DROP TABLE tasks_old;
+      CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_tasks_trigger_type ON tasks(trigger_type);
+      CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
+      CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
+    `)
+  }
+
+  // Migration: add last_activity and session_user columns to sessions table
+  const sessionColumns = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
+  if (!sessionColumns.find(c => c.name === 'last_activity')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN last_activity TEXT")
+  }
+  if (!sessionColumns.find(c => c.name === 'session_user')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN session_user TEXT")
   }
 
   return db

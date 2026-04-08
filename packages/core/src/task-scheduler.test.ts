@@ -166,7 +166,7 @@ describe('TaskScheduler', () => {
   })
 
   describe('injection mode', () => {
-    let injectionCallback: ReturnType<typeof vi.fn>
+    let injectionCallback: (scheduledTask: import('./scheduled-task-store.js').ScheduledTask) => void
     let injectionScheduler: TaskScheduler
 
     beforeEach(() => {

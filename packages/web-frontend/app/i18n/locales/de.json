@@ -14,6 +14,7 @@
     "logs": "Aktivitätsprotokolle",
     "users": "Benutzer",
     "skills": "Skills",
+    "instructions": "Anweisungen",
     "tasks": "Aufgaben",
     "cronjobs": "Cronjobs",
     "plugins": "Plugins"
@@ -32,11 +33,21 @@
     "delete": "Löschen",
     "saveFailed": "Änderungen konnten nicht gespeichert werden.",
     "deleteFailed": "Element konnte nicht gelöscht werden.",
-    "language": "Sprache"
+    "language": "Sprache",
+    "back": "Zurück"
   },
   "admin": {
     "title": "Admin-Zugriff erforderlich",
     "description": "Diese Seite ist nur für Administratoren verfügbar."
+  },
+  "instructions": {
+    "title": "Anweisungen",
+    "subtitle": "Bearbeite die Regeldateien des Agenten mit mehr Platz und stelle bei Bedarf die eingebauten Standardinhalte wieder her.",
+    "loading": "Anweisungen werden geladen...",
+    "restoreDefault": "Standard wiederherstellen",
+    "restoringDefault": "Wird wiederhergestellt...",
+    "restoreDefaultConfirmTitle": "Standardinhalt wiederherstellen?",
+    "restoreDefaultConfirmDescription": "Dadurch wird der aktuelle Editor-Inhalt durch die eingebaute Vorlage ersetzt. Gespeichert wird erst, wenn du auf Änderungen speichern klickst."
   },
   "auth": {
     "logout": "Abmelden",
@@ -59,11 +70,16 @@
     "displayFilters": "Anzeigefilter",
     "filterToolCalls": "Tool-Aufrufe",
     "filterInjections": "Injektionen",
+    "filterSessionSummaries": "Sitzungszusammenfassungen",
+    "sessionSummary": "Sitzungszusammenfassung",
     "scrollToBottom": "Nach unten scrollen",
     "attachments": {
       "openOriginal": "Original öffnen",
       "download": "Herunterladen"
-    }
+    },
+    "ttsPlay": "Vorlesen",
+    "ttsStop": "Vorlesen stoppen",
+    "ttsLoading": "Sprache wird generiert..."
   },
   "status": {
     "online": "Online",
@@ -110,6 +126,8 @@
     "modelPlaceholderCustom": "z.B. google/gemini-2.5-pro",
     "selectModel": "Modell auswählen",
     "loadingModels": "Modelle werden geladen...",
+    "modelsLoadError": "Modelle konnten nicht geladen werden",
+    "modelsRetry": "↻ Modelle erneut laden",
     "ollamaUrlHint": "Standard: http://localhost:11434/v1",
     "oauthLogin": "Anmelden & Verbinden",
     "oauthConnecting": "Verbinde...",
@@ -118,6 +136,8 @@
     "oauthManualCode": "Oder fügen Sie die Redirect-URL hier ein (für Remote-Server):",
     "oauthManualCodePlaceholder": "Redirect-URL oder Code einfügen...",
     "oauthSubmitCode": "Absenden",
+    "oauthRenewToken": "Token erneuern",
+    "oauthRenewing": "Erneuere...",
     "statusConnected": "Verbunden",
     "statusError": "Fehler",
     "statusUntested": "Ungetestet",
@@ -200,7 +220,7 @@
     "coreMemoryTab": "Kernspeicher",
     "agentRulesTab": "Agent-Regeln",
     "heartbeatTab": "Heartbeat",
-    "profileTab": "Mein Profil",
+    "profileTab": "Benutzerprofil",
     "dailyTab": "Täglich",
     "loading": "Gedächtnis wird geladen...",
     "editorPlaceholder": "Markdown hier schreiben...",
@@ -219,7 +239,11 @@
     "dailyColumnSize": "Größe",
     "dailyPagination": "{from}–{to} von {total}",
     "dailyPrevPage": "Vorherige Seite",
-    "dailyNextPage": "Nächste Seite"
+    "dailyNextPage": "Nächste Seite",
+    "projectsTab": "Projekte",
+    "noProjectFiles": "Noch keine Projektdateien vorhanden.",
+    "projectColumnName": "Projekt",
+    "projectEditorDescription": "Projektnotizen werden vom Agenten für projektspezifischen Kontext genutzt."
   },
   "settings": {
     "kicker": "Laufzeit-Konfiguration",
@@ -302,6 +326,13 @@
     "telegramUsersAutoLinked": "Bei Freigabe automatisch verknüpft",
     "telegramUsersNoUsername": "Kein Benutzername",
     "telegramUsersRefresh": "Telegram-Benutzer aktualisieren",
+    "openEditor": "Editor öffnen",
+    "agentRulesTitle": "Agent-Regeln",
+    "agentRulesDescription": "Lege fest, wie sich der Agent verhalten, kommunizieren und Aufgaben ausführen soll. Der Agent liest diese Regeln bei jeder Konversation.",
+    "heartbeatTasksTitle": "Heartbeat-Aufgaben",
+    "heartbeatTasksDescription": "Definiere periodische Aufgaben, die der Agent bei jedem Heartbeat-Zyklus ausführen soll.",
+    "consolidationRulesTitle": "Konsolidierungs-Regeln",
+    "consolidationRulesDescription": "Lege fest, worauf sich die nächtliche Memory-Konsolidierung konzentrieren soll \u2014 was übernommen, aktualisiert oder ignoriert werden soll.",
     "consolidationSection": "Memory-Konsolidierung",
     "consolidationSectionDescription": "Überprüft automatisch tägliche Einträge und übernimmt dauerhafte Erkenntnisse in das Kerngedächtnis (MEMORY.md).",
     "consolidationEnabled": "Automatische Konsolidierung aktivieren",
@@ -423,7 +454,35 @@
     "tasksStatusUpdates": "Periodische Statusupdates",
     "tasksStatusUpdatesHint": "Regelmäßige Updates über laufende Hintergrundaufgaben erhalten.",
     "tasksStatusUpdateInterval": "Statusupdate-Intervall",
-    "tasksStatusUpdateIntervalHint": "Wie oft ein Statusupdate über laufende Aufgaben in den Haupt-Agenten injiziert werden soll."
+    "tasksStatusUpdateIntervalHint": "Wie oft ein Statusupdate über laufende Aufgaben in den Haupt-Agenten injiziert werden soll.",
+    "ttsTitle": "Text-to-Speech",
+    "ttsSubtitle": "Lasse dir Antworten des Agenten per KI-basierter Sprachsynthese vorlesen.",
+    "ttsEnabled": "Text-to-Speech aktivieren",
+    "ttsEnabledHint": "Zeigt einen Abspielen-Button an Assistenten-Nachrichten, um sie vorzulesen.",
+    "ttsProvider": "TTS-Anbieter",
+    "ttsProviderHint": "Wähle, welcher KI-Anbieter das Sprach-Audio generiert.",
+    "ttsOpenaiModel": "OpenAI-Modell",
+    "ttsOpenaiModelHint": "gpt-4o-mini-tts ist am schnellsten und ausdrucksstärksten. tts-1-hd hat höhere Audioqualität.",
+    "ttsOpenaiVoice": "OpenAI-Stimme",
+    "ttsOpenaiVoiceHint": "Wähle eine Stimme für die Sprachgenerierung.",
+    "ttsOpenaiInstructions": "Stimm-Anweisungen",
+    "ttsOpenaiInstructionsHint": "Optionale Ton-/Stil-Anweisungen (z.B. \"Sprich in einem ruhigen, freundlichen Ton\"). Nur von gpt-4o-mini-tts unterstützt.",
+    "ttsOpenaiInstructionsPlaceholder": "z.B. Sprich in einem ruhigen, freundlichen Ton",
+    "ttsMistralVoice": "Mistral-Stimme",
+    "ttsMistralVoiceHint": "Wähle eine Voxtral TTS Stimme.",
+    "ttsResponseFormat": "Audio-Format",
+    "ttsResponseFormatHint": "MP3 wird für allgemeine Nutzung empfohlen. WAV hat geringere Latenz, aber größere Dateien.",
+    "ttsProviderOpenaiNone": "OpenAI (kein Anbieter konfiguriert)",
+    "ttsProviderMistralNone": "Mistral Voxtral (kein Anbieter konfiguriert)",
+    "ttsVoicesLoading": "Stimmen werden geladen...",
+    "ttsVoicesEmpty": "Keine Stimmen verfügbar",
+    "ttsMistralSpeakerPlaceholder": "Stimme",
+    "ttsMistralMoodPlaceholder": "Stimmung",
+    "ttsPreview": "Stimm-Vorschau",
+    "ttsPreviewPlaceholder": "Text eingeben um die Stimme zu testen...",
+    "ttsPreviewPlay": "Abspielen",
+    "ttsPreviewStop": "Stopp",
+    "ttsPreviewHint": "Teste die gewählte Stimme und Stimmung vor dem Speichern."
   },
   "users": {
     "kicker": "Zugriffssteuerung",
@@ -678,7 +737,8 @@
       "user": "Benutzer",
       "agent": "Agent",
       "cronjob": "Cronjob",
-      "heartbeat": "Heartbeat"
+      "heartbeat": "Heartbeat",
+      "consolidation": "Konsolidierung"
     }
   },
   "cronjobs": {

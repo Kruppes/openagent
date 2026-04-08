@@ -1,4 +1,4 @@
-import type { Database } from './database.js'
+import type { Database, StatementResult } from './database.js'
 
 export interface TokenUsageRecord {
   provider: string
@@ -52,7 +52,7 @@ export function logToolCall(db: Database, record: ToolCallRecord): number {
     record.durationMs,
     record.status ?? 'success',
   )
-  return Number(result.lastInsertRowid)
+  return Number((result as StatementResult).lastInsertRowid)
 }
 
 /**

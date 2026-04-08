@@ -30,6 +30,7 @@ import {
   CircleX,
   Compass,
   FileText,
+  FolderOpen,
   Info,
   KeyRound,
   LayoutDashboard,
@@ -62,6 +63,8 @@ import {
   ExternalLink,
   Image,
   Zap,
+  Volume2,
+  Loader,
   Link,
 } from 'lucide-vue-next'
 
@@ -84,6 +87,7 @@ const iconMap = {
   dashboard: LayoutDashboard,
   edit: Pencil,
   file: FileText,
+  folder: FolderOpen,
   globe: Globe,
   info: Info,
   key: KeyRound,
@@ -116,6 +120,8 @@ const iconMap = {
   externalLink: ExternalLink,
   image: Image,
   zap: Zap,
+  volume: Volume2,
+  loader: Loader,
   blocks: Blocks,
   mic: Mic,
   micOff: MicOff,

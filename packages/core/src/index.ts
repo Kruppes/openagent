@@ -16,6 +16,7 @@ export type { UploadDescriptor, SaveUploadInput, UploadSettings } from './upload
 export { loadConfig, getConfigDir, ensureConfigTemplates } from './config.js'
 export {
   ensureMemoryStructure,
+  ensureConfigStructure,
   getMemoryDir,
   readSoulFile,
   readMemoryFile,
@@ -24,8 +25,13 @@ export {
   writeAgentsFile,
   readAgentsRulesFile,
   writeAgentsRulesFile,
+  getDefaultAgentsRulesContent,
   readHeartbeatFile,
   writeHeartbeatFile,
+  getDefaultHeartbeatContent,
+  readConsolidationFile,
+  writeConsolidationFile,
+  getDefaultConsolidationContent,
   getDailyFilePath,
   ensureDailyFile,
   readDailyFile,
@@ -33,7 +39,7 @@ export {
   readRecentDailyFiles,
   assembleSystemPrompt,
 } from './memory.js'
-export { getUserProfileDir, ensureUserProfile, readUserProfile } from './memory.js'
+export { getUserProfileDir, ensureUserProfile, readUserProfile, ensureProjectsDir, parseProjectAliases, listProjectNotes } from './memory.js'
 export type { SkillPromptEntry } from './memory.js'
 export { consolidateMemory, readDailyFilesForConsolidation, buildConsolidationPrompt } from './memory-consolidation.js'
 export type { MemoryConsolidationOptions, ConsolidationResult } from './memory-consolidation.js'

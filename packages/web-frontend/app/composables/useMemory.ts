@@ -5,6 +5,13 @@ interface DailyFile {
   modifiedAt: string
 }
 
+interface ProjectFile {
+  filename: string
+  name: string
+  size: number
+  modifiedAt: string
+}
+
 export function useMemory() {
   const { apiFetch } = useApi()
 
@@ -159,6 +166,20 @@ export function useMemory() {
     }
   }
 
+  async function loadDefaultAgentRules(): Promise<string> {
+    loading.value = true
+    error.value = null
+    try {
+      const data = await apiFetch<{ content: string }>('/api/memory/agents/default')
+      return data.content
+    } catch (err) {
+      error.value = (err as Error).message
+      return ''
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function loadHeartbeat(): Promise<string> {
     loading.value = true
     error.value = null
@@ -189,6 +210,67 @@ export function useMemory() {
       return false
     } finally {
       saving.value = false
+    }
+  }
+
+  async function loadDefaultHeartbeat(): Promise<string> {
+    loading.value = true
+    error.value = null
+    try {
+      const data = await apiFetch<{ content: string }>('/api/memory/heartbeat/default')
+      return data.content
+    } catch (err) {
+      error.value = (err as Error).message
+      return ''
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function loadConsolidationRules(): Promise<string> {
+    loading.value = true
+    error.value = null
+    try {
+      const data = await apiFetch<{ content: string }>('/api/memory/consolidation-rules')
+      return data.content
+    } catch (err) {
+      error.value = (err as Error).message
+      return ''
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function saveConsolidationRules(content: string): Promise<boolean> {
+    saving.value = true
+    error.value = null
+    successMessage.value = null
+    try {
+      await apiFetch('/api/memory/consolidation-rules', {
+        method: 'PUT',
+        body: JSON.stringify({ content }),
+      })
+      successMessage.value = 'saved'
+      return true
+    } catch (err) {
+      error.value = (err as Error).message
+      return false
+    } finally {
+      saving.value = false
+    }
+  }
+
+  async function loadDefaultConsolidationRules(): Promise<string> {
+    loading.value = true
+    error.value = null
+    try {
+      const data = await apiFetch<{ content: string }>('/api/memory/consolidation-rules/default')
+      return data.content
+    } catch (err) {
+      error.value = (err as Error).message
+      return ''
+    } finally {
+      loading.value = false
     }
   }
 
@@ -225,6 +307,53 @@ export function useMemory() {
     }
   }
 
+  async function loadProjectFiles(): Promise<ProjectFile[]> {
+    loading.value = true
+    error.value = null
+    try {
+      const data = await apiFetch<{ files: ProjectFile[] }>('/api/memory/projects')
+      return data.files
+    } catch (err) {
+      error.value = (err as Error).message
+      return []
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function loadProjectFile(name: string): Promise<string> {
+    loading.value = true
+    error.value = null
+    try {
+      const data = await apiFetch<{ content: string }>(`/api/memory/projects/${name}`)
+      return data.content
+    } catch (err) {
+      error.value = (err as Error).message
+      return ''
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function saveProjectFile(name: string, content: string): Promise<boolean> {
+    saving.value = true
+    error.value = null
+    successMessage.value = null
+    try {
+      await apiFetch(`/api/memory/projects/${name}`, {
+        method: 'PUT',
+        body: JSON.stringify({ content }),
+      })
+      successMessage.value = 'saved'
+      return true
+    } catch (err) {
+      error.value = (err as Error).message
+      return false
+    } finally {
+      saving.value = false
+    }
+  }
+
   function clearMessages() {
     error.value = null
     successMessage.value = null
@@ -241,13 +370,21 @@ export function useMemory() {
     saveCoreMemory,
     loadAgentRules,
     saveAgentRules,
+    loadDefaultAgentRules,
     loadHeartbeat,
     saveHeartbeat,
+    loadDefaultHeartbeat,
+    loadConsolidationRules,
+    saveConsolidationRules,
+    loadDefaultConsolidationRules,
     loadProfile,
     saveProfile,
     loadDailyFiles,
     loadDailyFile,
     saveDailyFile,
+    loadProjectFiles,
+    loadProjectFile,
+    saveProjectFile,
     clearMessages,
   }
 }
