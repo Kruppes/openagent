@@ -34,9 +34,10 @@
     <Tabs v-model="activeTab" class="flex flex-1 flex-col overflow-hidden min-h-0">
       <div class="mb-4 flex shrink-0 flex-wrap items-center gap-3">
         <TabsList class="self-start">
-          <TabsTrigger value="soul" @click="switchTab('soul')">{{ $t('memory.soulTab') }}</TabsTrigger>
           <TabsTrigger value="core" @click="switchTab('core')">{{ $t('memory.coreMemoryTab') }}</TabsTrigger>
+          <TabsTrigger value="projects" @click="switchTab('projects')">{{ $t('memory.projectsTab') }}</TabsTrigger>
           <TabsTrigger value="profile" @click="switchTab('profile')">{{ $t('memory.profileTab') }}</TabsTrigger>
+          <TabsTrigger value="soul" @click="switchTab('soul')">{{ $t('memory.soulTab') }}</TabsTrigger>
           <TabsTrigger value="daily" @click="switchTab('daily')">{{ $t('memory.dailyTab') }}</TabsTrigger>
         </TabsList>
 
@@ -189,6 +190,103 @@
           </div>
         </div>
       </TabsContent>
+
+      <!-- Projects tab -->
+      <TabsContent value="projects" class="flex flex-1 flex-col overflow-hidden min-h-0 mt-0">
+        <!-- Projects list view -->
+        <div v-if="!selectedProject" class="flex flex-1 flex-col overflow-hidden min-h-0">
+          <div v-if="loading" class="flex items-center justify-center py-16 text-sm text-muted-foreground">
+            {{ $t('memory.loading') }}
+          </div>
+          <div v-else-if="projectFiles.length === 0" class="flex flex-col items-center justify-center gap-3 py-16 text-center text-muted-foreground">
+            <AppIcon name="folder" size="xl" class="h-10 w-10 opacity-40" />
+            <p class="text-sm">{{ $t('memory.noProjectFiles') }}</p>
+          </div>
+
+          <!-- Table + Pagination -->
+          <div v-else class="flex flex-1 flex-col overflow-hidden min-h-0">
+            <div class="flex-1 overflow-y-auto min-h-0 rounded-xl border border-border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{{ $t('memory.projectColumnName') }}</TableHead>
+                    <TableHead>{{ $t('memory.dailyColumnUpdated') }}</TableHead>
+                    <TableHead class="text-right">{{ $t('memory.dailyColumnSize') }}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow
+                    v-for="(file, idx) in paginatedProjectFiles"
+                    :key="file.name"
+                    class="cursor-pointer"
+                    :class="idx % 2 === 1 ? 'bg-muted/50' : ''"
+                    @click="openProjectFile(file.name)"
+                  >
+                    <TableCell class="font-semibold">{{ file.name }}</TableCell>
+                    <TableCell class="text-muted-foreground">{{ formatDate(file.modifiedAt) }}</TableCell>
+                    <TableCell class="text-right text-muted-foreground">{{ formatSize(file.size) }}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </div>
+
+            <!-- Pagination -->
+            <div v-if="projectTotalPages > 1" class="flex shrink-0 items-center justify-between pt-3">
+              <span class="text-xs text-muted-foreground">
+                {{ $t('memory.dailyPagination', { from: projectPaginationFrom, to: projectPaginationTo, total: projectFiles.length }) }}
+              </span>
+              <div class="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  :disabled="projectCurrentPage <= 1"
+                  :aria-label="$t('memory.dailyPrevPage')"
+                  @click="projectCurrentPage--"
+                >
+                  <AppIcon name="arrowLeft" class="h-4 w-4" />
+                </Button>
+                <span class="px-2 text-xs text-muted-foreground">
+                  {{ projectCurrentPage }} / {{ projectTotalPages }}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  :disabled="projectCurrentPage >= projectTotalPages"
+                  :aria-label="$t('memory.dailyNextPage')"
+                  @click="projectCurrentPage++"
+                >
+                  <AppIcon name="arrowRight" class="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Project editor view -->
+        <div v-else class="flex flex-1 flex-col overflow-hidden min-h-0">
+          <div class="mb-3 flex shrink-0 flex-wrap items-center gap-3">
+            <Button variant="outline" size="icon" class="h-8 w-8" :aria-label="$t('memory.backToList')" @click="closeProjectFile">
+              <AppIcon name="arrowLeft" class="h-4 w-4" />
+            </Button>
+            <div>
+              <span class="block text-base font-bold text-foreground">{{ selectedProject }}</span>
+              <p class="text-xs text-muted-foreground">{{ $t('memory.projectEditorDescription') }}</p>
+            </div>
+          </div>
+
+          <div v-if="loading" class="flex flex-1 items-center justify-center py-20 text-sm text-muted-foreground">
+            {{ $t('memory.loading') }}
+          </div>
+          <div v-else class="flex flex-1 flex-col overflow-hidden min-h-0">
+            <MarkdownEditor
+              v-model="projectContent"
+              :saving="saving"
+              :file-path="`.data/memory/projects/${selectedProject}.md`"
+              @save="handleSaveProject"
+            />
+          </div>
+        </div>
+      </TabsContent>
     </Tabs>
     </div>
   </div>
@@ -212,10 +310,13 @@ const {
   loadDailyFiles,
   loadDailyFile,
   saveDailyFile,
+  loadProjectFiles,
+  loadProjectFile,
+  saveProjectFile,
   clearMessages,
 } = useMemory()
 
-const activeTab = ref<'soul' | 'core' | 'profile' | 'daily'>('soul')
+const activeTab = ref<'soul' | 'core' | 'profile' | 'daily' | 'projects'>('core')
 
 const soulContent = ref('')
 const coreMemoryContent = ref('')
@@ -224,6 +325,9 @@ const profileUsername = ref('')
 const dailyContent = ref('')
 const dailyFiles = ref<{ filename: string; date: string; size: number; modifiedAt: string }[]>([])
 const selectedDaily = ref<string | null>(null)
+const projectContent = ref('')
+const projectFiles = ref<{ filename: string; name: string; size: number; modifiedAt: string }[]>([])
+const selectedProject = ref<string | null>(null)
 
 // Date range filter — default to last 7 days
 const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -260,6 +364,19 @@ const paginationFrom = computed(() => {
 
 const paginationTo = computed(() => Math.min(currentPage.value * PAGE_SIZE, filteredDailyFiles.value.length))
 
+// Project pagination
+const projectCurrentPage = ref(1)
+const projectTotalPages = computed(() => Math.max(1, Math.ceil(projectFiles.value.length / PAGE_SIZE)))
+const paginatedProjectFiles = computed(() => {
+  const start = (projectCurrentPage.value - 1) * PAGE_SIZE
+  return projectFiles.value.slice(start, start + PAGE_SIZE)
+})
+const projectPaginationFrom = computed(() => {
+  if (projectFiles.value.length === 0) return 0
+  return (projectCurrentPage.value - 1) * PAGE_SIZE + 1
+})
+const projectPaginationTo = computed(() => Math.min(projectCurrentPage.value * PAGE_SIZE, projectFiles.value.length))
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   return `${(bytes / 1024).toFixed(1)} KB`
@@ -286,6 +403,8 @@ async function switchTab(tab: typeof activeTab.value) {
     profileUsername.value = profile.username
   } else if (tab === 'daily') {
     await refreshDailyFiles()
+  } else if (tab === 'projects') {
+    await refreshProjectFiles()
   }
 }
 
@@ -337,6 +456,35 @@ function closeDailyFile() {
   clearMessages()
 }
 
+async function refreshProjectFiles() {
+  selectedProject.value = null
+  projectCurrentPage.value = 1
+  projectFiles.value = await loadProjectFiles()
+}
+
+async function openProjectFile(name: string) {
+  clearMessages()
+  selectedProject.value = name
+  projectContent.value = await loadProjectFile(name)
+}
+
+function closeProjectFile() {
+  selectedProject.value = null
+  projectContent.value = ''
+  clearMessages()
+}
+
+async function handleSaveProject() {
+  if (!selectedProject.value) return
+  const saved = await saveProjectFile(selectedProject.value, projectContent.value)
+  if (saved) {
+    const currentName = selectedProject.value
+    await refreshProjectFiles()
+    selectedProject.value = currentName
+  }
+  autoHideSuccess()
+}
+
 function autoHideSuccess() {
   setTimeout(() => {
     successMessage.value = null
@@ -345,6 +493,6 @@ function autoHideSuccess() {
 
 onMounted(async () => {
   if (!isAdmin.value) return
-  soulContent.value = await loadSoul()
+  coreMemoryContent.value = await loadCoreMemory()
 })
 </script>

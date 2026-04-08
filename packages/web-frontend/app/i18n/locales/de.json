@@ -208,7 +208,7 @@
     "coreMemoryTab": "Kernspeicher",
     "agentRulesTab": "Agent-Regeln",
     "heartbeatTab": "Heartbeat",
-    "profileTab": "Mein Profil",
+    "profileTab": "Benutzerprofil",
     "dailyTab": "Täglich",
     "loading": "Gedächtnis wird geladen...",
     "editorPlaceholder": "Markdown hier schreiben...",
@@ -227,7 +227,11 @@
     "dailyColumnSize": "Größe",
     "dailyPagination": "{from}–{to} von {total}",
     "dailyPrevPage": "Vorherige Seite",
-    "dailyNextPage": "Nächste Seite"
+    "dailyNextPage": "Nächste Seite",
+    "projectsTab": "Projekte",
+    "noProjectFiles": "Noch keine Projektdateien vorhanden.",
+    "projectColumnName": "Projekt",
+    "projectEditorDescription": "Projektnotizen werden vom Agenten für projektspezifischen Kontext genutzt."
   },
   "settings": {
     "kicker": "Laufzeit-Konfiguration",

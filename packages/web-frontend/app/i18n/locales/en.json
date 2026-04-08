@@ -208,7 +208,7 @@
     "coreMemoryTab": "Core Memory",
     "agentRulesTab": "Agent Rules",
     "heartbeatTab": "Heartbeat",
-    "profileTab": "My Profile",
+    "profileTab": "User Profile",
     "dailyTab": "Daily",
     "loading": "Loading memory...",
     "editorPlaceholder": "Write markdown here...",
@@ -227,7 +227,11 @@
     "dailyColumnSize": "Size",
     "dailyPagination": "{from}–{to} of {total}",
     "dailyPrevPage": "Previous page",
-    "dailyNextPage": "Next page"
+    "dailyNextPage": "Next page",
+    "projectsTab": "Projects",
+    "noProjectFiles": "No project files yet.",
+    "projectColumnName": "Project",
+    "projectEditorDescription": "Project notes are used by the agent for project-specific context."
   },
   "settings": {
     "kicker": "Runtime configuration",

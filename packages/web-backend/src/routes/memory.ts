@@ -214,6 +214,95 @@ export function createMemoryRouter(getAgentCore: () => AgentCore | null = () => 
     }
   })
 
+  // Project files endpoints (/data/memory/projects/*.md)
+  router.get('/projects', (_req, res) => {
+    try {
+      const memoryDir = getMemoryDir()
+      const projectsDir = path.join(memoryDir, 'projects')
+      ensureMemoryStructure(memoryDir)
+
+      if (!fs.existsSync(projectsDir)) {
+        res.json({ files: [] })
+        return
+      }
+
+      const entries = fs.readdirSync(projectsDir)
+        .filter(f => f.endsWith('.md'))
+        .sort()
+
+      const files = entries.map(filename => {
+        const filePath = path.join(projectsDir, filename)
+        const stats = fs.statSync(filePath)
+        const name = filename.replace('.md', '')
+        return {
+          filename,
+          name,
+          size: stats.size,
+          modifiedAt: stats.mtime.toISOString(),
+        }
+      })
+
+      res.json({ files })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to list project files: ${(err as Error).message}` })
+    }
+  })
+
+  router.get('/projects/:name', (req, res) => {
+    const { name } = req.params
+    if (!/^[\w-]+$/.test(name)) {
+      res.status(400).json({ error: 'Invalid project name. Use only alphanumeric characters, hyphens, and underscores.' })
+      return
+    }
+
+    try {
+      const memoryDir = getMemoryDir()
+      const filePath = path.join(memoryDir, 'projects', `${name}.md`)
+
+      if (!fs.existsSync(filePath)) {
+        res.status(404).json({ error: `Project file "${name}" not found` })
+        return
+      }
+
+      const content = fs.readFileSync(filePath, 'utf-8')
+      res.json({ name, content })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to read project file: ${(err as Error).message}` })
+    }
+  })
+
+  router.put('/projects/:name', (req: AuthenticatedRequest, res) => {
+    const rawName = req.params.name
+    const name = Array.isArray(rawName) ? rawName[0] : rawName
+    if (!name || !/^[\w-]+$/.test(name)) {
+      res.status(400).json({ error: 'Invalid project name. Use only alphanumeric characters, hyphens, and underscores.' })
+      return
+    }
+
+    const { content } = req.body as { content?: string }
+    if (content === undefined || content === null) {
+      res.status(400).json({ error: 'Content is required' })
+      return
+    }
+
+    try {
+      const memoryDir = getMemoryDir()
+      const projectsDir = path.join(memoryDir, 'projects')
+      ensureMemoryStructure(memoryDir)
+
+      if (!fs.existsSync(projectsDir)) {
+        fs.mkdirSync(projectsDir, { recursive: true })
+      }
+
+      const filePath = path.join(projectsDir, `${name}.md`)
+      fs.writeFileSync(filePath, content, 'utf-8')
+      refreshAgentPrompt()
+      res.json({ message: `Project file "${name}" updated`, name, content })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to write project file: ${(err as Error).message}` })
+    }
+  })
+
   // Heartbeat endpoints (HEARTBEAT.md — agent heartbeat task list)
   router.get('/heartbeat', (_req, res) => {
     try {
