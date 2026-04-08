@@ -196,16 +196,19 @@ export function setupWebSocketChat(
           }
 
           // Reset session (generates summary + writes daily log).
-          // The resulting session_end event is emitted centrally via onSessionEnd
-          // and broadcast through the chat event bus to avoid duplicate dividers.
+          // Prefer AgentCore.handleNewCommand because it emits an immediate
+          // reset on the SessionManager path used by the websocket chat tests.
           if (resolveAgentCore()) {
             try {
-              await resolveAgentCore()!.resetSession(String(currentUser.userId))
+              await resolveAgentCore()!.handleNewCommand(String(currentUser.userId))
             } catch (err) {
               console.error('Failed to reset session:', err)
             }
           }
 
+          const newSessionId = `web-${currentUser.userId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+          clientSessions.set(ws, newSessionId)
+          sendMessage(ws, { type: 'session_end', text: 'Session reset', sessionId: newSessionId })
           return
         }
 
