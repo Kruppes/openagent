@@ -1,4 +1,4 @@
-import type { Database } from './database.js'
+import type { Database, StatementResult } from './database.js'
 import type { ProviderConfig } from './provider-config.js'
 import { buildModel, getApiKeyForProvider, PROVIDER_TYPE_PRESETS } from './provider-config.js'
 import { completeSimple } from '@mariozechner/pi-ai'
@@ -307,7 +307,7 @@ export function logHealthCheck(db: Database, input: HealthCheckLogInput): number
     input.errorMessage ?? null,
   )
 
-  return Number(result.lastInsertRowid)
+  return Number((result as StatementResult).lastInsertRowid)
 }
 
 export function getLatestHealthCheck(db: Database): HealthCheckHistoryRecord | null {

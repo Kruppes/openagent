@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import type { Database } from '@openagent/core'
 import { TaskStore } from '@openagent/core'
 import type { TaskStatus, TaskTriggerType } from '@openagent/core'
@@ -16,7 +16,7 @@ export interface TasksRouterOptions {
 }
 
 export function createTasksRouter(options: TasksRouterOptions): Router {
-  const router = Router()
+  const router = express.Router()
   const store = new TaskStore(options.db)
 
   router.use(jwtMiddleware)

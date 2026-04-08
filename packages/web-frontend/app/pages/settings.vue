@@ -1688,11 +1688,7 @@ const timezones = [
   'America/Argentina/Buenos_Aires',
 ]
 
-<<<<<<< HEAD
 const VALID_TABS = ['agent', 'memory', 'agentHeartbeat', 'healthMonitor', 'telegram', 'tasks', 'tts', 'secrets', 'salesMemory'] as const
-=======
-const VALID_TABS = ['agent', 'memory', 'agentHeartbeat', 'healthMonitor', 'telegram', 'tasks', 'secrets', 'salesMemory'] as const
->>>>>>> 9ace526 (refactor(salesmemory): move from plugin system to core feature with settings UI)
 type TabId = (typeof VALID_TABS)[number]
 
 const activeTab = computed<TabId>({

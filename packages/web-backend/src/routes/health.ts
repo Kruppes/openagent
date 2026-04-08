@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import type { Database } from '@openagent/core'
 import { getActivitySummary, queryHealthCheckHistory } from '@openagent/core'
 import { jwtMiddleware } from '../auth.js'
@@ -13,7 +13,7 @@ export interface HealthRouterOptions {
 }
 
 export function createHealthRouter(options: HealthRouterOptions): Router {
-  const router = Router()
+  const router = express.Router()
 
   router.use(jwtMiddleware)
   router.use((req: AuthenticatedRequest, res, next) => {

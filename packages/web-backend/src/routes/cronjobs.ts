@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import type { Database } from '@openagent/core'
 import { ScheduledTaskStore, validateCronExpression, cronToHumanReadable } from '@openagent/core'
 import type { TaskScheduler } from '@openagent/core'
@@ -11,7 +11,7 @@ export interface CronjobsRouterOptions {
 }
 
 export function createCronjobsRouter(options: CronjobsRouterOptions): Router {
-  const router = Router()
+  const router = express.Router()
   const store = new ScheduledTaskStore(options.db)
 
   router.use(jwtMiddleware)

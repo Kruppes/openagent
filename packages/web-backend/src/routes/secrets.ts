@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import {
   loadSecretsMasked,
   setSecrets,
@@ -9,7 +9,7 @@ import { jwtMiddleware } from '../auth.js'
 import type { AuthenticatedRequest } from '../auth.js'
 
 export function createSecretsRouter(): Router {
-  const router = Router()
+  const router = express.Router()
 
   router.use(jwtMiddleware)
   router.use((req: AuthenticatedRequest, res, next) => {

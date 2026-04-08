@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
 import {
@@ -25,7 +25,7 @@ import type { AuthenticatedRequest } from '../auth.js'
 import type { MemoryConsolidationScheduler } from '../memory-consolidation-scheduler.js'
 
 export function createMemoryRouter(getAgentCore: () => AgentCore | null = () => null, consolidationScheduler?: MemoryConsolidationScheduler | null): Router {
-  const router = Router()
+  const router = express.Router()
 
   router.use(jwtMiddleware)
   router.use((req: AuthenticatedRequest, res, next) => {

@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import bcrypt from 'bcrypt'
 import type { Database } from '@openagent/core'
 import { jwtMiddleware } from '../auth.js'
@@ -16,7 +16,7 @@ interface UserRow {
 }
 
 export function createUsersRouter(db: Database): Router {
-  const router = Router()
+  const router = express.Router()
 
   // All user routes require admin JWT
   router.use(jwtMiddleware)

@@ -2,7 +2,11 @@ import BetterSqlite3 from 'better-sqlite3'
 import path from 'node:path'
 import fs from 'node:fs'
 
-export type Database = BetterSqlite3.Database
+export type Database = InstanceType<typeof BetterSqlite3>
+export type StatementResult = {
+  changes: number
+  lastInsertRowid: number | bigint
+}
 
 let db: Database | null = null
 
@@ -375,11 +379,11 @@ export function initDatabase(dbPath?: string): Database {
   }
 
   // Migration: add last_activity and session_user columns to sessions table
-  const sessionCols = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
-  if (!sessionCols.find(c => c.name === 'last_activity')) {
+  const sessionColumns = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
+  if (!sessionColumns.find(c => c.name === 'last_activity')) {
     db.exec("ALTER TABLE sessions ADD COLUMN last_activity TEXT")
   }
-  if (!sessionCols.find(c => c.name === 'session_user')) {
+  if (!sessionColumns.find(c => c.name === 'session_user')) {
     db.exec("ALTER TABLE sessions ADD COLUMN session_user TEXT")
   }
 

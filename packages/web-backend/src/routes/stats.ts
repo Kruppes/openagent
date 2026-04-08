@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import type { Database, UsageGroupBy } from '@openagent/core'
 import { getUsageSummary, queryUsageStats } from '@openagent/core'
 import { jwtMiddleware } from '../auth.js'
@@ -60,7 +60,7 @@ function normalizeFilter(value: unknown): string | undefined {
 }
 
 export function createStatsRouter(db: Database): Router {
-  const router = Router()
+  const router = express.Router()
 
   router.use(jwtMiddleware)
   router.use((req: AuthenticatedRequest, res, next) => {

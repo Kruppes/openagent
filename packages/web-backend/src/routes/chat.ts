@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import type { Database } from '@openagent/core'
 import { saveUpload, serializeUploadsMetadata } from '@openagent/core'
 import { jwtMiddleware } from '../auth.js'
@@ -6,7 +6,7 @@ import type { AuthenticatedRequest } from '../auth.js'
 import { uploadMiddleware } from '../uploads.js'
 
 export function createChatRouter(db: Database): Router {
-  const router = Router()
+  const router = express.Router()
 
   router.use(jwtMiddleware)
 

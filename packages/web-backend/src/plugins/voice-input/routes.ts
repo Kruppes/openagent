@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import { jwtMiddleware } from '../../auth.js'
 import type { AuthenticatedRequest } from '../../auth.js'
 import { uploadMiddleware } from '../../uploads.js'
@@ -150,7 +150,7 @@ async function rewriteTranscript(
 // ── Router ────────────────────────────────────────────────────────────────────
 
 export function createVoiceRouter(): Router {
-  const router = Router()
+  const router = express.Router()
 
   router.use(jwtMiddleware)
 

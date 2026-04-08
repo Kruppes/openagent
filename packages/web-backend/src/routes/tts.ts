@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import { loadProvidersDecrypted, getApiKeyForProvider } from '@openagent/core'
 import type { ProviderConfig } from '@openagent/core'
 import { loadConfig, ensureConfigTemplates } from '@openagent/core'
@@ -170,7 +170,7 @@ const CONTENT_TYPE_MAP: Record<string, string> = {
 }
 
 export function createTtsRouter(): Router {
-  const router = Router()
+  const router = express.Router()
   router.use(jwtMiddleware)
 
   /**

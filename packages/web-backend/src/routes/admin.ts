@@ -6,7 +6,7 @@
  * PATCH /api/admin/telegram/users/:id/link  — set / clear the user_id FK on a telegram_user
  */
 
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import type { Database } from '@openagent/core'
 import { jwtMiddleware } from '../auth.js'
 import type { AuthenticatedRequest } from '../auth.js'
@@ -28,7 +28,7 @@ interface UserRow {
 }
 
 export function createAdminRouter(db: Database): Router {
-  const router = Router()
+  const router = express.Router()
 
   // All admin routes require a valid JWT with admin role
   router.use(jwtMiddleware)

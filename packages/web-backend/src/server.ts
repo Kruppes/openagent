@@ -478,12 +478,14 @@ const onTelegramChatEvent = (event: import('@openagent/telegram').TelegramChatEv
 function wireAgentCoreEvents(): void {
   if (!agentCore) return
 
-  agentCore.setOnSessionEnd((userId: string, sessionId: string, summary: string | null) => {
-    // Persist session divider to chat_messages so it survives page reloads
+  agentCore.setOnSessionEnd((userId: string, summary: string | null) => {
+    // Persist session divider to chat_messages so it survives page reloads.
+    // The current AgentCore callback no longer exposes sessionId, so store a
+    // synthetic divider session key while preserving the summary payload.
     const dividerMetadata = JSON.stringify({ type: 'session_divider', summary: summary ?? null })
     db.prepare(
       'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-    ).run(sessionId, parseInt(userId, 10), 'system', summary ?? '', dividerMetadata)
+    ).run(`session-divider-${Date.now()}`, parseInt(userId, 10), 'system', summary ?? '', dividerMetadata)
 
     chatEventBus.broadcast({
       type: 'session_end',
@@ -603,16 +605,11 @@ async function initOrUpdateAgentCore(): Promise<void> {
   try {
     if (previousAgentCore) {
       try {
-        await previousAgentCore.endAllSessions()
+        await previousAgentCore.dispose()
       } catch (err) {
         console.error('[openagent] Failed to end sessions before provider change:', err)
       }
 
-      try {
-        await previousAgentCore.dispose()
-      } catch (err) {
-        console.error('[openagent] Failed to dispose previous agent core:', err)
-      }
     }
 
     const model = buildModel(provider)
@@ -664,13 +661,6 @@ async function initOrUpdateAgentCore(): Promise<void> {
 
     // Wire agent core events (session end, task injection)
     wireAgentCoreEvents()
-
-    // Initialize async components (handle orphaned sessions from previous run).
-    // Fire-and-forget: do NOT await — summarizing orphaned sessions uses the LLM
-    // which may be slow/down, and blocking here prevents the server from starting.
-    agentCore.init().catch(err => {
-      console.error('[openagent] Error during agentCore.init():', err)
-    })
 
     // Try to start Telegram bot if configured
     await restartTelegramBot()

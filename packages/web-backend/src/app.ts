@@ -2,6 +2,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import express from 'express'
+import type { Express, Request, Response, NextFunction } from 'express'
 import type { Database } from '@openagent/core'
 import type { AgentCore } from '@openagent/core'
 import { createAuthRouter } from './routes/auth.js'
@@ -50,13 +51,13 @@ export interface AppOptions {
   taskEventBus?: TaskEventBus | null
 }
 
-export function createApp(options?: AppOptions): express.Express {
+export function createApp(options?: AppOptions): Express {
   const app = express()
 
   app.use(express.json())
 
   // CORS: allow frontend dev server (different port) to access API
-  app.use((_req, res, next) => {
+  app.use((_req: Request, res: Response, next: NextFunction) => {
     const origin = _req.headers.origin
     if (origin) {
       res.setHeader('Access-Control-Allow-Origin', origin)

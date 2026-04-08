@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import type { Database } from '@openagent/core'
 import type { TelegramBot } from '@openagent/telegram'
 import { jwtMiddleware, verifyToken } from '../auth.js'
@@ -29,7 +29,7 @@ export interface TelegramUsersRouterOptions {
 
 export function createTelegramUsersRouter(options: TelegramUsersRouterOptions): Router {
   const { db, getTelegramBot } = options
-  const router = Router()
+  const router = express.Router()
 
   /**
    * Serve a telegram avatar file by telegram_id string.

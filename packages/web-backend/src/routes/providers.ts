@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import {
   loadProviders,
   loadProvidersMasked,
@@ -65,7 +65,7 @@ setInterval(() => {
 }, 60 * 1000)
 
 export function createProvidersRouter(options: ProvidersRouterOptions = {}): Router {
-  const router = Router()
+  const router = express.Router()
 
   // All provider routes require admin JWT
   router.use(jwtMiddleware)

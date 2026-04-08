@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
 import multer from 'multer'
@@ -58,7 +58,7 @@ function sanitizeSkill(skill: SkillConfig): Omit<SkillConfig, 'envValues'> {
 }
 
 export function createSkillsRouter(options: SkillsRouterOptions = {}): Router {
-  const router = Router()
+  const router = express.Router()
   const getAgentCore = options.getAgentCore ?? (() => null)
 
   // All routes require auth

@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
 import { getConfigDir, ensureConfigTemplates, loadConfig } from '@openagent/core'
@@ -422,7 +422,7 @@ function buildTasksResponse(settingsRaw: Record<string, unknown>) {
 // ── Router ────────────────────────────────────────────────────────────
 
 export function createSettingsRouter(options: SettingsRouterOptions = {}): Router {
-  const router = Router()
+  const router = express.Router()
   const getAgentCore = options.getAgentCore ?? (() => null)
 
   router.use(jwtMiddleware)

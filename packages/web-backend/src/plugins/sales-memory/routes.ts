@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import type { Database } from '@openagent/core'
 import { jwtMiddleware } from '../../auth.js'
 import {
@@ -11,7 +11,7 @@ import type { SalesMemorySettings } from './config.js'
 import { loadSalesMemoryConfig, saveSalesMemoryConfig } from './config.js'
 
 export function createSalesMemoryRouter(db: Database): Router {
-  const router = Router()
+  const router = express.Router()
 
   // All routes require a valid JWT
   router.use(jwtMiddleware)
