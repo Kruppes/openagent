@@ -170,8 +170,22 @@ export function createTasksRouter(options: TasksRouterOptions): Router {
       const taskRunner = options.getTaskRunner?.()
       if (taskRunner) {
         taskRunner.abortTask(task.id, 'Killed by user from web UI')
+        // Zombie-Fallback: if the task was not in memory (e.g. after a server
+        // restart), abortTask() is a no-op and the DB status stays 'running'.
+        // Force a DB update in that case so the task is properly terminated.
+        const afterAbort = store.getById(task.id)
+        if (afterAbort?.status === 'running' || afterAbort?.status === 'paused') {
+          const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
+          store.update(task.id, {
+            status: 'failed',
+            resultStatus: 'failed',
+            resultSummary: 'Killed by user from web UI',
+            errorMessage: 'Killed by user from web UI',
+            completedAt: now,
+          })
+        }
       } else {
-        // No task runner available — update status directly
+        // No task runner at all — update status directly
         const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
         store.update(task.id, {
           status: 'failed',
