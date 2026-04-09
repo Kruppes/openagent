@@ -3,8 +3,12 @@ import type { Database } from '@openagent/core'
 import { jwtMiddleware } from '../../auth.js'
 import {
   searchMemory,
+  rrfSearch,
   getLatestDigest,
   getSalesMemoryStats,
+  getUserMemories,
+  searchMemories,
+  getObsidianIndex,
 } from './db.js'
 import { summarizeResults, generateDigest } from './llm.js'
 import type { SalesMemorySettings } from './config.js'
@@ -87,12 +91,14 @@ export function createSalesMemoryRouter(db: Database): Router {
   // ── Search & recall endpoints ───────────────────────────────────────────────
 
   /**
-   * GET /api/plugins/salesmemory/search?q=...&limit=5
-   * Raw FTS5 search — returns matching messages without LLM post-processing.
+   * GET /api/plugins/salesmemory/search?q=...&limit=5&mode=rrf|fts
+   * mode=rrf (default): RRF hybrid search over all 3 sources (chat, memories, obsidian)
+   * mode=fts: Raw FTS5 search over chat_messages only
    */
   router.get('/search', (req, res) => {
     const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit as string) || 10))
+    const mode = req.query.mode === 'fts' ? 'fts' : 'rrf'
 
     if (!q) {
       res.status(400).json({ error: 'Query parameter "q" is required' })
@@ -100,11 +106,52 @@ export function createSalesMemoryRouter(db: Database): Router {
     }
 
     try {
-      const results = searchMemory(db, q, limit)
-      res.json({ results, count: results.length, query: q })
+      if (mode === 'rrf') {
+        const results = rrfSearch(db, q, limit)
+        res.json({ results, count: results.length, query: q, mode: 'rrf' })
+      } else {
+        const results = searchMemory(db, q, limit)
+        res.json({ results, count: results.length, query: q, mode: 'fts' })
+      }
     } catch (err) {
       console.error('[sales-memory] /search error:', err)
       res.status(500).json({ error: 'Search failed', detail: (err as Error).message })
+    }
+  })
+
+  /**
+   * GET /api/plugins/salesmemory/memories?limit=50
+   * Returns stored memories (facts extracted at session end).
+   */
+  router.get('/memories', (req, res) => {
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit as string) || 50))
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
+
+    try {
+      if (q) {
+        const results = searchMemories(db, q, limit)
+        res.json({ memories: results, count: results.length })
+      } else {
+        const memories = getUserMemories(db, null, limit)
+        res.json({ memories, count: memories.length })
+      }
+    } catch (err) {
+      console.error('[sales-memory] /memories error:', err)
+      res.status(500).json({ error: 'Failed to retrieve memories', detail: (err as Error).message })
+    }
+  })
+
+  /**
+   * GET /api/plugins/salesmemory/obsidian
+   * Returns all indexed Obsidian files.
+   */
+  router.get('/obsidian', (req, res) => {
+    try {
+      const index = getObsidianIndex(db)
+      res.json({ files: index, count: index.length })
+    } catch (err) {
+      console.error('[sales-memory] /obsidian error:', err)
+      res.status(500).json({ error: 'Failed to retrieve obsidian index', detail: (err as Error).message })
     }
   })
 

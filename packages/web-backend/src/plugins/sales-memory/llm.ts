@@ -1,6 +1,6 @@
 import type { Database } from '@openagent/core'
 import type { SearchResult } from './db.js'
-import { getMessagesForDate, saveDigest } from './db.js'
+import { getMessagesForDate, saveDigest, upsertMemory } from './db.js'
 import type { SalesMemorySettings } from './config.js'
 import { loadSalesMemoryConfig } from './config.js'
 
@@ -124,6 +124,73 @@ async function callAnthropic(prompt: string, settings: SalesMemorySettings): Pro
     content: Array<{ type: string; text: string }>
   }
   return data.content.find(c => c.type === 'text')?.text?.trim() ?? ''
+}
+
+// ── Fact Extraction (Schicht 2) ──────────────────────────────────────────────
+
+/**
+ * Extract up to 10 atomic, self-contained facts from a session's messages.
+ * The LLM returns a JSON array of fact objects.
+ *
+ * @returns Array of fact strings (may be empty if extraction fails)
+ */
+export async function extractSessionFacts(
+  db: Database,
+  sessionId: string,
+  userId: string | null,
+  messages: Array<{ role: string; content: string }>,
+  overrides?: Partial<SalesMemorySettings>,
+): Promise<string[]> {
+  if (messages.length === 0) return []
+
+  const settings = resolveSettings(overrides)
+
+  const conversation = messages
+    .slice(-30) // Use last 30 messages max
+    .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content.slice(0, 600)}`)
+    .join('\n\n')
+
+  const prompt = `Extrahiere maximal 10 atomare, selbsterklärende Fakten aus diesem Gespräch als JSON-Array.
+Nur Fakten die langfristig relevant sind (Entscheidungen, Präferenzen, Projekte, wichtige Details).
+Keine allgemeinen Aussagen, keine Fragen, keine kurzen Antworten.
+Format: [{"fact": "..."}]
+
+Gespräch:
+${conversation}
+
+Fakten (nur JSON-Array, kein anderer Text):`
+
+  try {
+    const raw = await callLLM(prompt, settings)
+
+    // Extract JSON array from response (might be wrapped in backticks or text)
+    const jsonMatch = raw.match(/\[\s*\{[\s\S]*?\}\s*\]/)
+    if (!jsonMatch) {
+      console.warn('[sales-memory] fact extraction: no JSON array found in response')
+      return []
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]) as Array<{ fact?: string }>
+    const facts = parsed
+      .filter(f => typeof f?.fact === 'string' && f.fact.trim().length > 10)
+      .map(f => f.fact!.trim())
+      .slice(0, 10)
+
+    // Persist facts to memories table
+    let inserted = 0
+    let updated = 0
+    for (const fact of facts) {
+      const result = upsertMemory(db, fact, userId, sessionId)
+      if (result === 'inserted') inserted++
+      else updated++
+    }
+
+    console.log(`[sales-memory] Fact extraction: ${facts.length} facts (${inserted} new, ${updated} updated)`)
+    return facts
+  } catch (err) {
+    console.error('[sales-memory] extractSessionFacts error:', err)
+    return []
+  }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

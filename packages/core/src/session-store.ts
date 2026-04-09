@@ -1,6 +1,8 @@
 /**
  * session-store.ts — Pure functions for session persistence and topic-matching.
  * No class, no LLM, no embeddings — pure keyword extraction and Jaccard similarity.
+ *
+ * SalesMemory 2.0: Sliding-Window Topic-Shift Detection with Hysteresis
  */
 
 import type { Database } from './database.js'
@@ -18,6 +20,39 @@ export interface ArchivedSession {
   messageCount: number
   topicTags: string[]
   tokenCount: number
+}
+
+/**
+ * A lightweight message record for sliding-window analysis.
+ */
+export interface SessionMessage {
+  content: string
+  /** Unix timestamp in milliseconds */
+  timestampMs: number
+  /** Approximate token count (characters / 4) */
+  tokens: number
+  /** True if the message contains an attachment marker */
+  hasAttachment: boolean
+}
+
+/**
+ * Result of the sliding-window topic-shift detection.
+ */
+export interface TopicShiftResult {
+  /** Score: 0-4. Shift detected when score >= 2. */
+  score: number
+  /** True when a shift is detected (score >= 2) */
+  shiftDetected: boolean
+  /** Breakdown of which signals fired */
+  signals: {
+    timeGap: boolean       // Signal 1: >30 min gap
+    jaccardShift: boolean  // Signal 2: Jaccard < 0.25 over sliding window
+    explicit: boolean      // Signal 3: explicit /new trigger
+  }
+  /** Jaccard overlap computed between left/right windows (or null if insufficient data) */
+  jaccardOverlap: number | null
+  /** True when there is not enough data for detection (< 5 messages or < 200 tokens) */
+  insufficient: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,6 +73,31 @@ const STOP_WORDS = new Set([
   'nach', 'hier', 'dass', 'mehr', 'nur', 'schon', 'sein', 'hat', 'haben',
   'wurde', 'aus', 'zum', 'zur',
 ])
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Token estimation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Estimate token count from text (rough approximation: chars / 4).
+ */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Attachment detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ATTACHMENT_MARKERS = ['[File:', '[Anhang:', 'attachment:']
+
+/**
+ * Returns true if a message contains an attachment marker.
+ */
+export function hasAttachmentMarker(text: string): boolean {
+  const lower = text.toLowerCase()
+  return ATTACHMENT_MARKERS.some(m => lower.includes(m.toLowerCase()))
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Topic extraction
@@ -97,6 +157,198 @@ export function topicOverlap(a: string[], b: string[]): number {
 
   const unionSize = setA.size + setB.size - intersectionSize
   return unionSize === 0 ? 0.0 : intersectionSize / unionSize
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sliding-Window Topic-Shift Detection (SalesMemory 2.0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const WINDOW_MIN_TOKENS = 200
+const WINDOW_MAX_TOKENS = 1000
+const WINDOW_SIZE = 3            // messages per window (left / right)
+const TOTAL_MIN_MESSAGES = 5    // minimum messages before detection is active
+const TOTAL_MIN_TOKENS = 200    // minimum total tokens before detection is active
+const LARGE_MSG_THRESHOLD = 500 // messages > this → only first 200 tokens used
+const LARGE_MSG_SLICE = 200     // chars used from large messages (≈50 tokens)
+const SMALL_MSG_THRESHOLD = 50  // messages < this → don't count for token-minimum
+const JACCARD_SHIFT_THRESHOLD = 0.25
+const TIME_GAP_MS = 30 * 60 * 1000 // 30 minutes
+
+/**
+ * Build a sliding window from an array of messages.
+ *
+ * Rules:
+ * - Takes the last `windowSize` messages from `msgs`
+ * - Messages < 50 tokens: counted for message count but NOT for token-minimum
+ * - Messages > 500 tokens: only first 200 tokens (≈ first 800 chars) used
+ * - Total tokens in window capped at WINDOW_MAX_TOKENS (older messages trimmed first)
+ * - Returns null if the window doesn't meet the minimum token threshold
+ */
+function buildWindow(msgs: SessionMessage[], windowSize: number): string[] | null {
+  if (msgs.length === 0) return null
+
+  const window = msgs.slice(-windowSize)
+  const texts: string[] = []
+  let tokenSum = 0
+
+  for (const msg of window) {
+    let text = msg.content
+    let tokens = msg.tokens
+
+    // Large message: only first portion
+    if (tokens > LARGE_MSG_THRESHOLD) {
+      text = msg.content.slice(0, LARGE_MSG_SLICE * 4) // ≈ 800 chars → 200 tokens
+      tokens = LARGE_MSG_SLICE
+    }
+
+    // Small message: counts for message count but not for token sum
+    if (tokens < SMALL_MSG_THRESHOLD) {
+      texts.push(text)
+      continue
+    }
+
+    // Check if adding this message would exceed the cap
+    if (tokenSum + tokens > WINDOW_MAX_TOKENS) {
+      // Trim: take only the remaining budget from this message
+      const remainingTokens = WINDOW_MAX_TOKENS - tokenSum
+      if (remainingTokens <= 0) break
+      text = text.slice(0, remainingTokens * 4)
+      tokens = remainingTokens
+    }
+
+    texts.push(text)
+    tokenSum += tokens
+  }
+
+  // Window must meet minimum token threshold (excluding small messages)
+  // Recompute token sum excluding small messages
+  let qualifyingTokens = 0
+  for (const msg of window) {
+    const tokens = msg.tokens < LARGE_MSG_THRESHOLD ? msg.tokens : LARGE_MSG_SLICE
+    if (tokens >= SMALL_MSG_THRESHOLD) {
+      qualifyingTokens += Math.min(tokens, WINDOW_MAX_TOKENS - qualifyingTokens)
+      if (qualifyingTokens >= WINDOW_MIN_TOKENS) break
+    }
+  }
+
+  if (qualifyingTokens < WINDOW_MIN_TOKENS) return null
+
+  return texts
+}
+
+/**
+ * Sliding-Window Topic-Shift Detection.
+ *
+ * Takes the full message history and a new incoming message, and computes
+ * whether a topic shift is occurring based on hysteresis signals:
+ *
+ * Signal 1 (+1): Time gap > 30 min between last stored message and new message
+ * Signal 2 (+1): Jaccard overlap < 0.25 between LEFT and RIGHT sliding windows
+ * Signal 3 (+2): Explicit trigger (pass explicitTrigger=true for /new command)
+ *
+ * Shift is detected when score >= 2.
+ *
+ * @param history       - Existing messages in the session (oldest first)
+ * @param newMessage    - The incoming new message
+ * @param explicitTrigger - True when the user explicitly requests a new session (/new)
+ */
+export function detectTopicShift(
+  history: SessionMessage[],
+  newMessage: SessionMessage,
+  explicitTrigger = false,
+): TopicShiftResult {
+  const insufficient = history.length < TOTAL_MIN_MESSAGES ||
+    getTotalQualifyingTokens(history) < TOTAL_MIN_TOKENS
+
+  let score = 0
+  const signals = { timeGap: false, jaccardShift: false, explicit: false }
+
+  // Signal 3: Explicit trigger (always fires if provided)
+  if (explicitTrigger) {
+    score += 2
+    signals.explicit = true
+    return { score, shiftDetected: score >= 2, signals, jaccardOverlap: null, insufficient: false }
+  }
+
+  // If there's not enough history data, we cannot detect a shift
+  if (insufficient) {
+    return { score: 0, shiftDetected: false, signals, jaccardOverlap: null, insufficient: true }
+  }
+
+  // If the new message has an attachment, no shift trigger is possible
+  if (newMessage.hasAttachment) {
+    return { score: 0, shiftDetected: false, signals, jaccardOverlap: null, insufficient: false }
+  }
+
+  // Signal 1: Time gap > 30 min
+  const lastMsg = history[history.length - 1]
+  if (lastMsg && newMessage.timestampMs - lastMsg.timestampMs > TIME_GAP_MS) {
+    score += 1
+    signals.timeGap = true
+  }
+
+  // Signal 2: Jaccard shift via sliding windows
+  // RIGHT window = older messages (positions -6 to -4 from end)
+  // LEFT window  = newer messages (positions -3 to -1 from end, i.e., most recent)
+  // We compare "what we were talking about" (right) vs "what we're talking about now" (left + new)
+  const rightWindow = buildWindow(history.slice(0, -WINDOW_SIZE), WINDOW_SIZE)
+  const leftWindowMsgs = [...history.slice(-WINDOW_SIZE), newMessage]
+  const leftWindow = buildWindow(leftWindowMsgs, WINDOW_SIZE + 1)
+
+  let jaccardOverlap: number | null = null
+
+  if (rightWindow && leftWindow) {
+    const rightTags = extractTopicTags(rightWindow)
+    const leftTags = extractTopicTags(leftWindow)
+    jaccardOverlap = topicOverlap(rightTags, leftTags)
+
+    if (jaccardOverlap < JACCARD_SHIFT_THRESHOLD) {
+      score += 1
+      signals.jaccardShift = true
+    }
+  }
+
+  return {
+    score,
+    shiftDetected: score >= 2,
+    signals,
+    jaccardOverlap,
+    insufficient: false,
+  }
+}
+
+/**
+ * Compute the total qualifying token count from a message array.
+ * Messages < 50 tokens do not count toward the minimum.
+ */
+function getTotalQualifyingTokens(msgs: SessionMessage[]): number {
+  let total = 0
+  for (const msg of msgs) {
+    const tokens = Math.min(msg.tokens, LARGE_MSG_SLICE)
+    if (tokens >= SMALL_MSG_THRESHOLD) {
+      total += tokens
+    }
+  }
+  return total
+}
+
+/**
+ * Convert raw chat_messages DB rows to SessionMessage records.
+ */
+export function toSessionMessages(
+  rows: Array<{ content: string; timestamp: string }>
+): SessionMessage[] {
+  return rows.map(row => {
+    const content = row.content ?? ''
+    const tokens = estimateTokens(content)
+    const timestampMs = new Date(row.timestamp).getTime()
+    return {
+      content,
+      timestampMs: isNaN(timestampMs) ? Date.now() : timestampMs,
+      tokens,
+      hasAttachment: hasAttachmentMarker(content),
+    }
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -199,4 +451,16 @@ export function getSessionMessageTexts(db: Database, sessionId: string): string[
   ).all(sessionId) as Array<{ content: string }>
 
   return rows.map(r => r.content)
+}
+
+/**
+ * Load all chat_messages for a session as SessionMessage records.
+ * Used for sliding-window topic-shift detection.
+ */
+export function getSessionMessages(db: Database, sessionId: string): SessionMessage[] {
+  const rows = db.prepare(
+    `SELECT content, timestamp FROM chat_messages WHERE session_id = ? ORDER BY timestamp ASC`,
+  ).all(sessionId) as Array<{ content: string; timestamp: string }>
+
+  return toSessionMessages(rows)
 }
