@@ -1591,33 +1591,213 @@
                   </div>
 
                   <template v-if="smForm.autoInject">
+                    <div class="flex flex-col gap-4 rounded-lg border border-border bg-muted/30 p-4">
+                      <div class="flex flex-col gap-2">
+                        <Label for="sm-top-k">Top-K Ergebnisse (RRF)</Label>
+                        <Input
+                          id="sm-top-k"
+                          v-model.number="smForm.topK"
+                          type="number"
+                          min="1"
+                          max="20"
+                          class="w-full"
+                        />
+                        <p class="text-xs text-muted-foreground">Anzahl der Ergebnisse nach RRF-Fusion (Standard: 5)</p>
+                      </div>
+
+                      <div class="flex flex-col gap-2">
+                        <Label for="sm-rrf-k">RRF k-Konstante</Label>
+                        <Input
+                          id="sm-rrf-k"
+                          v-model.number="smForm.rrf_k"
+                          type="number"
+                          min="1"
+                          max="200"
+                          class="w-full"
+                        />
+                        <p class="text-xs text-muted-foreground">RRF-Formel: 1/(k + rank). Höher = gleichmäßigere Gewichtung (Standard: 60)</p>
+                      </div>
+
+                      <div class="flex flex-col gap-2">
+                        <Label for="sm-inject-max">{{ $t('settings.salesMemoryInjectMaxResults') }}</Label>
+                        <Input
+                          id="sm-inject-max"
+                          v-model.number="smForm.injectMaxResults"
+                          type="number"
+                          min="1"
+                          max="10"
+                          class="w-full"
+                        />
+                        <p class="text-xs text-muted-foreground">{{ $t('settings.salesMemoryInjectMaxResultsHint') }}</p>
+                      </div>
+
+                      <div class="flex flex-col gap-2">
+                        <Label for="sm-inject-threshold">{{ $t('settings.salesMemoryInjectThreshold') }}</Label>
+                        <Input
+                          id="sm-inject-threshold"
+                          v-model.number="smForm.injectThreshold"
+                          type="number"
+                          min="-5.0"
+                          max="0.0"
+                          step="0.1"
+                          class="w-full"
+                        />
+                        <p class="text-xs text-muted-foreground">{{ $t('settings.salesMemoryInjectThresholdHint') }}</p>
+                      </div>
+                    </div>
+                  </template>
+
+                  <Separator />
+
+                  <!-- ── Fact Extraction (Schicht 2) ── -->
+                  <div>
+                    <h3 class="text-base font-semibold tracking-tight text-foreground">Fact Extraction</h3>
+                    <p class="mt-1 text-sm text-muted-foreground">Extrahiert automatisch dauerhaft relevante Fakten am Ende jeder Session.</p>
+                  </div>
+
+                  <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
+                    <div class="flex flex-col gap-0.5 pr-4">
+                      <Label for="sm-fact-extraction" class="cursor-pointer">Fact Extraction aktivieren</Label>
+                      <p class="text-xs text-muted-foreground">
+                        LLM extrahiert bis zu 10 atomare Fakten wenn eine Session endet.
+                      </p>
+                    </div>
+                    <Switch id="sm-fact-extraction" v-model:checked="smForm.factExtractionEnabled" />
+                  </div>
+
+                  <template v-if="smForm.factExtractionEnabled">
                     <div class="flex flex-col gap-2">
-                      <Label for="sm-inject-max">{{ $t('settings.salesMemoryInjectMaxResults') }}</Label>
+                      <Label for="sm-fact-model">Extraction-Modell</Label>
                       <Input
-                        id="sm-inject-max"
-                        v-model.number="smForm.injectMaxResults"
-                        type="number"
-                        min="1"
-                        max="10"
+                        id="sm-fact-model"
+                        v-model="smForm.factExtractionModel"
+                        type="text"
+                        placeholder="llama3.2"
                         class="w-full"
                       />
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.salesMemoryInjectMaxResultsHint') }}</p>
+                      <p class="text-xs text-muted-foreground">Modell für die Fact-Extraction (nutzt denselben Provider wie oben)</p>
+                    </div>
+                  </template>
+
+                  <Separator />
+
+                  <!-- ── Obsidian Zettelkasten (Schicht 3) ── -->
+                  <div>
+                    <h3 class="text-base font-semibold tracking-tight text-foreground">Obsidian Zettelkasten</h3>
+                    <p class="mt-1 text-sm text-muted-foreground">Synchronisiert extrahierte Fakten in ein Obsidian-Vault via SSH.</p>
+                  </div>
+
+                  <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
+                    <div class="flex flex-col gap-0.5 pr-4">
+                      <Label for="sm-obsidian-enabled" class="cursor-pointer">Obsidian-Sync aktivieren</Label>
+                      <p class="text-xs text-muted-foreground">
+                        Schreibt Fakten via SSH in strukturierte Markdown-Dateien.
+                      </p>
+                    </div>
+                    <Switch id="sm-obsidian-enabled" v-model:checked="smForm.obsidianEnabled" />
+                  </div>
+
+                  <template v-if="smForm.obsidianEnabled">
+                    <div class="flex flex-col gap-4 rounded-lg border border-border bg-muted/30 p-4">
+                      <div class="flex flex-col gap-2">
+                        <Label for="sm-obsidian-host">SSH Host</Label>
+                        <Input
+                          id="sm-obsidian-host"
+                          v-model="smForm.obsidianHost"
+                          type="text"
+                          placeholder="192.168.10.222"
+                          class="w-full"
+                        />
+                        <p class="text-xs text-muted-foreground">IP oder Hostname des Macs mit Obsidian</p>
+                      </div>
+
+                      <div class="flex flex-col gap-2">
+                        <Label for="sm-obsidian-user">SSH User</Label>
+                        <Input
+                          id="sm-obsidian-user"
+                          v-model="smForm.obsidianUser"
+                          type="text"
+                          placeholder="user"
+                          class="w-full"
+                        />
+                      </div>
+
+                      <div class="flex flex-col gap-2">
+                        <Label for="sm-obsidian-vault">Vault-Pfad</Label>
+                        <Input
+                          id="sm-obsidian-vault"
+                          v-model="smForm.obsidianVaultPath"
+                          type="text"
+                          placeholder="~/Obsidian/OpenAgent"
+                          class="w-full"
+                        />
+                        <p class="text-xs text-muted-foreground">Absoluter Pfad zum Obsidian-Vault auf dem Mac</p>
+                      </div>
+                    </div>
+                  </template>
+
+                  <Separator />
+
+                  <!-- ── Session Hysteresis (Schicht 1) ── -->
+                  <div>
+                    <h3 class="text-base font-semibold tracking-tight text-foreground">Session-Hysterese</h3>
+                    <p class="mt-1 text-sm text-muted-foreground">Schwellwerte für die Sliding-Window Topic-Shift-Detection.</p>
+                  </div>
+
+                  <div class="flex flex-col gap-4 rounded-lg border border-border bg-muted/30 p-4">
+                    <div class="flex flex-col gap-2">
+                      <Label for="sm-hyst-min-msgs">Min. Nachrichten vor Detection</Label>
+                      <Input
+                        id="sm-hyst-min-msgs"
+                        v-model.number="smForm.sessionHysteresisMinMessages"
+                        type="number"
+                        min="1"
+                        max="20"
+                        class="w-full"
+                      />
+                      <p class="text-xs text-muted-foreground">Mindestanzahl Nachrichten bevor Topic-Shift erkannt werden kann (Standard: 5)</p>
                     </div>
 
                     <div class="flex flex-col gap-2">
-                      <Label for="sm-inject-threshold">{{ $t('settings.salesMemoryInjectThreshold') }}</Label>
+                      <Label for="sm-hyst-min-tokens">Min. Tokens vor Detection</Label>
                       <Input
-                        id="sm-inject-threshold"
-                        v-model.number="smForm.injectThreshold"
+                        id="sm-hyst-min-tokens"
+                        v-model.number="smForm.sessionHysteresisMinTokens"
                         type="number"
-                        min="-5.0"
-                        max="0.0"
-                        step="0.1"
+                        min="0"
+                        max="2000"
                         class="w-full"
                       />
-                      <p class="text-xs text-muted-foreground">{{ $t('settings.salesMemoryInjectThresholdHint') }}</p>
+                      <p class="text-xs text-muted-foreground">Mindest-Tokenanzahl bevor Detection aktiv wird (Standard: 200)</p>
                     </div>
-                  </template>
+
+                    <div class="flex flex-col gap-2">
+                      <Label for="sm-hyst-time-gap">Zeitlücken-Signal (Minuten)</Label>
+                      <Input
+                        id="sm-hyst-time-gap"
+                        v-model.number="smForm.sessionTimeGapMinutes"
+                        type="number"
+                        min="1"
+                        max="480"
+                        class="w-full"
+                      />
+                      <p class="text-xs text-muted-foreground">Zeitlücke in Minuten die Signal +1 auslöst (Standard: 30)</p>
+                    </div>
+
+                    <div class="flex flex-col gap-2">
+                      <Label for="sm-hyst-jaccard">Jaccard-Schwellwert</Label>
+                      <Input
+                        id="sm-hyst-jaccard"
+                        v-model.number="smForm.sessionJaccardThreshold"
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        class="w-full"
+                      />
+                      <p class="text-xs text-muted-foreground">Ähnlichkeit unter diesem Wert → semantischer Shift (+1). (Standard: 0.25)</p>
+                    </div>
+                  </div>
 
                   <!-- Save button -->
                   <div class="flex justify-end">
@@ -2257,8 +2437,20 @@ watch(smSettings, (s) => {
   smForm.anthropicKey = s.anthropicKey
   smForm.anthropicModel = s.anthropicModel
   smForm.autoInject = s.autoInject
+  smForm.topK = s.topK
   smForm.injectMaxResults = s.injectMaxResults
   smForm.injectThreshold = s.injectThreshold
+  smForm.rrf_k = s.rrf_k
+  smForm.factExtractionEnabled = s.factExtractionEnabled
+  smForm.factExtractionModel = s.factExtractionModel
+  smForm.obsidianEnabled = s.obsidianEnabled
+  smForm.obsidianHost = s.obsidianHost
+  smForm.obsidianUser = s.obsidianUser
+  smForm.obsidianVaultPath = s.obsidianVaultPath
+  smForm.sessionHysteresisMinMessages = s.sessionHysteresisMinMessages
+  smForm.sessionHysteresisMinTokens = s.sessionHysteresisMinTokens
+  smForm.sessionTimeGapMinutes = s.sessionTimeGapMinutes
+  smForm.sessionJaccardThreshold = s.sessionJaccardThreshold
 }, { immediate: true })
 
 async function handleSmSave() {
@@ -2267,6 +2459,7 @@ async function handleSmSave() {
   try {
     const defaults = getSmDefaults()
     const payload: SalesMemoryPluginSettings = {
+      // Core
       enabled: smForm.enabled,
       provider: smForm.provider,
       ollamaUrl: smForm.ollamaUrl?.trim() || defaults.ollamaUrl,
@@ -2275,9 +2468,25 @@ async function handleSmSave() {
       openaiModel: smForm.openaiModel?.trim() || defaults.openaiModel,
       anthropicKey: smForm.anthropicKey,
       anthropicModel: smForm.anthropicModel?.trim() || defaults.anthropicModel,
+      // Retrieval
       autoInject: smForm.autoInject,
+      topK: Math.max(1, Math.min(20, smForm.topK ?? defaults.topK)),
       injectMaxResults: Math.max(1, Math.min(10, smForm.injectMaxResults)),
       injectThreshold: Math.max(-5.0, Math.min(0.0, smForm.injectThreshold)),
+      rrf_k: Math.max(1, Math.min(200, smForm.rrf_k ?? defaults.rrf_k)),
+      // Fact extraction
+      factExtractionEnabled: smForm.factExtractionEnabled,
+      factExtractionModel: smForm.factExtractionModel?.trim() || defaults.factExtractionModel,
+      // Obsidian
+      obsidianEnabled: smForm.obsidianEnabled,
+      obsidianHost: smForm.obsidianHost?.trim() || defaults.obsidianHost,
+      obsidianUser: smForm.obsidianUser?.trim() || defaults.obsidianUser,
+      obsidianVaultPath: smForm.obsidianVaultPath?.trim() || defaults.obsidianVaultPath,
+      // Session hysteresis
+      sessionHysteresisMinMessages: Math.max(1, smForm.sessionHysteresisMinMessages ?? defaults.sessionHysteresisMinMessages),
+      sessionHysteresisMinTokens: Math.max(0, smForm.sessionHysteresisMinTokens ?? defaults.sessionHysteresisMinTokens),
+      sessionTimeGapMinutes: Math.max(1, smForm.sessionTimeGapMinutes ?? defaults.sessionTimeGapMinutes),
+      sessionJaccardThreshold: Math.max(0, Math.min(1, smForm.sessionJaccardThreshold ?? defaults.sessionJaccardThreshold)),
     }
     const ok = await saveSmSettings(payload)
     if (!ok) {

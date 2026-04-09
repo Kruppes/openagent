@@ -55,6 +55,7 @@ export function createSalesMemoryRouter(db: Database): Router {
       const body = req.body as Partial<SalesMemorySettings>
 
       const next: SalesMemorySettings = {
+        // Core
         enabled: body.enabled ?? existing.enabled,
         provider: body.provider ?? existing.provider,
         ollamaUrl: body.ollamaUrl ?? existing.ollamaUrl,
@@ -68,9 +69,25 @@ export function createSalesMemoryRouter(db: Database): Router {
           ? body.anthropicKey
           : existing.anthropicKey,
         anthropicModel: body.anthropicModel ?? existing.anthropicModel,
+        // Retrieval / injection
         autoInject: body.autoInject ?? existing.autoInject,
+        topK: body.topK ?? existing.topK,
         injectMaxResults: body.injectMaxResults ?? existing.injectMaxResults,
         injectThreshold: body.injectThreshold ?? existing.injectThreshold,
+        rrf_k: body.rrf_k ?? existing.rrf_k,
+        // Fact extraction
+        factExtractionEnabled: body.factExtractionEnabled ?? existing.factExtractionEnabled,
+        factExtractionModel: body.factExtractionModel ?? existing.factExtractionModel,
+        // Obsidian
+        obsidianEnabled: body.obsidianEnabled ?? existing.obsidianEnabled,
+        obsidianHost: body.obsidianHost ?? existing.obsidianHost,
+        obsidianUser: body.obsidianUser ?? existing.obsidianUser,
+        obsidianVaultPath: body.obsidianVaultPath ?? existing.obsidianVaultPath,
+        // Session hysteresis
+        sessionHysteresisMinMessages: body.sessionHysteresisMinMessages ?? existing.sessionHysteresisMinMessages,
+        sessionHysteresisMinTokens: body.sessionHysteresisMinTokens ?? existing.sessionHysteresisMinTokens,
+        sessionTimeGapMinutes: body.sessionTimeGapMinutes ?? existing.sessionTimeGapMinutes,
+        sessionJaccardThreshold: body.sessionJaccardThreshold ?? existing.sessionJaccardThreshold,
       }
 
       saveSalesMemoryConfig(next)
