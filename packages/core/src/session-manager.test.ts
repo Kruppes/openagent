@@ -421,6 +421,68 @@ describe('SessionManager', () => {
       expect(onSummarize).toHaveBeenCalled()
       expect(summary).toBe('Summary text')
     })
+
+    it('includes background task notifications and task injection responses in the summary history', async () => {
+      const onSummarize = vi.fn().mockResolvedValue('Summary text')
+      const manager = new SessionManager({
+        db,
+        memoryDir,
+        timeoutMinutes: 15,
+        onSummarize,
+      })
+      await manager.init()
+
+      db.prepare(
+        `INSERT INTO users (id, username, password_hash, role) VALUES (1, 'test-user', 'hash', 'user')`
+      ).run()
+
+      const session = manager.getOrCreateSession('1', 'web')
+      manager.recordMessage('1')
+
+      db.prepare(
+        `INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, ?, 'user', ?)`
+      ).run(session.id, 1, 'Implementiere Punkt 1 vollständig und erstelle einen PR.')
+
+      db.prepare(
+        `INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, 'system', ?, ?)`
+      ).run(
+        `task-result-${Date.now()}`,
+        1,
+        '✅ Task completed: Build feature\n\nPR erstellt und Tests ergänzt.',
+        JSON.stringify({
+          type: 'task_result',
+          taskName: 'Build feature',
+          taskResultStatus: 'completed',
+        })
+      )
+
+      db.prepare(
+        `INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, 'assistant', ?, ?)`
+      ).run(
+        `task-injection-${Date.now()}`,
+        1,
+        'Der Task ist fertig. PR ist offen und die Tests sind ergänzt.',
+        JSON.stringify({ type: 'task_injection_response' })
+      )
+
+      await manager.handleNewCommand('1')
+
+      expect(onSummarize).toHaveBeenCalledWith(
+        session.id,
+        '1',
+        expect.stringContaining('User: Implementiere Punkt 1 vollständig und erstelle einen PR.')
+      )
+      expect(onSummarize).toHaveBeenCalledWith(
+        session.id,
+        '1',
+        expect.stringContaining('Background task (completed: Build feature): ✅ Task completed: Build feature')
+      )
+      expect(onSummarize).toHaveBeenCalledWith(
+        session.id,
+        '1',
+        expect.stringContaining('Assistant (task update): Der Task ist fertig. PR ist offen und die Tests sind ergänzt.')
+      )
+    })
   })
 
   describe('orphaned session handling', () => {
