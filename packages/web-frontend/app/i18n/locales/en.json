@@ -472,7 +472,12 @@
     "sttOllamaNone": "Ollama (no provider configured)",
     "sttOllamaModel": "Ollama Model",
     "sttOllamaModelHint": "Name of the Ollama model to use for transcription.",
-    "sttOllamaModelPlaceholder": "whisper"
+    "sttOllamaModelPlaceholder": "whisper",
+    "sttRewriteEnabled": "Clean up transcript",
+    "sttRewriteEnabledHint": "Use an LLM to remove filler words, repetitions, and spoken artifacts from the transcript.",
+    "sttRewriteProvider": "Rewrite provider",
+    "sttRewriteProviderHint": "Choose which LLM provider cleans up the transcribed text.",
+    "sttRewriteProviderNone": "No provider configured"
   },
   "users": {
     "kicker": "Access control",

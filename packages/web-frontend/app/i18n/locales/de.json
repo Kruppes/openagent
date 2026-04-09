@@ -472,7 +472,12 @@
     "sttOllamaNone": "Ollama (kein Anbieter konfiguriert)",
     "sttOllamaModel": "Ollama-Modell",
     "sttOllamaModelHint": "Name des Ollama-Modells für die Transkription.",
-    "sttOllamaModelPlaceholder": "whisper"
+    "sttOllamaModelPlaceholder": "whisper",
+    "sttRewriteEnabled": "Transkript bereinigen",
+    "sttRewriteEnabledHint": "Ein LLM verwenden, um Füllwörter, Wiederholungen und Sprach-Artefakte aus dem Transkript zu entfernen.",
+    "sttRewriteProvider": "Rewrite-Anbieter",
+    "sttRewriteProviderHint": "Wähle, welcher LLM-Anbieter den transkribierten Text bereinigt.",
+    "sttRewriteProviderNone": "Kein Anbieter konfiguriert"
   },
   "users": {
     "kicker": "Zugriffssteuerung",

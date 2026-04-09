@@ -1309,6 +1309,43 @@
                     />
                     <p class="text-xs text-muted-foreground">{{ $t('settings.sttOllamaModelHint') }}</p>
                   </div>
+
+                  <!-- Rewrite toggle -->
+                  <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
+                    <div class="flex flex-col gap-0.5 pr-4">
+                      <Label for="stt-rewrite-enabled" class="cursor-pointer">
+                        {{ $t('settings.sttRewriteEnabled') }}
+                      </Label>
+                      <p class="text-xs text-muted-foreground">
+                        {{ $t('settings.sttRewriteEnabledHint') }}
+                      </p>
+                    </div>
+                    <Switch
+                      id="stt-rewrite-enabled"
+                      v-model:checked="form.stt.rewrite.enabled"
+                    />
+                  </div>
+
+                  <!-- Rewrite provider dropdown -->
+                  <div v-if="form.stt.rewrite.enabled" class="flex flex-col gap-2">
+                    <Label for="stt-rewrite-provider">{{ $t('settings.sttRewriteProvider') }}</Label>
+                    <Select v-model="form.stt.rewrite.providerId">
+                      <SelectTrigger id="stt-rewrite-provider">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <template v-for="p in providers" :key="p.id">
+                          <SelectItem :value="p.id">
+                            {{ p.name }}
+                          </SelectItem>
+                        </template>
+                        <SelectItem v-if="providers.length === 0" value="" disabled>
+                          {{ $t('settings.sttRewriteProviderNone') }}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p class="text-xs text-muted-foreground">{{ $t('settings.sttRewriteProviderHint') }}</p>
+                  </div>
                 </template>
               </div>
             </div>
