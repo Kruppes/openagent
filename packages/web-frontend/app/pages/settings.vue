@@ -1621,14 +1621,14 @@ const activeTab = computed<TabId>({
 
 const tabs = computed(() => [
   { id: 'agent' as TabId, icon: 'bot', label: t('settings.tabs.agent') },
+  { id: 'agentHeartbeat' as TabId, icon: 'activity', label: t('settings.tabs.agentHeartbeat') },
   { id: 'healthMonitor' as TabId, icon: 'activity', label: t('settings.tabs.healthMonitor') },
   { id: 'memory' as TabId, icon: 'brain', label: t('settings.tabs.memory') },
-  { id: 'agentHeartbeat' as TabId, icon: 'activity', label: t('settings.tabs.agentHeartbeat') },
   { id: 'secrets' as TabId, icon: 'key', label: t('settings.tabs.secrets') },
-  { id: 'tasks' as TabId, icon: 'bot', label: t('settings.tabs.tasks') },
-  { id: 'tts' as TabId, icon: 'volume', label: t('settings.ttsTitle') },
   { id: 'stt' as TabId, icon: 'mic', label: t('settings.sttTitle') },
+  { id: 'tasks' as TabId, icon: 'bot', label: t('settings.tabs.tasks') },
   { id: 'telegram' as TabId, icon: 'send', label: t('settings.tabs.telegram') },
+  { id: 'tts' as TabId, icon: 'volume', label: t('settings.ttsTitle') },
 ])
 
 /* ── Settings state ── */
