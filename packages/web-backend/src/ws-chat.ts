@@ -8,7 +8,7 @@ import { URL } from 'node:url'
 import crypto from 'node:crypto'
 import type { RuntimeMetrics } from './runtime-metrics.js'
 import type { ChatEventBus, ChatEvent } from './chat-event-bus.js'
-import { searchMemory } from './plugins/sales-memory/db.js'
+import { rrfSearch } from './plugins/sales-memory/db.js'
 import { loadSalesMemoryConfig } from './plugins/sales-memory/config.js'
 
 interface ChatMessage {
@@ -195,20 +195,28 @@ export function setupWebSocketChat(
             activeStreams.delete(ws)
           }
 
-          // Reset session (generates summary + writes daily log).
-          // Prefer AgentCore.handleNewCommand because it emits an immediate
-          // reset on the SessionManager path used by the websocket chat tests.
-          if (resolveAgentCore()) {
+          // Reset session: call resetSession which triggers the onSessionEnd callback,
+          // which in turn broadcasts via chatEventBus → ws subscriber sends session_end.
+          // Only send a fallback message if no agentCore is available.
+          const agentCoreInstance = resolveAgentCore()
+          if (agentCoreInstance) {
             try {
-              await resolveAgentCore()!.handleNewCommand(String(currentUser.userId))
+              // resetSession triggers session end and fires onSessionEndCallback → chatEventBus
+              // The chatEventBus subscriber (below) will send session_end to this client
+              await agentCoreInstance.resetSession(String(currentUser.userId))
             } catch (err) {
               console.error('Failed to reset session:', err)
+              // Fallback: send session_end ourselves
+              const newSessionId = `web-${currentUser.userId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+              clientSessions.set(ws, newSessionId)
+              sendMessage(ws, { type: 'session_end', text: 'Session reset', sessionId: newSessionId })
             }
+          } else {
+            // No agent core — send fallback
+            const newSessionId = `web-${currentUser.userId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
+            clientSessions.set(ws, newSessionId)
+            sendMessage(ws, { type: 'session_end', text: 'Session reset', sessionId: newSessionId })
           }
-
-          const newSessionId = `web-${currentUser.userId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
-          clientSessions.set(ws, newSessionId)
-          sendMessage(ws, { type: 'session_end', text: 'Session reset', sessionId: newSessionId })
           return
         }
 
@@ -265,22 +273,23 @@ export function setupWebSocketChat(
 
       // ── SalesMemory Auto-Inject ───────────────────────────────────────────────
       // When autoInject is enabled in the SalesMemory config, prepend relevant
-      // memory context to the user message before sending it to the agent.
-      // Errors are non-fatal.
+      // When autoInject is enabled, use RRF over chat_messages + memories + obsidian_index
+      // to find the most relevant context and prepend it to the user message.
+      // Errors are non-fatal. (SalesMemory 2.0 Hybrid Retrieval)
       let messageContent = parsed.content
       if (process.env.SALESMEMORY_ENABLED === 'true' && parsed.content.trim()) {
         try {
           const smConfig = loadSalesMemoryConfig()
           if (smConfig.enabled && smConfig.autoInject) {
-            const injectMaxResults = smConfig.injectMaxResults
-            const injectThreshold = smConfig.injectThreshold
-            const memResults = searchMemory(db, parsed.content, injectMaxResults + 5)
-            const filtered = memResults.filter(r => r.rank < injectThreshold).slice(0, injectMaxResults)
-            if (filtered.length > 0) {
-              const contextLines = filtered.map(r => {
-                const date = r.created_at ? r.created_at.slice(0, 10) : 'unbekannt'
-                const snippet = r.content.slice(0, 200).replace(/\n/g, ' ')
-                return `- [${date}] ${snippet}`
+            const injectMaxResults = smConfig.injectMaxResults ?? 5
+            const rrfResults = rrfSearch(db, parsed.content, injectMaxResults)
+            if (rrfResults.length > 0) {
+              const contextLines = rrfResults.map(r => {
+                const sourceLabel = r.source === 'chat' ? 'Chat'
+                  : r.source === 'memory' ? 'Gedächtnis'
+                  : 'Obsidian'
+                const snippet = r.content.slice(0, 250).replace(/\n/g, ' ')
+                return `- [${sourceLabel}] ${snippet}`
               }).join('\n')
               const contextBlock = `[SalesMemory-Kontext]\n${contextLines}\n[Ende SalesMemory-Kontext]`
               messageContent = `${contextBlock}\n\n${parsed.content}`
@@ -291,7 +300,7 @@ export function setupWebSocketChat(
           console.warn('[sales-memory] Auto-inject error (ignored):', (memErr as Error).message)
         }
       }
-      // ── End SalesMemory Auto-Inject ───────────────────────────────────────────
+      // ── End SalesMemory 2.0 Auto-Inject ────────────────────────────────────────────────────
 
       const abortController = new AbortController()
       activeStreams.set(ws, abortController)

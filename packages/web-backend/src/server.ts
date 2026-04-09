@@ -44,6 +44,9 @@ import { MemoryConsolidationScheduler } from './memory-consolidation-scheduler.j
 import { createTelegramBot } from '@openagent/telegram'
 import type { TelegramBot } from '@openagent/telegram'
 import { ChatEventBus } from './chat-event-bus.js'
+import { extractSessionFacts } from './plugins/sales-memory/llm.js'
+import { detectProjects, updateObsidianProject } from './plugins/sales-memory/obsidian-sync.js'
+import { upsertObsidianIndex } from './plugins/sales-memory/db.js'
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10)
 const HOST = process.env.HOST ?? '0.0.0.0'
@@ -478,10 +481,8 @@ const onTelegramChatEvent = (event: import('@openagent/telegram').TelegramChatEv
 function wireAgentCoreEvents(): void {
   if (!agentCore) return
 
-  agentCore.setOnSessionEnd((userId: string, summary: string | null) => {
+  agentCore.setOnSessionEnd((userId: string, summary: string | null, sessionId?: string) => {
     // Persist session divider to chat_messages so it survives page reloads.
-    // The current AgentCore callback no longer exposes sessionId, so store a
-    // synthetic divider session key while preserving the summary payload.
     const dividerMetadata = JSON.stringify({ type: 'session_divider', summary: summary ?? null })
     db.prepare(
       'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
@@ -493,6 +494,51 @@ function wireAgentCoreEvents(): void {
       source: 'web',
       text: summary ?? undefined,
     })
+
+    // ── SalesMemory 2.0: Fact Extraction at Session End ─────────────────────
+    if (process.env.SALESMEMORY_ENABLED === 'true' && sessionId) {
+      const sid = sessionId
+      const uid = userId
+      // Run async, non-blocking
+      ;(async () => {
+        try {
+          // Load messages for this session
+          const messages = db.prepare(
+            `SELECT role, content FROM chat_messages WHERE session_id = ? AND role IN ('user', 'assistant') ORDER BY timestamp ASC`
+          ).all(sid) as Array<{ role: string; content: string }>
+
+          if (messages.length < 2) return
+
+          // Extract facts via LLM
+          const facts = await extractSessionFacts(db, sid, uid, messages)
+
+          if (facts.length === 0) return
+
+          // Obsidian sync: detect projects and update vault files
+          const projects = detectProjects(facts)
+          const today = new Date().toISOString().slice(0, 10)
+
+          for (const projectName of projects) {
+            try {
+              await updateObsidianProject(projectName, facts, today)
+
+              // Sync updated file content to obsidian_index FTS5
+              const { readObsidianFile } = await import('./plugins/sales-memory/obsidian-sync.js')
+              const fileContent = await readObsidianFile(`projects/${projectName}.md`)
+              if (fileContent) {
+                upsertObsidianIndex(db, `projects/${projectName}.md`, projectName, fileContent)
+              }
+            } catch (obsErr) {
+              // SSH may not be reachable in all environments — non-fatal
+              console.warn(`[sales-memory] Obsidian sync failed for project "${projectName}":`, (obsErr as Error).message)
+            }
+          }
+        } catch (err) {
+          console.error('[sales-memory] Session-end fact extraction failed:', err)
+        }
+      })()
+    }
+    // ── End SalesMemory 2.0 ───────────────────────────────────────────────────
   })
 
   let taskInjectionResponseBuffer = ''
