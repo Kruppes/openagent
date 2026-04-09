@@ -8,9 +8,10 @@
 export type SalesMemoryProvider = 'ollama' | 'openai' | 'anthropic'
 
 export interface SalesMemoryPluginSettings {
+  // ── Core ──────────────────────────────────────────────────────────────────
   /** Whether SalesMemory is enabled */
   enabled: boolean
-  /** LLM provider to use for recall/digest */
+  /** LLM provider to use for recall/digest/fact-extraction */
   provider: SalesMemoryProvider
   /** Base URL of the Ollama instance */
   ollamaUrl: string
@@ -24,15 +25,48 @@ export interface SalesMemoryPluginSettings {
   anthropicKey: string
   /** Anthropic model to use */
   anthropicModel: string
+
+  // ── Retrieval / injection ─────────────────────────────────────────────────
   /** Whether to auto-inject memory context into chat messages */
   autoInject: boolean
-  /** Maximum number of memory results to inject */
+  /** Number of top results to return via RRF fusion */
+  topK: number
+  /** Maximum number of memory results to inject (legacy) */
   injectMaxResults: number
   /** Minimum relevance threshold for injection (FTS5 rank, negative numbers) */
   injectThreshold: number
+  /** RRF k constant (default 60) */
+  rrf_k: number
+
+  // ── Fact extraction (Schicht 2) ───────────────────────────────────────────
+  /** Whether to extract facts at session end */
+  factExtractionEnabled: boolean
+  /** Model to use for fact extraction (can differ from main model) */
+  factExtractionModel: string
+
+  // ── Obsidian Zettelkasten (Schicht 3) ────────────────────────────────────
+  /** Whether Obsidian sync is enabled */
+  obsidianEnabled: boolean
+  /** SSH host of the Mac running Obsidian */
+  obsidianHost: string
+  /** SSH user on the Mac */
+  obsidianUser: string
+  /** Path to the Obsidian vault on the Mac */
+  obsidianVaultPath: string
+
+  // ── Session hysteresis (Schicht 1) ───────────────────────────────────────
+  /** Minimum messages before topic-shift detection activates */
+  sessionHysteresisMinMessages: number
+  /** Minimum total tokens before topic-shift detection activates */
+  sessionHysteresisMinTokens: number
+  /** Time gap in minutes that triggers a hysteresis signal (+1) */
+  sessionTimeGapMinutes: number
+  /** Jaccard similarity threshold below which a semantic shift is detected */
+  sessionJaccardThreshold: number
 }
 
 const DEFAULTS: SalesMemoryPluginSettings = {
+  // Core
   enabled: false,
   provider: 'ollama',
   ollamaUrl: 'http://localhost:11434',
@@ -41,9 +75,25 @@ const DEFAULTS: SalesMemoryPluginSettings = {
   openaiModel: 'gpt-4o-mini',
   anthropicKey: '',
   anthropicModel: 'claude-3-haiku-20240307',
+  // Retrieval
   autoInject: false,
+  topK: 5,
   injectMaxResults: 3,
   injectThreshold: -1.0,
+  rrf_k: 60,
+  // Fact extraction
+  factExtractionEnabled: false,
+  factExtractionModel: 'llama3.2',
+  // Obsidian
+  obsidianEnabled: false,
+  obsidianHost: '192.168.10.222',
+  obsidianUser: 'user',
+  obsidianVaultPath: '~/Obsidian/OpenAgent',
+  // Session hysteresis
+  sessionHysteresisMinMessages: 5,
+  sessionHysteresisMinTokens: 200,
+  sessionTimeGapMinutes: 30,
+  sessionJaccardThreshold: 0.25,
 }
 
 /** Reactive shared state */
