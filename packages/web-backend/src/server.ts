@@ -203,6 +203,13 @@ function handleTaskNotification(taskId: string, injection: string, taskStore: Ta
   })
 }
 
+// Startup cleanup: mark any tasks that were 'running' or 'paused' when the
+// server last crashed/restarted as failed (zombie tasks).
+console.log('[openagent] Cleaning up zombie tasks from previous run...')
+db.prepare(
+  `UPDATE tasks SET status='failed', result_status='failed', result_summary='Aborted: server restarted', error_message='Aborted: server restarted', completed_at=datetime('now') WHERE status IN ('running', 'paused')`
+).run()
+
 // Initialize task infrastructure (provider-independent)
 const taskStore = new TaskStore(db)
 const taskRunner = new TaskRunner({
