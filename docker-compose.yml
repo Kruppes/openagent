@@ -20,6 +20,16 @@ services:
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
 
+  # Uncomment to enable local Whisper for speech-to-text
+  # whisper:
+  #   image: fedirz/faster-whisper-server:latest-cpu
+  #   container_name: openagent-whisper
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     - WHISPER__MODEL=Systran/faster-whisper-large-v3
+
   # Uncomment to enable local Ollama for running local LLM models
   # ollama:
   #   image: ollama/ollama:latest
@@ -42,3 +52,4 @@ volumes:
   openagent-data:
   openagent-workspace:
   # ollama-data:
+  # whisper-data:
