@@ -211,3 +211,14 @@ export type {
   TaskNotificationOptions,
   TaskNotificationEvent,
 } from './task-notification.js'
+export {
+  loadSttSettings,
+  transcribeAudio,
+  transcribeWhisperUrl,
+} from './stt.js'
+export type {
+  SttProvider,
+  SttSettings,
+  SttRewriteSettings,
+  TranscribeOptions,
+} from './stt.js'
