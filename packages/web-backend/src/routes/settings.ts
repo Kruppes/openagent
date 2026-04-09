@@ -300,6 +300,11 @@ function mergeStt(
     }
     existing.providerId = stt.providerId
   }
+  if (stt.openaiModel !== undefined) {
+    const err = validateEnum(stt.openaiModel, ['whisper-1', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'], 'stt.openaiModel')
+    if (err) return { error: err }
+    existing.openaiModel = stt.openaiModel
+  }
   if (stt.ollamaModel !== undefined) {
     if (typeof stt.ollamaModel !== 'string') {
       return { error: 'stt.ollamaModel must be a string' }
@@ -445,6 +450,7 @@ function buildSttResponse(settingsRaw: Record<string, unknown>) {
     provider: stt.provider ?? 'whisper-url',
     whisperUrl: stt.whisperUrl ?? '',
     providerId: stt.providerId ?? '',
+    openaiModel: stt.openaiModel ?? 'whisper-1',
     ollamaModel: stt.ollamaModel ?? '',
     rewrite: {
       enabled: rewrite.enabled ?? false,

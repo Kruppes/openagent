@@ -33,7 +33,7 @@ export function createSttRouter(): Router {
           ? undefined
           : settingsLanguage
 
-        const result = await transcribeAudio(file.buffer, { language })
+        const result = await transcribeAudio(file.buffer, { language, filename: file.originalname })
         const body: { transcript: string; rewritten?: string } = { transcript: result.transcript }
         if (result.rewritten !== undefined) {
           body.rewritten = result.rewritten
