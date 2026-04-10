@@ -39,14 +39,15 @@ async function callLLM(prompt: string, settings: SalesMemorySettings): Promise<s
 async function callOllama(prompt: string, settings: SalesMemorySettings): Promise<string> {
   const ollamaUrl = (settings.ollamaUrl ?? 'http://localhost:11434').replace(/\/+$/, '')
   const ollamaModel = settings.ollamaModel ?? 'llama3.2'
-  const url = `${ollamaUrl}/api/generate`
+  const url = `${ollamaUrl}/api/chat`
 
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: ollamaModel,
-      prompt,
+      messages: [{ role: 'user', content: prompt }],
+      think: false,
       stream: false,
       options: {
         temperature: 0.3,
@@ -60,8 +61,8 @@ async function callOllama(prompt: string, settings: SalesMemorySettings): Promis
     throw new Error(`Ollama returned ${response.status}: ${text}`)
   }
 
-  const data = (await response.json()) as { response: string }
-  return stripThinkTags(data.response?.trim() ?? '')
+  const data = (await response.json()) as { message: { content: string } }
+  return stripThinkTags(data.message?.content?.trim() ?? '')
 }
 
 async function callOpenAI(prompt: string, settings: SalesMemorySettings): Promise<string> {

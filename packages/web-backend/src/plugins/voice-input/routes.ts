@@ -5,7 +5,7 @@ import { uploadMiddleware } from '../../uploads.js'
 
 // ── Config defaults (can be overridden via environment variables or per-request settings) ──
 const DEFAULT_WHISPER_URL = process.env.WHISPER_URL ?? 'https://[REDACTED_WHISPER_URL]/inference'
-const DEFAULT_OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://192.168.10.222:11434/api/generate'
+const DEFAULT_OLLAMA_URL = process.env.OLLAMA_URL ?? 'http://192.168.10.222:11434'
 const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? 'qwen3:32b'
 const DEFAULT_VOICE_REWRITE_ENABLED = process.env.VOICE_REWRITE_ENABLED === 'true'
 const DEFAULT_REWRITE_PROMPT = `You are a prompt architect. The user has dictated a voice message that should become a prompt for an AI assistant.
@@ -27,8 +27,8 @@ interface RewriteVariants {
   short: string
 }
 
-interface OllamaGenerateResponse {
-  response: string
+interface OllamaChatResponse {
+  message: { content: string }
   done: boolean
 }
 
@@ -47,13 +47,11 @@ interface RequestSettings {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Normalises the Ollama base URL so it always ends with /api/generate.
- * Accepts either a bare host ("http://host:11434") or the full path.
+ * Normalises the Ollama base URL to the bare host (strips any trailing path).
+ * We always call /api/chat, so we just need the base.
  */
 function resolveOllamaUrl(raw: string): string {
-  const trimmed = raw.trim().replace(/\/+$/, '')
-  if (trimmed.endsWith('/api/generate')) return trimmed
-  return `${trimmed}/api/generate`
+  return raw.trim().replace(/\/(api\/(generate|chat))\/?$/, '').replace(/\/+$/, '')
 }
 
 /**
@@ -101,12 +99,13 @@ async function rewriteTranscript(
     ? promptTemplate.replace('{{transcript}}', transcript)
     : `${promptTemplate}\n\nInput: ${transcript}`
 
-  const response = await fetch(ollamaUrl, {
+  const response = await fetch(`${ollamaUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: ollamaModel,
-      prompt,
+      messages: [{ role: 'user', content: prompt }],
+      think: false,
       stream: false,
       options: {
         temperature: 0.3,
@@ -120,13 +119,12 @@ async function rewriteTranscript(
     throw new Error(`Ollama returned ${response.status}: ${text}`)
   }
 
-  const data = (await response.json()) as OllamaGenerateResponse
+  const data = (await response.json()) as OllamaChatResponse
 
-  // Extract the JSON block from the model response.
-  // qwen3 with "think" mode may wrap its answer in <think>…</think> tags.
-  let rawText = data.response?.trim() ?? ''
+  // Extract content from chat response
+  let rawText = data.message?.content?.trim() ?? ''
 
-  // Strip <think>…</think> blocks (qwen3 extended thinking output)
+  // Strip any residual <think>…</think> blocks (safety net)
   rawText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
 
   // Find the first '{' and last '}' to extract the JSON object
