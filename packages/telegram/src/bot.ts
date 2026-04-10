@@ -1083,6 +1083,19 @@ export class TelegramBot {
       const me = await this.bot.api.getMe()
       console.log(`✅ Telegram bot connected: @${me.username} (${me.first_name})`)
 
+      // Register command menu (shown as the "/" button in Telegram)
+      try {
+        await this.bot.api.setMyCommands([
+          { command: 'start', description: 'Start / Hilfe anzeigen' },
+          { command: 'new', description: 'Session zusammenfassen und neu starten' },
+          { command: 'stop', description: 'Laufenden Task stoppen' },
+          { command: 'kill', description: 'Laufenden Task sofort beenden (force)' },
+        ])
+        console.log('✅ Telegram command menu registered (4 commands)')
+      } catch (err) {
+        console.warn('[telegram] Failed to register command menu (non-fatal):', (err as Error).message)
+      }
+
       // Start polling
       this.running = true
       this.bot.start({
