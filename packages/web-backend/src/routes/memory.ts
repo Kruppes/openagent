@@ -225,32 +225,167 @@ export function createMemoryRouter(getAgentCore: () => AgentCore | null = () => 
     }
   })
 
-  // Project files endpoints (/data/memory/projects/*.md)
-  router.get('/projects', (_req, res) => {
+  // Wiki page endpoints (/data/memory/wiki/*.md)
+  // Also keep /projects/* as legacy aliases for backward compatibility
+  router.get('/wiki', (_req, res) => {
     try {
       const memoryDir = getMemoryDir()
-      const projectsDir = path.join(memoryDir, 'projects')
+      const wikiDir = path.join(memoryDir, 'wiki')
       ensureMemoryStructure(memoryDir)
 
-      if (!fs.existsSync(projectsDir)) {
+      if (!fs.existsSync(wikiDir)) {
         res.json({ files: [] })
         return
       }
 
-      const entries = fs.readdirSync(projectsDir)
+      const entries = fs.readdirSync(wikiDir)
         .filter(f => f.endsWith('.md'))
         .sort()
 
       const files = entries.map(filename => {
-        const filePath = path.join(projectsDir, filename)
+        const filePath = path.join(wikiDir, filename)
         const stats = fs.statSync(filePath)
         const name = filename.replace('.md', '')
+        const content = fs.readFileSync(filePath, 'utf-8')
+        // Extract title from first heading
+        const titleMatch = content.match(/^#\s+(.+)$/m)
+        const title = titleMatch ? titleMatch[1].trim() : name
+        // Extract aliases from frontmatter
+        const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/)
+        const aliases: string[] = []
+        if (fmMatch) {
+          const aliasMatch = fmMatch[1].match(/^aliases:\s*\[([^\]]*)\]/m)
+          if (aliasMatch) {
+            aliases.push(...aliasMatch[1].split(',').map(s => s.trim()).filter(s => s.length > 0))
+          } else {
+            const singleMatch = fmMatch[1].match(/^aliases:\s*(.+)$/m)
+            if (singleMatch && singleMatch[1].trim()) aliases.push(singleMatch[1].trim())
+          }
+        }
         return {
           filename,
           name,
+          title,
+          aliases,
           size: stats.size,
           modifiedAt: stats.mtime.toISOString(),
         }
+      })
+
+      res.json({ files })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to list wiki pages: ${(err as Error).message}` })
+    }
+  })
+
+  router.get('/wiki/:filename', (req, res) => {
+    const { filename } = req.params
+    if (!/^[\w.-]+$/.test(filename)) {
+      res.status(400).json({ error: 'Invalid filename. Use only alphanumeric characters, hyphens, underscores, and dots.' })
+      return
+    }
+    // Allow both "name" and "name.md"
+    const name = filename.endsWith('.md') ? filename.slice(0, -3) : filename
+    const safeFilename = `${name}.md`
+
+    try {
+      const memoryDir = getMemoryDir()
+      const filePath = path.join(memoryDir, 'wiki', safeFilename)
+
+      if (!fs.existsSync(filePath)) {
+        res.status(404).json({ error: `Wiki page "${name}" not found` })
+        return
+      }
+
+      const content = fs.readFileSync(filePath, 'utf-8')
+      res.json({ name, content })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to read wiki page: ${(err as Error).message}` })
+    }
+  })
+
+  router.put('/wiki/:filename', (req: AuthenticatedRequest, res) => {
+    const rawFilename = req.params.filename
+    const filename = Array.isArray(rawFilename) ? rawFilename[0] : rawFilename
+    if (!filename || !/^[\w.-]+$/.test(filename)) {
+      res.status(400).json({ error: 'Invalid filename. Use only alphanumeric characters, hyphens, underscores, and dots.' })
+      return
+    }
+    const name = filename.endsWith('.md') ? filename.slice(0, -3) : filename
+    const safeFilename = `${name}.md`
+
+    const { content } = req.body as { content?: string }
+    if (content === undefined || content === null) {
+      res.status(400).json({ error: 'Content is required' })
+      return
+    }
+
+    try {
+      const memoryDir = getMemoryDir()
+      const wikiDir = path.join(memoryDir, 'wiki')
+      ensureMemoryStructure(memoryDir)
+
+      if (!fs.existsSync(wikiDir)) {
+        fs.mkdirSync(wikiDir, { recursive: true })
+      }
+
+      const filePath = path.join(wikiDir, safeFilename)
+      fs.writeFileSync(filePath, content, 'utf-8')
+      refreshAgentPrompt()
+      res.json({ message: `Wiki page "${name}" updated`, name, content })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to write wiki page: ${(err as Error).message}` })
+    }
+  })
+
+  router.delete('/wiki/:filename', (req: AuthenticatedRequest, res) => {
+    const rawFilename = req.params.filename
+    const filename = Array.isArray(rawFilename) ? rawFilename[0] : rawFilename
+    if (!filename || !/^[\w.-]+$/.test(filename)) {
+      res.status(400).json({ error: 'Invalid filename.' })
+      return
+    }
+    const name = filename.endsWith('.md') ? filename.slice(0, -3) : filename
+    const safeFilename = `${name}.md`
+
+    try {
+      const memoryDir = getMemoryDir()
+      const filePath = path.join(memoryDir, 'wiki', safeFilename)
+
+      if (!fs.existsSync(filePath)) {
+        res.status(404).json({ error: `Wiki page "${name}" not found` })
+        return
+      }
+
+      fs.unlinkSync(filePath)
+      refreshAgentPrompt()
+      res.json({ message: `Wiki page "${name}" deleted`, name })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to delete wiki page: ${(err as Error).message}` })
+    }
+  })
+
+  // Legacy /projects/* aliases for backward compatibility
+  router.get('/projects', (_req, res) => {
+    try {
+      const memoryDir = getMemoryDir()
+      const wikiDir = path.join(memoryDir, 'wiki')
+      ensureMemoryStructure(memoryDir)
+
+      if (!fs.existsSync(wikiDir)) {
+        res.json({ files: [] })
+        return
+      }
+
+      const entries = fs.readdirSync(wikiDir)
+        .filter(f => f.endsWith('.md'))
+        .sort()
+
+      const files = entries.map(filename => {
+        const filePath = path.join(wikiDir, filename)
+        const stats = fs.statSync(filePath)
+        const name = filename.replace('.md', '')
+        return { filename, name, size: stats.size, modifiedAt: stats.mtime.toISOString() }
       })
 
       res.json({ files })
@@ -268,7 +403,7 @@ export function createMemoryRouter(getAgentCore: () => AgentCore | null = () => 
 
     try {
       const memoryDir = getMemoryDir()
-      const filePath = path.join(memoryDir, 'projects', `${name}.md`)
+      const filePath = path.join(memoryDir, 'wiki', `${name}.md`)
 
       if (!fs.existsSync(filePath)) {
         res.status(404).json({ error: `Project file "${name}" not found` })
@@ -298,14 +433,14 @@ export function createMemoryRouter(getAgentCore: () => AgentCore | null = () => 
 
     try {
       const memoryDir = getMemoryDir()
-      const projectsDir = path.join(memoryDir, 'projects')
+      const wikiDir = path.join(memoryDir, 'wiki')
       ensureMemoryStructure(memoryDir)
 
-      if (!fs.existsSync(projectsDir)) {
-        fs.mkdirSync(projectsDir, { recursive: true })
+      if (!fs.existsSync(wikiDir)) {
+        fs.mkdirSync(wikiDir, { recursive: true })
       }
 
-      const filePath = path.join(projectsDir, `${name}.md`)
+      const filePath = path.join(wikiDir, `${name}.md`)
       fs.writeFileSync(filePath, content, 'utf-8')
       refreshAgentPrompt()
       res.json({ message: `Project file "${name}" updated`, name, content })
