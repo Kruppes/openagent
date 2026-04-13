@@ -670,6 +670,7 @@ ${dailyContext}
       '- **edit_cronjob**: Edit an existing cronjob.',
       '- **remove_cronjob**: Remove a cronjob.',
       '- **list_cronjobs**: List all cronjobs.',
+      '- **get_cronjob**: Get the full configuration (including complete prompt) of a single cronjob by ID.',
       '- **create_reminder**: Create a one-time reminder delivered at a specific time.',
     )
 

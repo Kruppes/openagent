@@ -325,7 +325,8 @@ export function listCronjobsTool(options: CronjobToolsOptions): AgentTool {
     description:
       'List all configured cronjobs with their schedules, status, and upcoming run times. ' +
       'Use this to answer questions like "which cronjobs are active?", "what runs tomorrow morning?", ' +
-      'or "show me all scheduled tasks". Optionally compute the next N run times for each cronjob.',
+      'or "show me all scheduled tasks". Optionally compute the next N run times for each cronjob. ' +
+      'To read the full prompt of a specific cronjob, use get_cronjob with its ID.',
     parameters: Type.Object({
       enabled_only: Type.Optional(
         Type.Boolean({
@@ -414,6 +415,64 @@ export function listCronjobsTool(options: CronjobToolsOptions): AgentTool {
 /**
  * Create the `create_reminder` agent tool — a convenient shortcut for injection-type cronjobs
  */
+export function getCronjobTool(options: CronjobToolsOptions): AgentTool {
+  return {
+    name: 'get_cronjob',
+    label: 'Get Cronjob',
+    description:
+      'Get the full configuration of a single cronjob by ID, including its complete prompt. ' +
+      'Use this when you need to read or verify the prompt of an existing cronjob.',
+    parameters: Type.Object({
+      id: Type.String({
+        description: 'The ID of the cronjob to retrieve.',
+      }),
+    }),
+    execute: async (_toolCallId, params) => {
+      const { id } = params as { id: string }
+
+      try {
+        const cj = options.scheduledTaskStore.getById(id)
+        if (!cj) {
+          return {
+            content: [{ type: 'text' as const, text: `No cronjob found with ID: ${id}` }],
+            details: { error: true },
+          }
+        }
+
+        const humanSchedule = cronToHumanReadable(cj.schedule)
+        const status = cj.enabled ? 'ENABLED' : 'DISABLED'
+        const actionLabel = cj.actionType === 'injection' ? 'injection' : 'task'
+        const lastRun = cj.lastRunAt
+          ? `${cj.lastRunStatus ?? 'unknown'} at ${cj.lastRunAt}`
+          : 'never'
+
+        const text = [
+          `[${status}] ${cj.name}`,
+          `ID: ${cj.id}`,
+          `Schedule: ${humanSchedule} (${cj.schedule})`,
+          `Action: ${actionLabel}`,
+          `Provider: ${cj.provider ?? 'default'}`,
+          `Last run: ${lastRun}`,
+          ``,
+          `Prompt:`,
+          cj.prompt,
+        ].join('\n')
+
+        return {
+          content: [{ type: 'text' as const, text }],
+          details: { cronjob: cj },
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err)
+        return {
+          content: [{ type: 'text' as const, text: `Error retrieving cronjob: ${errorMsg}` }],
+          details: { error: true },
+        }
+      }
+    },
+  }
+}
+
 export function createReminderTool(options: CronjobToolsOptions): AgentTool {
   return {
     name: 'create_reminder',

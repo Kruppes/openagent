@@ -24,6 +24,7 @@ import {
   editCronjobTool,
   removeCronjobTool,
   listCronjobsTool,
+  getCronjobTool,
   createReminderTool,
   listTasksTool,
   loadProvidersDecrypted,
@@ -418,6 +419,7 @@ const agentTools = [
   editCronjobTool(cronjobToolsOptions),
   removeCronjobTool(cronjobToolsOptions),
   listCronjobsTool(cronjobToolsOptions),
+  getCronjobTool(cronjobToolsOptions),
   createReminderTool(cronjobToolsOptions),
   createReadChatHistoryTool({ db }),
 ]
