@@ -50,31 +50,54 @@
           </Select>
         </div>
 
-        <!-- Model (select dropdown for providers with pi-ai models) -->
+        <!-- Models (checkbox list for providers with pi-ai models) -->
         <div v-if="form.providerType && hasKnownModels" class="flex flex-col gap-1.5">
-          <Label for="provider-model">{{ $t('providers.model') }}</Label>
-          <Select
-            v-model="form.defaultModel"
-            :disabled="loadingModels || oauthInProgress || modelsError !== null"
-            :required="true"
-          >
-            <SelectTrigger id="provider-model">
-              <SelectValue :placeholder="loadingModels ? $t('providers.loadingModels') : modelsError ? $t('providers.modelsLoadError') : $t('providers.selectModel')" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem v-for="model in availableModels" :key="model.id" :value="model.id">
-                {{ model.name }} ({{ model.id }})
-              </SelectItem>
-            </SelectContent>
-          </Select>
-          <button
-            v-if="modelsError"
-            type="button"
-            class="self-start text-xs text-destructive hover:underline"
-            @click="loadModelsForType(form.providerType)"
-          >
-            {{ $t('providers.modelsRetry') }}
-          </button>
+          <Label>{{ $t('providers.enabledModels') }}</Label>
+          <div v-if="loadingModels" class="text-xs text-muted-foreground py-2">{{ $t('providers.loadingModels') }}</div>
+          <div v-else-if="modelsError" class="flex flex-col gap-1">
+            <span class="text-xs text-destructive">{{ $t('providers.modelsLoadError') }}</span>
+            <button
+              type="button"
+              class="self-start text-xs text-destructive hover:underline"
+              @click="loadModelsForType(form.providerType)"
+            >
+              {{ $t('providers.modelsRetry') }}
+            </button>
+          </div>
+          <div v-else class="flex flex-col gap-0 rounded-md border border-border overflow-hidden max-h-52 overflow-y-auto">
+            <label
+              v-for="model in availableModels"
+              :key="model.id"
+              :class="[
+                'flex items-center gap-3 px-3 py-2 text-sm cursor-pointer transition-colors hover:bg-accent/50',
+                form.enabledModels.includes(model.id) ? 'bg-accent/30' : '',
+              ]"
+            >
+              <input
+                type="checkbox"
+                :checked="form.enabledModels.includes(model.id)"
+                class="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                :disabled="oauthInProgress"
+                @change="toggleModel(model.id)"
+              >
+              <span class="flex-1 truncate">{{ model.name }}</span>
+              <button
+                v-if="form.enabledModels.includes(model.id)"
+                type="button"
+                :class="[
+                  'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors',
+                  form.defaultModel === model.id
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                ]"
+                :title="form.defaultModel === model.id ? $t('providers.isDefault') : $t('providers.setDefault')"
+                @click.prevent="form.defaultModel = model.id"
+              >
+                {{ form.defaultModel === model.id ? $t('providers.default') : $t('providers.setDefault') }}
+              </button>
+            </label>
+          </div>
+          <p class="text-xs text-muted-foreground">{{ $t('providers.enabledModelsHint') }}</p>
         </div>
 
         <!-- Model (free text for Ollama / unknown providers) -->
@@ -240,6 +263,7 @@ export interface ProviderFormPayload {
   baseUrl: string
   apiKey: string
   defaultModel: string
+  enabledModels: string[]
   degradedThresholdMs: number
 }
 
@@ -264,6 +288,7 @@ const form = reactive({
   baseUrl: '',
   apiKey: '',
   defaultModel: '',
+  enabledModels: [] as string[],
   degradedThresholdMs: 5000,
 })
 
@@ -313,6 +338,7 @@ watch(() => [props.open, props.provider] as const, ([isOpen, entry]) => {
     form.baseUrl = entry.baseUrl
     form.apiKey = ''
     form.defaultModel = entry.defaultModel
+    form.enabledModels = entry.enabledModels?.length ? [...entry.enabledModels] : [entry.defaultModel]
     form.degradedThresholdMs = entry.degradedThresholdMs ?? 5000
     if (entry.providerType) {
       loadModelsForType(entry.providerType)
@@ -323,6 +349,7 @@ watch(() => [props.open, props.provider] as const, ([isOpen, entry]) => {
     form.baseUrl = ''
     form.apiKey = ''
     form.defaultModel = ''
+    form.enabledModels = []
     form.degradedThresholdMs = 5000
     availableModels.value = []
     modelsError.value = null
@@ -358,18 +385,43 @@ async function loadModelsForType(providerType: string) {
   }
 }
 
+function toggleModel(modelId: string) {
+  const idx = form.enabledModels.indexOf(modelId)
+  if (idx >= 0) {
+    // Don't allow unchecking the last enabled model
+    if (form.enabledModels.length <= 1) return
+    form.enabledModels.splice(idx, 1)
+    // If we removed the default, reassign
+    if (form.defaultModel === modelId) {
+      form.defaultModel = form.enabledModels[0] ?? ''
+    }
+  } else {
+    form.enabledModels.push(modelId)
+    // If no default is set yet, set it
+    if (!form.defaultModel) {
+      form.defaultModel = modelId
+    }
+  }
+}
+
 function onTypeChange() {
   const preset = props.presets[form.providerType]
   if (preset && props.mode !== 'edit') {
     form.baseUrl = preset.baseUrl
     form.defaultModel = ''
+    form.enabledModels = []
   }
   oauthError.value = null
   loadModelsForType(form.providerType)
 }
 
 function handleSubmit() {
-  emit('submit', { ...form })
+  // Ensure enabledModels always includes the default model
+  const enabledModels = form.enabledModels.length > 0 ? [...form.enabledModels] : [form.defaultModel]
+  if (!enabledModels.includes(form.defaultModel) && form.defaultModel) {
+    enabledModels.unshift(form.defaultModel)
+  }
+  emit('submit', { ...form, enabledModels })
 }
 
 async function startOAuthRenew() {
