@@ -8,6 +8,7 @@ import {
   createReminderTool,
   createResumeTaskTool,
   createSearchMemoriesTool,
+  createSendFileTool,
   createTaskRuntime,
   createTaskTool,
   createYoloTools,
@@ -231,6 +232,12 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
   logger.log('[openagent] Injecting global secrets into environment...')
   injectSecretsIntoEnv()
+
+  // Clean up zombie tasks from previous run (tasks that were running/paused when the server crashed)
+  logger.log('[openagent] Cleaning up zombie tasks from previous run...')
+  db.prepare(
+    `UPDATE tasks SET status='failed', result_status='failed', result_summary='Aborted: server restarted', error_message='Aborted: server restarted', completed_at=datetime('now') WHERE status IN ('running', 'paused')`
+  ).run()
 
   const runtimeMetrics = new RuntimeMetrics()
   const { sessionTimeoutMinutes, taskSettings, builtinToolsConfig } = loadRuntimeSettings()
@@ -484,6 +491,18 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     getCronjobTool(cronjobToolsOptions),
     createReminderTool(cronjobToolsOptions),
     createReadChatHistoryTool({ db }),
+    createSendFileTool({
+      getFileSender: () => {
+        if (!telegramBot) return null
+        // Find the first active Telegram chat to send files to
+        const userId = 1 // default user
+        const chatId = telegramBot.getTelegramChatIdForUser(userId)
+        if (!chatId) return null
+        return async (filePath: string, caption: string | undefined, isImage: boolean) => {
+          return telegramBot!.sendFile(chatId, filePath, caption, isImage)
+        }
+      },
+    }),
   ]
 
   taskRuntime.schedules.start()

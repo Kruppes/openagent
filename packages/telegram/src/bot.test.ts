@@ -15,7 +15,10 @@ vi.mock('grammy', () => {
       username: 'test_bot',
     }),
     sendMessage: vi.fn().mockResolvedValue({ message_id: 1 }),
+    setMyCommands: vi.fn().mockResolvedValue(true),
   }
+
+  const callbackQueryHandlers: Map<string, Function> = new Map()
 
   const MockBot = vi.fn().mockImplementation(() => ({
     api: mockApi,
@@ -25,6 +28,10 @@ vi.mock('grammy', () => {
     on: vi.fn((filter: string, handler: Function) => {
       handlers.set(filter, handler)
     }),
+    callbackQuery: vi.fn((pattern: string | RegExp, handler: Function) => {
+      const key = typeof pattern === 'string' ? pattern : pattern.source
+      callbackQueryHandlers.set(key, handler)
+    }),
     catch: vi.fn(),
     start: vi.fn(({ onStart }: { onStart?: () => void }) => {
       onStart?.()
@@ -32,10 +39,12 @@ vi.mock('grammy', () => {
     stop: vi.fn(),
     _handlers: handlers,
     _commandHandlers: commandHandlers,
+    _callbackQueryHandlers: callbackQueryHandlers,
   }))
 
   return {
     Bot: MockBot,
+    InputFile: vi.fn(),
     GrammyError: class GrammyError extends Error {
       error_code: number
       description: string
@@ -70,6 +79,14 @@ vi.mock('@openagent/core', () => ({
       batchingDelayMs: 2500,
     }
   }),
+  loadProviders: vi.fn(() => ({ providers: [], activeProvider: null })),
+  setActiveProvider: vi.fn(),
+  updateProvider: vi.fn(),
+  saveUpload: vi.fn(),
+  serializeUploadsMetadata: vi.fn(() => '[]'),
+  parseUploadsMetadata: vi.fn(() => []),
+  loadSttSettings: vi.fn(() => ({ enabled: false })),
+  transcribeAudio: vi.fn(),
 }))
 
 import { TelegramBot, createTelegramBot } from './bot.js'

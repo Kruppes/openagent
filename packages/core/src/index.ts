@@ -55,6 +55,18 @@ export type { MemoryConsolidationOptions, ConsolidationResult } from './memory-c
 export { SessionManager } from './session-manager.js'
 export type { SessionInfo, SessionManagerOptions } from './session-manager.js'
 export {
+  extractTopicTags,
+  topicOverlap,
+  detectTopicShift,
+  getSessionMessageTexts,
+  getSessionMessages,
+  queryMemoriesFts,
+  buildFactInjection,
+  estimateTokens,
+  toSessionMessages,
+} from './session-store.js'
+export type { SessionMessage, TopicShiftResult } from './session-store.js'
+export {
   loadProviders,
   loadProvidersDecrypted,
   loadProvidersMasked,
@@ -270,3 +282,5 @@ export type {
   TranscribeResult,
 } from './stt.js'
 export { createTranscribeAudioTool } from './stt-tool.js'
+export { createSendFileTool } from './send-file-tool.js'
+export type { SendFileToolOptions, FileSenderCallback } from './send-file-tool.js'
