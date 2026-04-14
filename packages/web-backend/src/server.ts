@@ -34,6 +34,7 @@ import {
   createReadChatHistoryTool,
   createSendFileTool,
   logToolCall,
+  extractAndStoreFacts,
 } from '@openagent/core'
 import type { ProviderConfig, LoopDetectionConfig, BuiltinToolsConfig } from '@openagent/core'
 import { setupWebSocketChat } from './ws-chat.js'
@@ -513,6 +514,34 @@ function wireAgentCoreEvents(): void {
       source: 'web',
       text: summary ?? undefined,
     })
+
+    // Extract and store facts from the session (async, non-blocking)
+    // Only extract if the session had >= 3 messages (skip trivial sessions)
+    try {
+      const msgCount = (db.prepare(
+        'SELECT COUNT(*) as cnt FROM chat_messages WHERE session_id = ? AND role IN ("user", "assistant")'
+      ).get(sessionId) as { cnt: number })?.cnt ?? 0
+
+      if (msgCount >= 3) {
+        // Build conversation history from DB
+        const rows = db.prepare(
+          'SELECT role, content FROM chat_messages WHERE session_id = ? AND role IN ("user", "assistant") ORDER BY timestamp ASC'
+        ).all(sessionId) as Array<{ role: string; content: string }>
+
+        const conversationHistory = rows
+          .map(r => `${r.role === 'user' ? 'User' : 'Assistant'}: ${r.content.slice(0, 2000)}`)
+          .join('\n')
+          .slice(0, 12000)
+
+        if (conversationHistory.length > 50) {
+          extractAndStoreFacts(db, conversationHistory, sessionId).catch(err => {
+            console.error(`[openagent] Fact extraction failed for session ${sessionId}:`, err)
+          })
+        }
+      }
+    } catch (err) {
+      console.error(`[openagent] Error preparing fact extraction for session ${sessionId}:`, err)
+    }
   })
 
   let taskInjectionResponseBuffer = ''

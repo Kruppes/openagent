@@ -241,3 +241,5 @@ export type {
 export { createTranscribeAudioTool } from './stt-tool.js'
 export { createSendFileTool } from './send-file-tool.js'
 export type { SendFileToolOptions, FileSenderCallback } from './send-file-tool.js'
+export { extractAndStoreFacts, callOllamaForFacts, parseFactLines, isDuplicateFact, storeFact } from './fact-extraction.js'
+export type { FactExtractionOptions } from './fact-extraction.js'
