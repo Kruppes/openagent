@@ -73,110 +73,214 @@
               </TableRow>
             </TableHeader>
             <TableBody>
-              <TableRow
-                v-for="provider in sortedProviders"
-                :key="provider.id"
-                class="cursor-pointer"
-                @click="openEdit(provider)"
-              >
-                <!-- Name + Base URL -->
-                <TableCell>
-                  <div class="min-w-0">
-                    <div class="flex items-center gap-2">
-                      <span class="font-semibold text-foreground">{{ provider.name }}</span>
-                      <Badge v-if="provider.id === activeProviderId" variant="default" class="px-1.5 py-0 text-[10px]">
+              <template v-for="provider in sortedProviders" :key="provider.id">
+                <!-- Provider row -->
+                <TableRow
+                  class="cursor-pointer"
+                  @click="openEdit(provider)"
+                >
+                  <!-- Name + type -->
+                  <TableCell>
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2">
+                        <span class="font-semibold text-foreground">{{ provider.name }}</span>
+                        <template v-if="!hasMultipleModels(provider)">
+                          <Badge v-if="provider.id === activeProviderId" variant="default" class="px-1.5 py-0 text-[10px]">
+                            {{ $t('providers.active') }}
+                          </Badge>
+                          <Badge v-if="provider.id === fallbackProviderId" variant="outline" class="px-1.5 py-0 text-[10px]">
+                            {{ $t('providers.fallback') }}
+                          </Badge>
+                        </template>
+                      </div>
+                      <span class="text-xs text-muted-foreground">
+                        {{ getTypeLabel(provider.providerType) }}
+                        <span v-if="!hasMultipleModels(provider)">
+                          <span class="opacity-40">·</span>
+                          {{ provider.defaultModel }}
+                        </span>
+                      </span>
+                    </div>
+                  </TableCell>
+
+                  <!-- Cost (show for single-model providers only) -->
+                  <TableCell>
+                    <template v-if="!hasMultipleModels(provider)">
+                      <div v-if="provider.cost" class="text-xs text-muted-foreground">
+                        <div class="flex items-center gap-1">
+                          <span class="text-foreground font-medium">${{ formatCost(provider.cost.input) }}</span>
+                          <span class="opacity-40">/</span>
+                          <span class="text-foreground font-medium">${{ formatCost(provider.cost.output) }}</span>
+                        </div>
+                        <span class="text-[10px]">{{ $t('providers.costPerMillion') }}</span>
+                      </div>
+                      <span v-else class="text-xs text-muted-foreground">{{ $t('providers.costNA') }}</span>
+                    </template>
+                  </TableCell>
+
+                  <!-- Status (show for single-model providers only) -->
+                  <TableCell>
+                    <template v-if="!hasMultipleModels(provider)">
+                      <div v-if="testingId === provider.id" class="flex items-center gap-1.5">
+                        <span
+                          class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent"
+                          aria-hidden="true"
+                        />
+                        <span class="text-xs text-muted-foreground">{{ $t('providers.testing') }}</span>
+                      </div>
+                      <Badge v-else :variant="getStatusVariant(provider.status)">
+                        {{ getStatusLabel(provider.status) }}
+                      </Badge>
+                    </template>
+                  </TableCell>
+
+                  <!-- Row actions -->
+                  <TableCell class="text-right" @click.stop>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger as-child>
+                        <Button variant="ghost" size="icon-sm" :aria-label="$t('providers.columns.actions')">
+                          <AppIcon name="moreVertical" class="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <!-- Single-model providers: test + active/fallback actions on provider row -->
+                        <template v-if="!hasMultipleModels(provider)">
+                          <DropdownMenuItem @click="handleTest(provider.id)">
+                            <AppIcon name="refresh" class="h-4 w-4" />
+                            {{ $t('providers.testConnection') }}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            v-if="provider.id !== activeProviderId"
+                            @click="handleActivate(provider.id)"
+                          >
+                            <AppIcon name="check" class="h-4 w-4" />
+                            {{ $t('providers.setActive') }}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            v-if="provider.id !== activeProviderId && provider.id !== fallbackProviderId"
+                            @click="handleSetFallback(provider.id)"
+                          >
+                            <AppIcon name="shield" class="h-4 w-4" />
+                            {{ $t('providers.setFallback') }}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            v-if="provider.id === fallbackProviderId"
+                            @click="handleSetFallback(null)"
+                          >
+                            <AppIcon name="close" class="h-4 w-4" />
+                            {{ $t('providers.removeFallback') }}
+                          </DropdownMenuItem>
+                        </template>
+                        <DropdownMenuItem @click="openEdit(provider)">
+                          <AppIcon name="edit" class="h-4 w-4" />
+                          {{ $t('users.edit') }}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          destructive
+                          :disabled="provider.id === activeProviderId"
+                          @click="openDelete(provider)"
+                        >
+                          <AppIcon name="trash" class="h-4 w-4" />
+                          {{ $t('providers.delete') }}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+
+                <!-- Model sub-rows (shown when provider has multiple enabled models) -->
+                <TableRow
+                  v-for="modelId in getDisplayModels(provider)"
+                  :key="`${provider.id}-${modelId}`"
+                  class="bg-muted/30 hover:bg-muted/50"
+                >
+                  <!-- Model name (indented) -->
+                  <TableCell>
+                    <div class="flex items-center gap-2 pl-5">
+                      <span class="text-xs text-muted-foreground">└</span>
+                      <span class="text-sm text-foreground">{{ modelId }}</span>
+                      <Badge v-if="isActiveModel(provider.id, modelId)" variant="default" class="px-1.5 py-0 text-[10px]">
                         {{ $t('providers.active') }}
                       </Badge>
-                      <Badge v-if="provider.id === fallbackProviderId" variant="outline" class="px-1.5 py-0 text-[10px]">
+                      <Badge v-if="isFallbackModel(provider.id, modelId)" variant="outline" class="px-1.5 py-0 text-[10px]">
                         {{ $t('providers.fallback') }}
                       </Badge>
+                      <span v-if="modelId === provider.defaultModel" class="text-[10px] text-muted-foreground">
+                        ({{ $t('providers.default') }})
+                      </span>
                     </div>
-                    <span class="text-xs text-muted-foreground">
-                      {{ getTypeLabel(provider.providerType) }}
-                      <span class="opacity-40">·</span>
-                      {{ provider.defaultModel }}
-                    </span>
-                  </div>
-                </TableCell>
+                  </TableCell>
 
-                <!-- Cost -->
-                <TableCell>
-                  <div v-if="provider.cost" class="text-xs text-muted-foreground">
-                    <div class="flex items-center gap-1">
-                      <span class="text-foreground font-medium">${{ formatCost(provider.cost.input) }}</span>
-                      <span class="opacity-40">/</span>
-                      <span class="text-foreground font-medium">${{ formatCost(provider.cost.output) }}</span>
+                  <!-- Cost -->
+                  <TableCell>
+                    <div v-if="provider.modelCosts?.[modelId]" class="text-xs text-muted-foreground">
+                      <div class="flex items-center gap-1">
+                        <span class="text-foreground font-medium">${{ formatCost(provider.modelCosts[modelId].input) }}</span>
+                        <span class="opacity-40">/</span>
+                        <span class="text-foreground font-medium">${{ formatCost(provider.modelCosts[modelId].output) }}</span>
+                      </div>
+                      <span class="text-[10px]">{{ $t('providers.costPerMillion') }}</span>
                     </div>
-                    <span class="text-[10px]">{{ $t('providers.costPerMillion') }}</span>
-                  </div>
-                  <span v-else class="text-xs text-muted-foreground">{{ $t('providers.costNA') }}</span>
-                </TableCell>
+                    <span v-else class="text-xs text-muted-foreground">{{ $t('providers.costNA') }}</span>
+                  </TableCell>
 
-                <!-- Status -->
-                <TableCell>
-                  <div v-if="testingId === provider.id" class="flex items-center gap-1.5">
-                    <span
-                      class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent"
-                      aria-hidden="true"
-                    />
-                    <span class="text-xs text-muted-foreground">{{ $t('providers.testing') }}</span>
-                  </div>
-                  <Badge v-else :variant="getStatusVariant(provider.status)">
-                    {{ getStatusLabel(provider.status) }}
-                  </Badge>
-                </TableCell>
+                  <!-- Status per model -->
+                  <TableCell>
+                    <div v-if="testingId === `${provider.id}:${modelId}`" class="flex items-center gap-1.5">
+                      <span
+                        class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent"
+                        aria-hidden="true"
+                      />
+                      <span class="text-xs text-muted-foreground">{{ $t('providers.testing') }}</span>
+                    </div>
+                    <Badge v-else :variant="getStatusVariant(provider.modelStatuses?.[modelId])">
+                      {{ getStatusLabel(provider.modelStatuses?.[modelId]) }}
+                    </Badge>
+                  </TableCell>
 
-                <!-- Row actions -->
-                <TableCell class="text-right" @click.stop>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger as-child>
-                      <Button variant="ghost" size="icon-sm" :aria-label="$t('providers.columns.actions')">
-                        <AppIcon name="moreVertical" class="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem @click="handleTest(provider.id)">
-                        <AppIcon name="refresh" class="h-4 w-4" />
-                        {{ $t('providers.testConnection') }}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        v-if="provider.id !== activeProviderId"
-                        @click="handleActivate(provider.id)"
-                      >
-                        <AppIcon name="check" class="h-4 w-4" />
-                        {{ $t('providers.setActive') }}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        v-if="provider.id !== activeProviderId && provider.id !== fallbackProviderId"
-                        @click="handleSetFallback(provider.id)"
-                      >
-                        <AppIcon name="shield" class="h-4 w-4" />
-                        {{ $t('providers.setFallback') }}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        v-if="provider.id === fallbackProviderId"
-                        @click="handleSetFallback(null)"
-                      >
-                        <AppIcon name="close" class="h-4 w-4" />
-                        {{ $t('providers.removeFallback') }}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem @click="openEdit(provider)">
-                        <AppIcon name="edit" class="h-4 w-4" />
-                        {{ $t('users.edit') }}
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        destructive
-                        :disabled="provider.id === activeProviderId"
-                        @click="openDelete(provider)"
-                      >
-                        <AppIcon name="trash" class="h-4 w-4" />
-                        {{ $t('providers.delete') }}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
-              </TableRow>
+                  <!-- Model actions -->
+                  <TableCell class="text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger as-child>
+                        <Button variant="ghost" size="icon-sm" :aria-label="$t('providers.columns.actions')">
+                          <AppIcon name="moreVertical" class="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem @click="handleTestModel(provider.id, modelId)">
+                          <AppIcon name="refresh" class="h-4 w-4" />
+                          {{ $t('providers.testConnection') }}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          v-if="!isActiveModel(provider.id, modelId)"
+                          @click="handleActivateModel(provider.id, modelId)"
+                        >
+                          <AppIcon name="check" class="h-4 w-4" />
+                          {{ $t('providers.setActive') }}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          v-if="!isFallbackModel(provider.id, modelId) && !isActiveModel(provider.id, modelId)"
+                          @click="handleSetFallbackModel(provider.id, modelId)"
+                        >
+                          <AppIcon name="shield" class="h-4 w-4" />
+                          {{ $t('providers.setFallback') }}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          v-if="isFallbackModel(provider.id, modelId)"
+                          @click="handleSetFallback(null)"
+                        >
+                          <AppIcon name="close" class="h-4 w-4" />
+                          {{ $t('providers.removeFallback') }}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+
+                <!-- Single model badge row for providers with only one model -->
+                <!-- (badges shown inline on the provider row itself, handled via isActiveModel/isFallbackModel for single models) -->
+              </template>
             </TableBody>
           </Table>
         </div>
@@ -217,7 +321,9 @@ const { t } = useI18n()
 const {
   providers,
   activeProviderId,
+  activeModelId,
   fallbackProviderId,
+  fallbackModelId,
   presets,
   loading,
   error,
@@ -268,6 +374,42 @@ function formatCost(value: number): string {
   return value.toFixed(3)
 }
 
+function hasMultipleModels(provider: Provider): boolean {
+  return (provider.enabledModels?.length ?? 0) > 1
+}
+
+function getDisplayModels(provider: Provider): string[] {
+  if (!hasMultipleModels(provider)) return []
+  return provider.enabledModels ?? [provider.defaultModel]
+}
+
+function isActiveModel(providerId: string, modelId: string): boolean {
+  if (providerId !== activeProviderId.value) return false
+  const aModel = activeModelId.value
+  // For single-model providers: show badge on provider row, not model row
+  const provider = providers.value.find(p => p.id === providerId)
+  if (!hasMultipleModels(provider!)) {
+    return true // badge is on provider row
+  }
+  if (!aModel) {
+    return modelId === provider?.defaultModel
+  }
+  return aModel === modelId
+}
+
+function isFallbackModel(providerId: string, modelId: string): boolean {
+  if (providerId !== fallbackProviderId.value) return false
+  const fbModel = fallbackModelId.value
+  const provider = providers.value.find(p => p.id === providerId)
+  if (!hasMultipleModels(provider!)) {
+    return true
+  }
+  if (!fbModel) {
+    return modelId === provider?.defaultModel
+  }
+  return fbModel === modelId
+}
+
 function getStatusLabel(status?: string): string {
   switch (status) {
     case 'connected': return t('providers.statusConnected')
@@ -300,11 +442,12 @@ function closeForm() {
 
 async function handleSubmit(payload: ProviderFormPayload) {
   if (formMode.value === 'edit' && editingProvider.value) {
-    const input: Record<string, string | number | undefined> = {
+    const input: Record<string, string | number | string[] | undefined> = {
       name: payload.name,
       providerType: payload.providerType,
       baseUrl: payload.baseUrl,
       defaultModel: payload.defaultModel,
+      enabledModels: payload.enabledModels,
       degradedThresholdMs: payload.degradedThresholdMs,
     }
     if (payload.apiKey) {
@@ -319,6 +462,7 @@ async function handleSubmit(payload: ProviderFormPayload) {
       baseUrl: payload.baseUrl || undefined,
       apiKey: payload.apiKey || undefined,
       defaultModel: payload.defaultModel,
+      enabledModels: payload.enabledModels,
       degradedThresholdMs: payload.degradedThresholdMs,
     })
     if (result) closeForm()
@@ -349,11 +493,33 @@ async function handleTest(id: string) {
   autoHideSuccess()
 }
 
+async function handleTestModel(providerId: string, modelId: string) {
+  const result = await testProvider(providerId, modelId)
+  if (result.success) {
+    successMessage.value = result.message ?? t('providers.testSuccess')
+  } else {
+    error.value = result.error ?? t('providers.testFailed')
+  }
+  autoHideSuccess()
+}
+
 async function handleActivate(id: string) {
   await activateProvider(id)
+  await fetchProviders()
+}
+
+async function handleActivateModel(providerId: string, modelId: string) {
+  await activateProvider(providerId, modelId)
+  await fetchProviders()
 }
 
 async function handleSetFallback(id: string | null) {
   await setFallbackProvider(id)
+  await fetchProviders()
+}
+
+async function handleSetFallbackModel(providerId: string, modelId: string) {
+  await setFallbackProvider(providerId, modelId)
+  await fetchProviders()
 }
 </script>
