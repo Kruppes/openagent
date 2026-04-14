@@ -131,12 +131,13 @@ export class SessionManager {
   ): Promise<void> {
     let summary: string | null = null
     let summaryWritten = !!row.summary_written
+    const startedAt = this.parseSqliteTimestamp(row.started_at)
 
     if (row.message_count > 0 && !summaryWritten && this.onSummarize) {
       try {
         const history = this.buildConversationHistory(row.id, {
           userId,
-          startedAt: this.parseSqliteTimestamp(row.started_at),
+          startedAt,
           endAt: lastActivity,
         })
         if (history) {
@@ -175,6 +176,19 @@ export class SessionManager {
       durationMs: 0,
       status: 'success',
     })
+
+    if (this.onSessionEnd) {
+      this.onSessionEnd({
+        id: row.id,
+        userId,
+        source: row.source,
+        startedAt,
+        lastActivity,
+        messageCount: row.message_count,
+        summaryWritten,
+        restored: true,
+      }, summary)
+    }
   }
 
   /**
@@ -242,7 +256,7 @@ export class SessionManager {
    * Includes main-session user/assistant messages plus related background-task
    * notifications that the user saw during the same session window.
    */
-  private buildConversationHistory(
+  buildConversationHistory(
     sessionId: string,
     options?: { userId?: string; startedAt?: number; endAt?: number },
   ): string | null {
@@ -575,9 +589,11 @@ export class SessionManager {
     source: string
     last_activity: string | null
     session_user: string | null
+    prompt_tokens: number
+    completion_tokens: number
   } | undefined {
     return this.db.prepare(
-      `SELECT id, started_at, ended_at, message_count, summary_written, source, last_activity, session_user
+      `SELECT id, started_at, ended_at, message_count, summary_written, source, last_activity, session_user, prompt_tokens, completion_tokens
        FROM sessions WHERE id = ?`
     ).get(sessionId) as {
       id: string
@@ -588,6 +604,8 @@ export class SessionManager {
       source: string
       last_activity: string | null
       session_user: string | null
+      prompt_tokens: number
+      completion_tokens: number
     } | undefined
   }
 }

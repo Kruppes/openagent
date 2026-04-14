@@ -32,6 +32,7 @@ import {
   createYoloTools,
   createBuiltinWebTools,
   createReadChatHistoryTool,
+  createSearchMemoriesTool,
   logToolCall,
 } from '@openagent/core'
 import type { ProviderConfig, LoopDetectionConfig, BuiltinToolsConfig } from '@openagent/core'
@@ -44,6 +45,7 @@ import { MemoryConsolidationScheduler } from './memory-consolidation-scheduler.j
 import { createTelegramBot } from '@openagent/telegram'
 import type { TelegramBot } from '@openagent/telegram'
 import { ChatEventBus } from './chat-event-bus.js'
+import { triggerFactExtractionForSessionEnd } from './fact-extraction-session-end.js'
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10)
 const HOST = process.env.HOST ?? '0.0.0.0'
@@ -206,7 +208,12 @@ const taskRunner = new TaskRunner({
   db,
   buildModel,
   getApiKey: getApiKeyForProvider,
-  tools: [...createYoloTools(), ...createBuiltinWebTools(builtinToolsConfig), createReadChatHistoryTool({ db })],
+  tools: [
+    ...createYoloTools(),
+    ...createBuiltinWebTools(builtinToolsConfig),
+    createReadChatHistoryTool({ db }),
+    createSearchMemoriesTool({ db }),
+  ],
   onTaskComplete: (taskId: string, injection: string) => {
     handleTaskNotification(taskId, injection, taskStore)
   },
@@ -395,6 +402,14 @@ function formatReminderTelegramHtml(name: string, message: string): string {
   return `⏰ <b>${escapeHtmlForTelegram(name)}</b>\n\n${escapeHtmlForTelegram(message)}`
 }
 
+function parseNumericUserId(userId: string): number | null {
+  const trimmed = userId.trim()
+  if (!/^\d+$/.test(trimmed)) return null
+
+  const numericUserId = Number.parseInt(trimmed, 10)
+  return Number.isSafeInteger(numericUserId) ? numericUserId : null
+}
+
 // Build agent tools for tasks and cronjobs
 const taskToolsOptions = {
   taskStore,
@@ -480,17 +495,28 @@ function wireAgentCoreEvents(): void {
   if (!agentCore) return
 
   agentCore.setOnSessionEnd((userId: string, sessionId: string, summary: string | null) => {
+    const numericUserId = parseNumericUserId(userId)
+
     // Persist session divider to chat_messages so it survives page reloads
     const dividerMetadata = JSON.stringify({ type: 'session_divider', summary: summary ?? null })
     db.prepare(
       'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-    ).run(sessionId, parseInt(userId, 10), 'system', summary ?? '', dividerMetadata)
+    ).run(sessionId, numericUserId, 'system', summary ?? '', dividerMetadata)
 
-    chatEventBus.broadcast({
-      type: 'session_end',
-      userId: parseInt(userId, 10),
-      source: 'web',
-      text: summary ?? undefined,
+    if (numericUserId !== null) {
+      chatEventBus.broadcast({
+        type: 'session_end',
+        userId: numericUserId,
+        source: 'web',
+        text: summary ?? undefined,
+      })
+    }
+
+    triggerFactExtractionForSessionEnd({
+      db,
+      agentCore,
+      userId,
+      sessionId,
     })
   })
 

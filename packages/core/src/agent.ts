@@ -25,6 +25,7 @@ import { SessionManager } from './session-manager.js'
 import type { SessionInfo } from './session-manager.js'
 import { MessageQueue } from './message-queue.js'
 import { createAgentSkillTools, getAgentSkillsForPrompt, getAgentSkillsCount, getAgentSkillsDir, trackAgentSkillUsage } from './agent-skills.js'
+import { createSearchMemoriesTool } from './memories-tool.js'
 
 /**
  * A chunk yielded from the agent's response stream
@@ -389,6 +390,7 @@ export class AgentCore {
   private onSessionEndCallback?: (userId: string, sessionId: string, summary: string | null) => void
   private onTaskInjectionChunkCallback?: (chunk: ResponseChunk) => void
   private messageQueue: MessageQueue
+  private currentToolUserId?: number
 
   constructor(options: AgentCoreOptions) {
     this.model = options.model
@@ -454,6 +456,10 @@ export class AgentCore {
 
     const tools: AgentTool[] = [
       ...(options.tools ?? []),
+      createSearchMemoriesTool({
+        db: this.db,
+        getCurrentUserId: () => this.currentToolUserId,
+      }),
       ...createBuiltinWebTools(builtinToolsConfig),
       ...(sttEnabled ? [createTranscribeAudioTool()] : []),
       ...createAgentSkillTools(),
@@ -551,7 +557,6 @@ export class AgentCore {
    * All messages are queued and processed sequentially to prevent collisions.
    */
   async *sendMessage(userId: string, text: string, source: string = 'web', attachments?: UploadDescriptor[]): AsyncIterable<ResponseChunk> {
-    const self = this
     const uploads = attachments
     const iterable = await this.messageQueue.enqueue<ResponseChunk>(
       'user_message',
@@ -559,7 +564,7 @@ export class AgentCore {
       text,
       source,
       (msg) => {
-        return self.processUserMessage(msg.payload.userId, msg.payload.text, msg.payload.source, uploads)
+        return this.processUserMessage(msg.payload.userId, msg.payload.text, msg.payload.source, uploads)
       },
     )
     yield* iterable
@@ -570,14 +575,13 @@ export class AgentCore {
    * The injection is queued and processed sequentially like any other message.
    */
   async injectTaskResult(injection: string): Promise<void> {
-    const self = this
     const iterable = await this.messageQueue.enqueue<ResponseChunk>(
       'task_injection',
       'system',
       injection,
       'task',
       (msg) => {
-        return self.processTaskInjection(msg.payload.text)
+        return this.processTaskInjection(msg.payload.text)
       },
     )
     // Stream response chunks via callback (if set), otherwise drain silently
@@ -632,7 +636,14 @@ export class AgentCore {
     }
 
     const enrichedText = fileHints.length > 0 ? `${text}\n\n${fileHints.join('\n')}` : text
-    yield* this.executePromptWithRetry(enrichedText, sessionId, false, images.length > 0 ? images : undefined)
+    const parsedUserId = Number.parseInt(userId, 10)
+    this.currentToolUserId = Number.isFinite(parsedUserId) ? parsedUserId : undefined
+
+    try {
+      yield* this.executePromptWithRetry(enrichedText, sessionId, false, images.length > 0 ? images : undefined)
+    } finally {
+      this.currentToolUserId = undefined
+    }
 
     // Count the agent response as a message too
     this.sessionManager.recordMessage(userId)
@@ -646,8 +657,13 @@ export class AgentCore {
     const sessionId = session.id
 
     this.sessionManager.recordMessage('system')
+    this.currentToolUserId = undefined
 
-    yield* this.executePromptWithRetry(injection, sessionId)
+    try {
+      yield* this.executePromptWithRetry(injection, sessionId)
+    } finally {
+      this.currentToolUserId = undefined
+    }
 
     // Count the agent response as a message too
     this.sessionManager.recordMessage('system')
