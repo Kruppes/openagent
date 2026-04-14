@@ -3,7 +3,7 @@ import path from 'node:path'
 import { Bot, GrammyError, HttpError, InputFile } from 'grammy'
 import type { Context } from 'grammy'
 import type { AgentCore, Database } from '@openagent/core'
-import { loadConfig, saveUpload, serializeUploadsMetadata, parseUploadsMetadata, loadSttSettings, transcribeAudio } from '@openagent/core'
+import { loadConfig, saveUpload, serializeUploadsMetadata, parseUploadsMetadata, loadSttSettings, transcribeAudio, loadProviders, setActiveProvider, updateProvider } from '@openagent/core'
 import type { UploadDescriptor } from '@openagent/core'
 
 /**
@@ -50,6 +50,8 @@ export interface TelegramBotOptions {
   onQueueDepthChanged?: (queueDepth: number) => void
   /** Called for every chat event (user message, response chunks, etc.) for cross-channel sync */
   onChatEvent?: (event: TelegramChatEvent) => void
+  /** Called when the active provider or model changes via /model command */
+  onActiveProviderChanged?: () => void
 }
 
 export type TelegramUserStatus = 'pending' | 'approved' | 'rejected'
@@ -260,6 +262,7 @@ export class TelegramBot {
   private chatStates = new Map<string, ChatState>()
   private onQueueDepthChanged?: (queueDepth: number) => void
   private onChatEvent?: (event: TelegramChatEvent) => void
+  private onActiveProviderChanged?: () => void
 
   constructor(options: TelegramBotOptions) {
     this.agentCore = options.agentCore
@@ -267,6 +270,7 @@ export class TelegramBot {
     this.config = options.config ?? loadTelegramRuntimeConfig()
     this.onQueueDepthChanged = options.onQueueDepthChanged
     this.onChatEvent = options.onChatEvent
+    this.onActiveProviderChanged = options.onActiveProviderChanged
 
     if (!this.config.botToken) {
       throw new Error(
@@ -323,6 +327,47 @@ export class TelegramBot {
   }
 
   /**
+   * Check if a Telegram user is an admin (in the adminUserIds list).
+   */
+  private isAdminUser(ctx: Context): boolean {
+    const userId = ctx.from?.id
+    if (userId === undefined) return false
+    if (!this.config.adminUserIds || this.config.adminUserIds.length === 0) return true
+    return this.config.adminUserIds.includes(userId)
+  }
+
+  /**
+   * Build the inline keyboard for provider selection (/model step 1).
+   */
+  private buildProviderKeyboard() {
+    const file = loadProviders()
+    const activeId = file.activeProvider ?? null
+    const buttons = file.providers.map(p => ({
+      text: `${p.id === activeId ? '✅ ' : ''}${p.name}`,
+      callback_data: `model:provider:${p.id}`,
+    }))
+    return buttons.map(b => [b])
+  }
+
+  /**
+   * Build the inline keyboard for model selection (/model step 2).
+   */
+  private buildModelKeyboard(providerId: string) {
+    const file = loadProviders()
+    const provider = file.providers.find(p => p.id === providerId)
+    if (!provider) return null
+    const pinned = (provider as any).pinnedModels ?? []
+    const currentModel = provider.defaultModel
+    const buttons = pinned.map((model: string) => ({
+      text: `${model === currentModel ? '✅ ' : ''}${model}`,
+      callback_data: `model:set:${providerId}:${model}`,
+    }))
+    const rows = buttons.map((b: any) => [b])
+    rows.push([{ text: '⬅️ Back', callback_data: 'model:back' }])
+    return { rows, provider, pinned }
+  }
+
+  /**
    * Set up command and message handlers
    */
   private setupHandlers(): void {
@@ -372,6 +417,104 @@ export class TelegramBot {
 
     this.bot.command('kill', async (ctx) => {
       await this.handleKillSwitch(ctx)
+    })
+
+    // /model command - switch AI provider/model
+    this.bot.command('model', async (ctx) => {
+      if (!await this.checkAuthorized(ctx)) return
+      if (!this.isAdminUser(ctx)) {
+        await ctx.reply('⛔ Only administrators can change the provider/model.')
+        return
+      }
+
+      try {
+        const keyboard = this.buildProviderKeyboard()
+        if (keyboard.length === 0) {
+          await ctx.reply('ℹ️ No providers configured. Please configure in the web UI.')
+          return
+        }
+        await ctx.reply('🤖 *Select provider:*', {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard },
+        })
+      } catch (err) {
+        console.error('[telegram] Error handling /model command:', err)
+        await ctx.reply('⚠️ Error loading providers.')
+      }
+    })
+
+    // Callback: model:back — go back to provider list
+    this.bot.callbackQuery('model:back', async (ctx) => {
+      try {
+        const keyboard = this.buildProviderKeyboard()
+        await ctx.editMessageText('🤖 *Select provider:*', {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: keyboard },
+        })
+      } catch (err) {
+        console.error('[telegram] Error in model:back callback:', err)
+      } finally {
+        await ctx.answerCallbackQuery()
+      }
+    })
+
+    // Callback: model:provider:{id} — show models for a provider
+    this.bot.callbackQuery(/^model:provider:(.+)$/, async (ctx) => {
+      const providerId = ctx.match[1]
+      try {
+        const result = this.buildModelKeyboard(providerId)
+        if (!result) {
+          await ctx.answerCallbackQuery({ text: 'Provider not found.' })
+          return
+        }
+        const { rows, provider, pinned } = result
+        if (pinned.length === 0) {
+          await ctx.editMessageText(
+            `ℹ️ *${provider.name}*\n\nNo pinned models. Please configure in the web UI.`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: { inline_keyboard: [[{ text: '⬅️ Back', callback_data: 'model:back' }]] },
+            }
+          )
+        } else {
+          await ctx.editMessageText(
+            `🤖 *${provider.name}* \u2014 Select model:`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: { inline_keyboard: rows },
+            }
+          )
+        }
+      } catch (err) {
+        console.error('[telegram] Error in model:provider callback:', err)
+      } finally {
+        await ctx.answerCallbackQuery()
+      }
+    })
+
+    // Callback: model:set:{providerId}:{modelName} — switch provider + model
+    this.bot.callbackQuery(/^model:set:([^:]+):(.+)$/, async (ctx) => {
+      const providerId = ctx.match[1]
+      const modelName = ctx.match[2]
+      try {
+        const file = loadProviders()
+        const provider = file.providers.find(p => p.id === providerId)
+        if (!provider) {
+          await ctx.answerCallbackQuery({ text: 'Provider not found.' })
+          return
+        }
+        setActiveProvider(providerId)
+        updateProvider(providerId, { defaultModel: modelName })
+        this.onActiveProviderChanged?.()
+        await ctx.editMessageText(
+          `✅ *Provider:* ${provider.name}\n*Model:* ${modelName}`,
+          { parse_mode: 'Markdown' }
+        )
+        await ctx.answerCallbackQuery({ text: `Switched to ${provider.name} / ${modelName}` })
+      } catch (err) {
+        console.error('[telegram] Error in model:set callback:', err)
+        await ctx.answerCallbackQuery({ text: 'Error switching model.' })
+      }
     })
 
     this.bot.on('message:text', async (ctx) => {
@@ -566,7 +709,19 @@ export class TelegramBot {
 
     if (!await this.checkAuthorized(ctx)) return
 
-    this.bufferMessage(ctx, text)
+    // Embed reply context so the agent knows what the user is responding to
+    let messageText = text
+    const replyMsg = ctx.message?.reply_to_message
+    if (replyMsg) {
+      const quotedText = ('text' in replyMsg ? replyMsg.text : undefined)
+        ?? ('caption' in replyMsg ? replyMsg.caption : undefined)
+      if (quotedText) {
+        const truncated = quotedText.length > 300 ? quotedText.slice(0, 300) + '...' : quotedText
+        messageText = `[Reply to: "${truncated}"]\n${text}`
+      }
+    }
+
+    this.bufferMessage(ctx, messageText)
   }
 
   private async downloadTelegramFile(fileId: string): Promise<{ buffer: Buffer; mimeType?: string }> {
@@ -1083,6 +1238,20 @@ export class TelegramBot {
       const me = await this.bot.api.getMe()
       console.log(`✅ Telegram bot connected: @${me.username} (${me.first_name})`)
 
+      // Register command menu (shown as the "/" button in Telegram)
+      try {
+        await this.bot.api.setMyCommands([
+          { command: 'start', description: 'Start / show help' },
+          { command: 'new', description: 'Summarize session and start fresh' },
+          { command: 'stop', description: 'Stop current task' },
+          { command: 'kill', description: 'Force kill current task' },
+          { command: 'model', description: 'Switch model / provider' },
+        ])
+        console.log('✅ Telegram command menu registered (5 commands)')
+      } catch (err) {
+        console.warn('[telegram] Failed to register command menu (non-fatal):', (err as Error).message)
+      }
+
       // Start polling
       this.running = true
       this.bot.start({
@@ -1242,6 +1411,36 @@ export class TelegramBot {
   }
 
   /**
+   * Send a file (image or document) to a Telegram chat by chat ID.
+   */
+  async sendFile(chatId: string | number, filePath: string, caption?: string, isImage?: boolean): Promise<true | string> {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return `File not found: ${filePath}`
+      }
+
+      const fileName = path.basename(filePath)
+      const inputFile = new InputFile(filePath, fileName)
+
+      if (isImage) {
+        await this.bot.api.sendPhoto(chatId, inputFile, {
+          caption: caption || undefined,
+        })
+      } else {
+        await this.bot.api.sendDocument(chatId, inputFile, {
+          caption: caption || undefined,
+        })
+      }
+
+      return true
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(`[telegram] Failed to send file to ${chatId}:`, message)
+      return message
+    }
+  }
+
+  /**
    * Get the underlying grammy Bot instance (for advanced usage)
    */
   getBot(): Bot {
@@ -1257,6 +1456,7 @@ export function createTelegramBot(
   agentCore: AgentCore,
   db?: Database,
   onChatEvent?: (event: TelegramChatEvent) => void,
+  onActiveProviderChanged?: () => void,
 ): TelegramBot | null {
   try {
     const config = loadTelegramRuntimeConfig()
@@ -1271,7 +1471,7 @@ export function createTelegramBot(
       return null
     }
 
-    return new TelegramBot({ agentCore, db, config, onChatEvent })
+    return new TelegramBot({ agentCore, db, config, onChatEvent, onActiveProviderChanged })
   } catch {
     console.log('ℹ️  Telegram config not found. Running in web-only mode.')
     return null

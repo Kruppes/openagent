@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { Router } from 'express'
+import express, { type Router } from 'express'
 import {
   loadProviders,
   loadProvidersMasked,
@@ -65,7 +65,7 @@ setInterval(() => {
 }, 60 * 1000)
 
 export function createProvidersRouter(options: ProvidersRouterOptions = {}): Router {
-  const router = Router()
+  const router = express.Router()
 
   // All provider routes require admin JWT
   router.use(jwtMiddleware)
@@ -420,18 +420,70 @@ export function createProvidersRouter(options: ProvidersRouterOptions = {}): Rou
   })
 
   /**
+   * GET /api/providers/:id/models
+   * Fetch available models for a configured provider instance.
+   * For Ollama providers: fetches live from the Ollama API.
+   * For other providers: uses pi-ai model registry.
+   * Returns { models: string[], pinned: string[] }
+   */
+  router.get('/:id/models', async (req: AuthenticatedRequest, res) => {
+    const id = req.params.id as string
+
+    try {
+      const data = loadProvidersDecrypted()
+      const provider = data.providers.find(p => p.id === id)
+      if (!provider) {
+        res.status(404).json({ error: 'Provider not found' })
+        return
+      }
+
+      const pinned = provider.pinnedModels ?? []
+      let models: string[]
+
+      // Ollama providers: fetch live from the Ollama API
+      const isOllama = provider.providerType === 'ollama-local' || provider.providerType === 'ollama-cloud'
+      if (isOllama) {
+        // Derive Ollama base URL (strip /v1 suffix if present)
+        let ollamaBase = provider.baseUrl || process.env.OLLAMA_URL || 'http://localhost:11434'
+        ollamaBase = ollamaBase.replace(/\/v1\/?$/, '').replace(/\/$/, '')
+
+        try {
+          const tagsResp = await fetch(`${ollamaBase}/api/tags`)
+          if (!tagsResp.ok) {
+            throw new Error(`Ollama returned HTTP ${tagsResp.status}`)
+          }
+          const tagsData = await tagsResp.json() as { models?: Array<{ name: string }> }
+          models = (tagsData.models ?? []).map(m => m.name)
+        } catch (fetchErr) {
+          res.status(502).json({ error: `Failed to reach Ollama API: ${(fetchErr as Error).message}` })
+          return
+        }
+      } else {
+        // Non-Ollama: use pi-ai model registry
+        const availableModels = getAvailableModels(provider.providerType)
+        models = availableModels.map(m => m.id)
+      }
+
+      res.json({ models, pinned })
+    } catch (err) {
+      res.status(500).json({ error: `Failed to load models: ${(err as Error).message}` })
+    }
+  })
+
+  /**
    * PUT /api/providers/:id
    * Update a provider
    */
   router.put('/:id', (req: AuthenticatedRequest, res) => {
     const id = req.params.id as string
-    const { name, providerType, baseUrl, apiKey, defaultModel, degradedThresholdMs } = req.body as {
+    const { name, providerType, baseUrl, apiKey, defaultModel, degradedThresholdMs, pinnedModels } = req.body as {
       name?: string
       providerType?: string
       baseUrl?: string
       apiKey?: string
       defaultModel?: string
       degradedThresholdMs?: number
+      pinnedModels?: string[]
     }
 
     if (providerType && !VALID_PROVIDER_TYPES.includes(providerType)) {
@@ -448,6 +500,7 @@ export function createProvidersRouter(options: ProvidersRouterOptions = {}): Rou
         apiKey: apiKey?.trim(),
         defaultModel: defaultModel?.trim(),
         degradedThresholdMs: degradedThresholdMs != null ? Math.max(1, Math.round(degradedThresholdMs)) : undefined,
+        pinnedModels: Array.isArray(pinnedModels) ? pinnedModels : undefined,
       })
 
       if (activeProvider === id) {

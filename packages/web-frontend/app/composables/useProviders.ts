@@ -13,6 +13,7 @@ export interface Provider {
   authMethod?: 'api-key' | 'oauth'
   oauthCredentials?: { expires: number }
   cost?: { input: number; output: number } | null
+  pinnedModels?: string[]
 }
 
 export interface OAuthLoginResponse {
@@ -112,6 +113,10 @@ export function useProviders() {
     }
   }
 
+  async function fetchProviderModels(id: string): Promise<{ models: string[]; pinned: string[] }> {
+    return apiFetch<{ models: string[]; pinned: string[] }>(`/api/providers/${id}/models`)
+  }
+
   async function updateProvider(id: string, input: {
     name?: string
     providerType?: string
@@ -119,6 +124,7 @@ export function useProviders() {
     apiKey?: string
     defaultModel?: string
     degradedThresholdMs?: number
+    pinnedModels?: string[]
   }): Promise<Provider | null> {
     error.value = null
     try {
@@ -226,6 +232,7 @@ export function useProviders() {
     testingId,
     fetchProviders,
     fetchModels,
+    fetchProviderModels,
     addProvider,
     updateProvider,
     deleteProvider,

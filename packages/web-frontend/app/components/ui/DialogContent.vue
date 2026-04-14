@@ -33,7 +33,8 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
     <DialogContent
       v-bind="forwarded"
       :class="cn(
-        'fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-6 shadow-xl',
+        'fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card shadow-xl',
+        'flex flex-col max-h-[90dvh] overflow-y-auto p-6',
         'focus:outline-none',
         'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
         props.class

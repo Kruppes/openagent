@@ -138,6 +138,58 @@
           <p class="text-xs text-muted-foreground">{{ $t('providers.degradedThresholdHint') }}</p>
         </div>
 
+        <!-- Pinned Models (edit mode only) -->
+        <div v-if="form.providerType && mode === 'edit' && props.provider" class="flex flex-col gap-2">
+          <div class="flex items-center justify-between">
+            <Label>Gepinnte Modelle (Telegram)</Label>
+            <button
+              type="button"
+              class="text-xs text-primary hover:underline disabled:opacity-50"
+              :disabled="pinnedModelsLoading"
+              @click="loadProviderModelsList"
+            >
+              {{ pinnedModelsLoading ? 'Lädt...' : (pinnedModelsAll.length > 0 ? 'Aktualisieren' : 'Modelle laden') }}
+            </button>
+          </div>
+
+          <!-- Models not loaded yet -->
+          <div v-if="pinnedModelsAll.length === 0 && !pinnedModelsLoading && !pinnedModelsError" class="rounded-md border border-dashed border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
+            Klicke auf "Modelle laden", um verfügbare Modelle zu sehen und zu pinnen.
+          </div>
+
+          <!-- Loading -->
+          <div v-else-if="pinnedModelsLoading" class="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
+            <span class="h-3 w-3 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+            Modelle werden geladen...
+          </div>
+
+          <!-- Error -->
+          <div v-else-if="pinnedModelsError" class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {{ pinnedModelsError }}
+          </div>
+
+          <!-- Model list -->
+          <div v-else class="max-h-40 overflow-y-auto rounded-md border border-border">
+            <label
+              v-for="model in pinnedModelsAll"
+              :key="model"
+              class="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent/50"
+            >
+              <input
+                type="checkbox"
+                :checked="pinnedModelsSelected.includes(model)"
+                class="h-3.5 w-3.5"
+                @change="togglePinnedModel(model)"
+              >
+              <span class="font-mono text-xs">{{ model }}</span>
+            </label>
+          </div>
+
+          <p class="text-xs text-muted-foreground">
+            Markierte Modelle erscheinen im /model-Befehl des Telegram-Bots.
+          </p>
+        </div>
+
         <!-- OAuth Login Section -->
         <div v-if="isOAuthProvider && (mode === 'create' || oauthInProgress)" class="flex flex-col gap-3">
           <!-- OAuth status messages -->
@@ -182,7 +234,7 @@
           </div>
         </div>
 
-        <DialogFooter class="!flex-row !justify-start items-center">
+        <DialogFooter class="mt-2 flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
           <!-- Renew token button (left-aligned, only for OAuth edit mode) -->
           <Button
             v-if="isOAuthProvider && mode === 'edit'"
@@ -198,7 +250,7 @@
             />
             {{ oauthInProgress ? $t('providers.oauthRenewing') : $t('providers.oauthRenewToken') }}
           </Button>
-          <div class="flex-1" />
+          <div v-else class="hidden sm:block" />
           <div class="flex items-center gap-2">
             <Button type="button" variant="outline" :disabled="oauthInProgress" @click="emit('close')">
               {{ $t('providers.cancel') }}
@@ -241,6 +293,7 @@ export interface ProviderFormPayload {
   apiKey: string
   defaultModel: string
   degradedThresholdMs: number
+  pinnedModels?: string[]
 }
 
 const props = defineProps<{
@@ -256,7 +309,7 @@ const emit = defineEmits<{
   oauthComplete: []
 }>()
 
-const { fetchModels, startOAuthLogin, pollOAuthStatus, submitOAuthCode, fetchProviders } = useProviders()
+const { fetchModels, fetchProviderModels, startOAuthLogin, pollOAuthStatus, submitOAuthCode, fetchProviders, updateProvider: updateProviderFn } = useProviders()
 
 const form = reactive({
   name: '',
@@ -275,6 +328,13 @@ const oauthError = ref<string | null>(null)
 const oauthLoginId = ref<string | null>(null)
 const oauthUsesCallback = ref(false)
 const manualCode = ref('')
+
+// Pinned models state
+const pinnedModelsAll = ref<string[]>([])
+const pinnedModelsSelected = ref<string[]>([])
+const pinnedModelsLoading = ref(false)
+const pinnedModelsError = ref<string | null>(null)
+const pinnedModelsSaving = ref(false)
 
 const selectedPreset = computed(() => {
   if (!form.providerType) return null
@@ -317,6 +377,10 @@ watch(() => [props.open, props.provider] as const, ([isOpen, entry]) => {
     if (entry.providerType) {
       loadModelsForType(entry.providerType)
     }
+    // Reset pinned models state
+    pinnedModelsAll.value = []
+    pinnedModelsSelected.value = entry.pinnedModels ? [...entry.pinnedModels] : []
+    pinnedModelsError.value = null
   } else if (isOpen && props.mode === 'create') {
     form.name = ''
     form.providerType = ''
@@ -330,8 +394,37 @@ watch(() => [props.open, props.provider] as const, ([isOpen, entry]) => {
     oauthError.value = null
     oauthLoginId.value = null
     manualCode.value = ''
+    pinnedModelsAll.value = []
+    pinnedModelsSelected.value = []
+    pinnedModelsError.value = null
   }
 }, { immediate: true })
+
+async function loadProviderModelsList() {
+  if (!props.provider?.id) return
+  pinnedModelsLoading.value = true
+  pinnedModelsError.value = null
+  try {
+    const data = await fetchProviderModels(props.provider.id)
+    pinnedModelsAll.value = data.models
+    // Merge: keep any existing selections + those returned as pinned by server
+    const merged = new Set([...pinnedModelsSelected.value, ...data.pinned])
+    pinnedModelsSelected.value = Array.from(merged).filter(m => data.models.includes(m))
+  } catch (err) {
+    pinnedModelsError.value = (err as Error).message
+  } finally {
+    pinnedModelsLoading.value = false
+  }
+}
+
+function togglePinnedModel(model: string) {
+  const idx = pinnedModelsSelected.value.indexOf(model)
+  if (idx === -1) {
+    pinnedModelsSelected.value = [...pinnedModelsSelected.value, model]
+  } else {
+    pinnedModelsSelected.value = pinnedModelsSelected.value.filter(m => m !== model)
+  }
+}
 
 async function loadModelsForType(providerType: string) {
   const preset = props.presets[providerType]
@@ -369,7 +462,13 @@ function onTypeChange() {
 }
 
 function handleSubmit() {
-  emit('submit', { ...form })
+  // Send pinnedModels whenever the list was loaded (even if empty selection)
+  // or when there are pre-existing selections from the server that the user didn't touch
+  const hasPinnedData = pinnedModelsAll.value.length > 0 || pinnedModelsSelected.value.length > 0
+  emit('submit', {
+    ...form,
+    pinnedModels: hasPinnedData ? pinnedModelsSelected.value : undefined,
+  })
 }
 
 async function startOAuthRenew() {

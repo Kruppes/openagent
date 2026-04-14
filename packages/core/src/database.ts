@@ -365,6 +365,50 @@ export function initDatabase(dbPath?: string): Database {
     `)
   }
 
+  // Create memories table for fact storage (extracted from sessions)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      content TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'session',
+      timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+      embedding BLOB
+    );
+    CREATE INDEX IF NOT EXISTS idx_memories_timestamp ON memories(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source);
+  `)
+
+  // Create FTS5 virtual table on memories for full-text retrieval
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+        content,
+        content=memories,
+        content_rowid=id
+      );
+    `)
+  } catch {
+    // FTS5 may already exist — ignore
+  }
+
+  // Triggers to keep FTS5 in sync with memories table
+  try {
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content);
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+      END;
+    `)
+  } catch {
+    // Triggers may already exist — ignore
+  }
+
   // Migration: add last_activity and session_user columns to sessions table
   const sessionCols = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]
   if (!sessionCols.find(c => c.name === 'last_activity')) {

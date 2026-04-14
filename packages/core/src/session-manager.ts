@@ -1,6 +1,16 @@
 import type { Database } from './database.js'
 import { appendToDailyFile } from './memory.js'
 import { logToolCall } from './token-logger.js'
+import {
+  extractTopicTags,
+  getSessionMessages,
+  detectTopicShift,
+  queryMemoriesFts,
+  buildFactInjection,
+  estimateTokens,
+  hasAttachmentMarker,
+} from './session-store.js'
+import type { SessionMessage } from './session-store.js'
 
 export interface SessionInfo {
   id: string
@@ -12,6 +22,8 @@ export interface SessionInfo {
   summaryWritten: boolean
   /** True if this session was restored from DB after a server restart */
   restored: boolean
+  /** Cached topic tags for the current session */
+  topicTags?: string[]
 }
 
 export interface SessionManagerOptions {
@@ -25,12 +37,18 @@ export interface SessionManagerOptions {
   onSummarize?: (sessionId: string, userId: string, conversationHistory?: string) => Promise<string>
   /** Called when a session is disposed (after summary if applicable) */
   onSessionEnd?: (session: SessionInfo, summary: string | null) => void
+  /** Called when a topic shift is detected, with the injected facts context string */
+  onTopicShift?: (session: SessionInfo, factInjection: string) => void
 }
 
-export type SessionEndReason = 'timeout' | 'manual' | 'provider_change'
+export type SessionEndReason = 'timeout' | 'manual' | 'provider_change' | 'topic_shift'
 
 /**
  * Manages active sessions per user with timeout and auto-summarization.
+ *
+ * Enhanced with topic-shift detection (sliding window + Jaccard + hysteresis).
+ * On topic shift: ALWAYS start a fresh session (no reactivation of old sessions).
+ * On new session or topic shift: query memories FTS5 for relevant facts and inject.
  *
  * After constructing, call `init()` to handle orphaned sessions from
  * a previous server run (restore or summarize them).
@@ -43,6 +61,10 @@ export class SessionManager {
   private memoryDir?: string
   private onSummarize?: (sessionId: string, userId: string, conversationHistory?: string) => Promise<string>
   private onSessionEnd?: (session: SessionInfo, summary: string | null) => void
+  private onTopicShift?: (session: SessionInfo, factInjection: string) => void
+
+  /** Pending fact injection text to be included in the next response */
+  private pendingFactInjection: Map<string, string> = new Map() // userId -> injection text
 
   constructor(options: SessionManagerOptions) {
     this.db = options.db
@@ -50,6 +72,7 @@ export class SessionManager {
     this.memoryDir = options.memoryDir
     this.onSummarize = options.onSummarize
     this.onSessionEnd = options.onSessionEnd
+    this.onTopicShift = options.onTopicShift
   }
 
   /**
@@ -84,46 +107,29 @@ export class SessionManager {
     console.log(`[session] Found ${orphaned.length} orphaned session(s) from previous run`)
 
     for (const row of orphaned) {
-      // Determine last activity time (fall back to started_at for pre-migration sessions)
       const lastActivityStr = row.last_activity ?? row.started_at
       const lastActivity = this.parseSqliteTimestamp(lastActivityStr)
       const elapsed = Date.now() - lastActivity
-
-      // Recover userId from DB column or parse from session id
       const userId = row.session_user ?? this.parseUserIdFromSessionId(row.id)
 
       if (elapsed >= this.timeoutMs) {
-        // Timeout already elapsed → summarize and close
         await this.summarizeAndCloseOrphanedSession(row, userId, lastActivity)
       } else {
-        // Timeout not yet elapsed → restore session with remaining time
         this.restoreSession(row, userId, lastActivity, this.timeoutMs - elapsed)
       }
     }
   }
 
-  /**
-   * Parse a SQLite datetime string to a timestamp in ms.
-   * SQLite stores as 'YYYY-MM-DD HH:MM:SS' in UTC without timezone marker.
-   */
   private parseSqliteTimestamp(str: string): number {
-    // Append 'Z' to treat as UTC if no timezone info present
     const normalized = str.includes('Z') || str.includes('+') ? str : str + 'Z'
     return new Date(normalized).getTime()
   }
 
-  /**
-   * Best-effort extraction of userId from session id format: session-{userId}-{timestamp}-{random}
-   */
   private parseUserIdFromSessionId(sessionId: string): string {
     const match = sessionId.match(/^session-(.+?)-\d{13,}-/)
     return match?.[1] ?? 'unknown'
   }
 
-  /**
-   * Summarize an orphaned session that has already timed out, then close it.
-   * Uses the lastActivity timestamp to write to the correct daily file.
-   */
   private async summarizeAndCloseOrphanedSession(
     row: { id: string; started_at: string; message_count: number; summary_written: number; source: string },
     userId: string,
@@ -152,43 +158,25 @@ export class SessionManager {
       }
     }
 
-    // Close session in DB
     this.db.prepare(
       `UPDATE sessions SET ended_at = datetime('now'), summary_written = ? WHERE id = ?`
     ).run(summaryWritten ? 1 : 0, row.id)
 
-    // Log to tool_calls for activity log visibility
     logToolCall(this.db, {
       sessionId: row.id,
       toolName: 'session_timeout',
-      input: JSON.stringify({
-        reason: 'server_restart',
-        messageCount: row.message_count,
-      }),
+      input: JSON.stringify({ reason: 'server_restart', messageCount: row.message_count }),
       output: JSON.stringify({
-        summaryWritten,
-        summary,
-        note: summary
-          ? 'Orphaned session summarized on startup'
-          : 'Session closed due to server restart',
+        summaryWritten, summary,
+        note: summary ? 'Orphaned session summarized on startup' : 'Session closed due to server restart',
       }),
       durationMs: 0,
       status: 'success',
     })
   }
 
-  /**
-   * Restore an orphaned session whose timeout has not yet elapsed.
-   * Recreates the in-memory session and starts a timer with the remaining time.
-   */
   private restoreSession(
-    row: {
-      id: string
-      source: string
-      started_at: string
-      message_count: number
-      summary_written: number
-    },
+    row: { id: string; source: string; started_at: string; message_count: number; summary_written: number },
     userId: string,
     lastActivity: number,
     remainingMs: number,
@@ -211,7 +199,6 @@ export class SessionManager {
     const remainingMinutes = Math.round(remainingMs / 60000)
     console.log(`[session] Restored session ${row.id} for user ${userId} (${remainingMinutes}min remaining)`)
 
-    // Start timer with remaining time
     const timer = setTimeout(() => {
       console.log(`[session] Timeout fired for restored session of user ${userId}`)
       this.endSession(userId).catch(err => {
@@ -226,9 +213,6 @@ export class SessionManager {
     this.timers.set(userId, timer)
   }
 
-  /**
-   * Write a summary to the daily memory file at the given timestamp.
-   */
   private writeSummaryToDailyFile(summary: string, timestamp: number): void {
     const activityDate = new Date(timestamp)
     const hh = String(activityDate.getHours()).padStart(2, '0')
@@ -237,11 +221,6 @@ export class SessionManager {
     appendToDailyFile(formattedSummary, activityDate, this.memoryDir)
   }
 
-  /**
-   * Build a conversation history string from chat_messages in the DB.
-   * Includes main-session user/assistant messages plus related background-task
-   * notifications that the user saw during the same session window.
-   */
   private buildConversationHistory(
     sessionId: string,
     options?: { userId?: string; startedAt?: number; endAt?: number },
@@ -279,9 +258,7 @@ export class SessionManager {
         let metadata: Record<string, unknown> | null = null
         try {
           metadata = msg.metadata ? JSON.parse(msg.metadata) as Record<string, unknown> : null
-        } catch {
-          metadata = null
-        }
+        } catch { metadata = null }
 
         if (metadata?.type === 'task_result' || metadata?.type === 'task_injection_response') {
           extraMessages.push(msg)
@@ -299,9 +276,7 @@ export class SessionManager {
       let metadata: Record<string, unknown> | null = null
       try {
         metadata = msg.metadata ? JSON.parse(msg.metadata) as Record<string, unknown> : null
-      } catch {
-        metadata = null
-      }
+      } catch { metadata = null }
 
       if (msg.role === 'user') {
         lines.push(`User: ${msg.content}`)
@@ -314,9 +289,7 @@ export class SessionManager {
       } else if (msg.role === 'system' && metadata?.type === 'task_result') {
         const taskStatus = typeof metadata.taskResultStatus === 'string'
           ? metadata.taskResultStatus
-          : typeof metadata.taskStatus === 'string'
-            ? metadata.taskStatus
-            : 'completed'
+          : typeof metadata.taskStatus === 'string' ? metadata.taskStatus : 'completed'
         const taskName = typeof metadata.taskName === 'string' ? metadata.taskName.trim() : ''
         const taskLabel = taskName ? `: ${taskName}` : ''
         lines.push(`Background task (${taskStatus}${taskLabel}): ${msg.content.slice(0, 2000)}`)
@@ -327,59 +300,162 @@ export class SessionManager {
     return text || null
   }
 
-  /**
-   * Update the timeout duration (in minutes)
-   */
   setTimeoutMinutes(minutes: number): void {
     this.timeoutMs = minutes * 60 * 1000
   }
 
   /**
-   * Get or create a session for a user. Resets the inactivity timer.
+   * Resolve a session for a user with topic-shift detection.
+   *
+   * If the user has an active session and a topic shift is detected,
+   * the current session is ended (with summary) and a fresh session is created.
+   * On new session or topic shift, relevant facts are queried from memories FTS5
+   * and stored for injection into the next response.
+   *
+   * ALWAYS creates a fresh session on shift (no reactivation of old sessions).
    */
-  getOrCreateSession(userId: string, source: string = 'web'): SessionInfo {
-    let session = this.sessions.get(userId)
+  resolveSession(userId: string, source: string = 'web', messageText?: string): SessionInfo {
+    const existingSession = this.sessions.get(userId)
 
-    if (!session) {
-      const id = `session-${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      session = {
-        id,
-        userId,
-        source,
-        startedAt: Date.now(),
-        lastActivity: Date.now(),
-        messageCount: 0,
-        summaryWritten: false,
-        restored: false,
+    if (existingSession && messageText) {
+      // Run topic-shift detection using sliding window
+      const history = getSessionMessages(this.db, existingSession.id)
+
+      if (history.length > 0) {
+        const newMsg: SessionMessage = {
+          content: messageText,
+          timestampMs: Date.now(),
+          tokens: estimateTokens(messageText),
+          hasAttachment: hasAttachmentMarker(messageText),
+        }
+
+        const result = detectTopicShift(history, newMsg)
+
+        if (result.shiftDetected) {
+          console.log(`[session] Topic shift detected for user ${userId} (score=${result.score}, signals=${JSON.stringify(result.signals)})`)
+
+          // End current session (fire-and-forget the summary)
+          this.endSession(userId, 'topic_shift').catch(err => {
+            console.error(`[session] Error ending session on topic shift:`, err)
+          })
+
+          // Create fresh session and inject facts
+          const newSession = this.createFreshSession(userId, source)
+          this.injectFacts(userId, messageText)
+          return newSession
+        }
       }
-      this.sessions.set(userId, session)
 
-      // Insert into SQLite (including last_activity and session_user)
-      this.db.prepare(
-        `INSERT INTO sessions (id, user_id, source, started_at, last_activity, session_user, message_count, summary_written)
-         VALUES (?, ?, ?, datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), ?, 0, 0)`
-      ).run(session.id, null, source, session.startedAt, session.lastActivity, userId)
+      // No shift — update topic tags incrementally and continue
+      if (messageText) {
+        const newTags = extractTopicTags([messageText])
+        existingSession.topicTags = mergeTopicTags(existingSession.topicTags ?? [], newTags)
+      }
 
-      // Log session start to tool_calls for activity log visibility
-      logToolCall(this.db, {
-        sessionId: session.id,
-        toolName: 'session_start',
-        input: JSON.stringify({ userId, source }),
-        output: JSON.stringify({ sessionId: session.id }),
-        durationMs: 0,
-        status: 'success',
-      })
-
-      // Start inactivity timer for the new session
+      existingSession.lastActivity = Date.now()
       this.resetTimer(userId)
+      return existingSession
     }
 
+    if (existingSession) {
+      // No message text — just continue the existing session
+      existingSession.lastActivity = Date.now()
+      this.resetTimer(userId)
+      return existingSession
+    }
+
+    // No active session — create a new one and inject facts
+    const session = this.createFreshSession(userId, source)
+    if (messageText) {
+      this.injectFacts(userId, messageText)
+    }
     return session
   }
 
   /**
-   * Record a message in the active session
+   * Create a fresh session (internal helper).
    */
+  private createFreshSession(userId: string, source: string): SessionInfo {
+    const id = `session-${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    const session: SessionInfo = {
+      id,
+      userId,
+      source,
+      startedAt: Date.now(),
+      lastActivity: Date.now(),
+      messageCount: 0,
+      summaryWritten: false,
+      restored: false,
+    }
+    this.sessions.set(userId, session)
+
+    this.db.prepare(
+      `INSERT INTO sessions (id, user_id, source, started_at, last_activity, session_user, message_count, summary_written)
+       VALUES (?, ?, ?, datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), ?, 0, 0)`
+    ).run(session.id, null, source, session.startedAt, session.lastActivity, userId)
+
+    logToolCall(this.db, {
+      sessionId: session.id,
+      toolName: 'session_start',
+      input: JSON.stringify({ userId, source }),
+      output: JSON.stringify({ sessionId: session.id }),
+      durationMs: 0,
+      status: 'success',
+    })
+
+    this.resetTimer(userId)
+    return session
+  }
+
+  /**
+   * Query memories FTS5 for relevant facts based on message text and store
+   * the injection for the next response.
+   */
+  private injectFacts(userId: string, messageText: string): void {
+    try {
+      const keywords = extractTopicTags([messageText])
+      if (keywords.length === 0) return
+
+      const facts = queryMemoriesFts(this.db, keywords, 5)
+      if (facts.length === 0) return
+
+      const injection = buildFactInjection(facts)
+      this.pendingFactInjection.set(userId, injection)
+
+      const session = this.sessions.get(userId)
+      if (session && this.onTopicShift) {
+        this.onTopicShift(session, injection)
+      }
+
+      console.log(`[session] Injected ${facts.length} facts for user ${userId} (keywords: ${keywords.join(', ')})`)
+    } catch (err) {
+      console.error('[session] Fact injection error:', err)
+    }
+  }
+
+  /**
+   * Consume and return any pending fact injection for a user.
+   * Returns the injection text and clears it, or null if none pending.
+   */
+  consumeFactInjection(userId: string): string | null {
+    const injection = this.pendingFactInjection.get(userId)
+    if (injection) {
+      this.pendingFactInjection.delete(userId)
+      return injection
+    }
+    return null
+  }
+
+  /**
+   * Get or create a session for a user. Resets the inactivity timer.
+   * This is the backward-compatible method that delegates to resolveSession
+   * without message text (no topic-check).
+   */
+  getOrCreateSession(userId: string, source: string = 'web'): SessionInfo {
+    return this.resolveSession(userId, source)
+  }
+
   recordMessage(userId: string): void {
     const session = this.sessions.get(userId)
     if (session) {
@@ -387,43 +463,26 @@ export class SessionManager {
       session.lastActivity = Date.now()
       this.resetTimer(userId)
 
-      // Update SQLite (message count and last activity)
       this.db.prepare(
         `UPDATE sessions SET message_count = ?, last_activity = datetime(? / 1000, 'unixepoch') WHERE id = ?`
       ).run(session.messageCount, session.lastActivity, session.id)
     }
   }
 
-  /**
-   * Get the active session for a user (without creating one)
-   */
   getSession(userId: string): SessionInfo | undefined {
     return this.sessions.get(userId)
   }
 
-  /**
-   * Check if a user has an active session
-   */
   hasActiveSession(userId: string): boolean {
     return this.sessions.has(userId)
   }
 
-  /**
-   * Handle /new command: immediately summarize and reset
-   */
   async handleNewCommand(userId: string): Promise<string | null> {
     const session = this.sessions.get(userId)
-    if (!session) {
-      return null
-    }
-
+    if (!session) return null
     return this.endSession(userId, 'manual')
   }
 
-  /**
-   * End a session: summarize and dispose.
-   * Always uses session.lastActivity as the timestamp for the daily file entry.
-   */
   private async endSession(userId: string, reason: SessionEndReason = 'timeout'): Promise<string | null> {
     const session = this.sessions.get(userId)
     if (!session) {
@@ -431,18 +490,14 @@ export class SessionManager {
       return null
     }
 
-    console.log(`[session] Ending session ${session.id} for user ${userId} (${session.messageCount} messages)`)
+    console.log(`[session] Ending session ${session.id} for user ${userId} (${session.messageCount} messages, reason: ${reason})`)
 
-    // Clear the timeout timer
     this.clearTimer(userId)
 
     let summary: string | null = null
 
-    // Generate summary if there were messages and a summarizer is configured
     if (session.messageCount > 0 && this.onSummarize) {
       try {
-        // Build conversation history from DB (single source of truth).
-        // In-memory agent messages are unreliable (lost on provider change, restart, etc.)
         const history = this.buildConversationHistory(session.id, {
           userId,
           startedAt: session.startedAt,
@@ -462,19 +517,16 @@ export class SessionManager {
       console.log(`[session] Skipping summary: messageCount=${session.messageCount}, onSummarize=${!!this.onSummarize}`)
     }
 
-    // Update SQLite with end time and summary flag
     this.db.prepare(
       `UPDATE sessions SET ended_at = datetime('now'), message_count = ?, summary_written = ? WHERE id = ?`
     ).run(session.messageCount, session.summaryWritten ? 1 : 0, session.id)
 
-    // Log session end to tool_calls for activity log visibility
     const durationMs = Date.now() - session.startedAt
     logToolCall(this.db, {
       sessionId: session.id,
       toolName: reason === 'timeout' ? 'session_timeout' : 'session_end',
       input: JSON.stringify({
-        userId,
-        reason,
+        userId, reason,
         messageCount: session.messageCount,
         durationMinutes: Math.round(durationMs / 60000),
       }),
@@ -486,20 +538,15 @@ export class SessionManager {
       status: 'success',
     })
 
-    // Notify listener
     if (this.onSessionEnd) {
       this.onSessionEnd(session, summary)
     }
 
-    // Remove from active sessions
     this.sessions.delete(userId)
 
     return summary
   }
 
-  /**
-   * End all active sessions.
-   */
   async endAllSessions(reason: Exclude<SessionEndReason, 'timeout'> = 'manual'): Promise<void> {
     const userIds = Array.from(this.sessions.keys())
     for (const userId of userIds) {
@@ -507,9 +554,6 @@ export class SessionManager {
     }
   }
 
-  /**
-   * Reset the inactivity timer for a user
-   */
   private resetTimer(userId: string): void {
     this.clearTimer(userId)
 
@@ -525,7 +569,6 @@ export class SessionManager {
       })
     }, this.timeoutMs)
 
-    // Unref so it doesn't keep the process alive
     if (typeof timer === 'object' && 'unref' in timer) {
       timer.unref()
     }
@@ -533,9 +576,6 @@ export class SessionManager {
     this.timers.set(userId, timer)
   }
 
-  /**
-   * Clear the timeout timer for a user
-   */
   private clearTimer(userId: string): void {
     const existing = this.timers.get(userId)
     if (existing) {
@@ -544,15 +584,11 @@ export class SessionManager {
     }
   }
 
-  /**
-   * Dispose all sessions and timers (for shutdown)
-   */
   async dispose(): Promise<void> {
     for (const [userId] of this.timers) {
       this.clearTimer(userId)
     }
 
-    // End all active sessions without summarizing
     for (const [, session] of this.sessions) {
       this.db.prepare(
         `UPDATE sessions SET ended_at = datetime('now'), message_count = ?, summary_written = ? WHERE id = ?`
@@ -561,11 +597,9 @@ export class SessionManager {
 
     this.sessions.clear()
     this.timers.clear()
+    this.pendingFactInjection.clear()
   }
 
-  /**
-   * Get session metadata from SQLite
-   */
   getSessionMetadata(sessionId: string): {
     id: string
     started_at: string
@@ -590,4 +624,18 @@ export class SessionManager {
       session_user: string | null
     } | undefined
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function mergeTopicTags(existing: string[], incoming: string[]): string[] {
+  const merged = [...existing]
+  for (const tag of incoming) {
+    if (!merged.includes(tag)) {
+      merged.push(tag)
+    }
+  }
+  return merged.slice(0, 8)
 }

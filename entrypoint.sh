@@ -32,6 +32,9 @@ if [ "$(stat -c '%u' /data)" = "0" ]; then
     chown -R agent:agent /data
 fi
 
+# Always ensure /data/config is owned by agent (may have been created by root)
+chown -R agent:agent /data/config 2>/dev/null || true
+
 # Set up home defaults if missing (volume overlays image content on first run)
 if [ ! -f /workspace/.bashrc ]; then
     cp /etc/skel/.bashrc /workspace/.bashrc

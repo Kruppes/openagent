@@ -229,6 +229,7 @@ export interface ProviderConfig {
   status?: 'connected' | 'error' | 'untested'
   authMethod?: AuthMethod
   oauthCredentials?: OAuthCredentialsStored // encrypted at rest
+  pinnedModels?: string[] // Models pinned for Telegram /model switcher
 }
 
 /**
@@ -504,6 +505,7 @@ export function updateProvider(id: string, input: {
   apiKey?: string
   defaultModel?: string
   degradedThresholdMs?: number
+  pinnedModels?: string[]
 }): ProviderConfig {
   const file = loadProviders()
   const index = file.providers.findIndex(p => p.id === id)
@@ -538,6 +540,7 @@ export function updateProvider(id: string, input: {
   if (input.apiKey !== undefined) existing.apiKey = input.apiKey ? encrypt(input.apiKey) : ''
   if (input.defaultModel !== undefined) existing.defaultModel = input.defaultModel
   if (input.degradedThresholdMs !== undefined) existing.degradedThresholdMs = input.degradedThresholdMs
+  if (input.pinnedModels !== undefined) existing.pinnedModels = input.pinnedModels
 
   // For providers with fixed URLs, always sync from preset
   const currentPreset = PROVIDER_TYPE_PRESETS[existing.providerType]

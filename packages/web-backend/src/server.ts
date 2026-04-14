@@ -32,6 +32,7 @@ import {
   createYoloTools,
   createBuiltinWebTools,
   createReadChatHistoryTool,
+  createSendFileTool,
   logToolCall,
 } from '@openagent/core'
 import type { ProviderConfig, LoopDetectionConfig, BuiltinToolsConfig } from '@openagent/core'
@@ -199,6 +200,13 @@ function handleTaskNotification(taskId: string, injection: string, taskStore: Ta
     console.error(`[openagent] Failed to deliver task notification for ${taskId}:`, err)
   })
 }
+
+// Startup cleanup: mark any tasks that were 'running' or 'paused' when the
+// server last crashed/restarted as failed (zombie tasks).
+console.log('[openagent] Cleaning up zombie tasks from previous run...')
+db.prepare(
+  `UPDATE tasks SET status='failed', result_status='failed', result_summary='Aborted: server restarted', error_message='Aborted: server restarted', completed_at=datetime('now') WHERE status IN ('running', 'paused')`
+).run()
 
 // Initialize task infrastructure (provider-independent)
 const taskStore = new TaskStore(db)
@@ -422,6 +430,19 @@ const agentTools = [
   getCronjobTool(cronjobToolsOptions),
   createReminderTool(cronjobToolsOptions),
   createReadChatHistoryTool({ db }),
+  createSendFileTool({
+    getFileSender: () => {
+      if (!telegramBot) return null
+      const defaultUserId = 1
+      const chatId = telegramBot.getTelegramChatIdForUser(defaultUserId)
+      if (!chatId) return null
+
+      const bot = telegramBot
+      return async (filePath: string, caption: string | undefined, isImage: boolean) => {
+        return bot.sendFile(chatId, filePath, caption, isImage)
+      }
+    },
+  }),
 ]
 
 // Start the task scheduler to pick up existing cronjobs
@@ -574,7 +595,11 @@ async function restartTelegramBot(): Promise<void> {
   }
 
   // Try to create a new bot with the (potentially updated) config
-  telegramBot = createTelegramBot(agentCore, db, onTelegramChatEvent)
+  telegramBot = createTelegramBot(agentCore, db, onTelegramChatEvent, () => {
+    initOrUpdateAgentCore().catch((err) => {
+      console.error('[openagent] Error initializing agent core after Telegram provider change:', err)
+    })
+  })
   if (telegramBot) {
     try {
       await telegramBot.start()
