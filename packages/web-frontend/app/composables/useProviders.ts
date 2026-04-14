@@ -8,11 +8,14 @@ export interface Provider {
   apiKey: string
   apiKeyMasked: string
   defaultModel: string
+  enabledModels?: string[]
   degradedThresholdMs?: number
   status?: 'connected' | 'error' | 'untested'
+  modelStatuses?: Record<string, 'connected' | 'error' | 'untested'>
   authMethod?: 'api-key' | 'oauth'
   oauthCredentials?: { expires: number }
   cost?: { input: number; output: number } | null
+  modelCosts?: Record<string, { input: number; output: number }>
 }
 
 export interface OAuthLoginResponse {
@@ -49,7 +52,9 @@ export interface AvailableModel {
 interface ProvidersResponse {
   providers: Provider[]
   activeProvider: string | null
+  activeModel: string | null
   fallbackProvider: string | null
+  fallbackModel: string | null
   presets: Record<string, ProviderTypePreset>
 }
 
@@ -68,7 +73,9 @@ export function useProviders() {
 
   const providers = useState<Provider[]>('providers_list', () => [])
   const activeProviderId = useState<string | null>('active_provider', () => null)
+  const activeModelId = useState<string | null>('active_model', () => null)
   const fallbackProviderId = useState<string | null>('fallback_provider', () => null)
+  const fallbackModelId = useState<string | null>('fallback_model', () => null)
   const presets = useState<Record<string, ProviderTypePreset>>('provider_presets', () => ({}))
   const loading = useState<boolean>('providers_loading', () => false)
   const error = useState<string | null>('providers_error', () => null)
@@ -81,7 +88,9 @@ export function useProviders() {
       const data = await apiFetch<ProvidersResponse>('/api/providers')
       providers.value = data.providers
       activeProviderId.value = data.activeProvider
+      activeModelId.value = data.activeModel
       fallbackProviderId.value = data.fallbackProvider
+      fallbackModelId.value = data.fallbackModel
       presets.value = data.presets
     } catch (err) {
       error.value = (err as Error).message
@@ -96,6 +105,7 @@ export function useProviders() {
     baseUrl?: string
     apiKey?: string
     defaultModel: string
+    enabledModels?: string[]
     degradedThresholdMs?: number
   }): Promise<Provider | null> {
     error.value = null
@@ -118,6 +128,7 @@ export function useProviders() {
     baseUrl?: string
     apiKey?: string
     defaultModel?: string
+    enabledModels?: string[]
     degradedThresholdMs?: number
   }): Promise<Provider | null> {
     error.value = null
@@ -146,11 +157,12 @@ export function useProviders() {
     }
   }
 
-  async function testProvider(id: string): Promise<TestResult> {
-    testingId.value = id
+  async function testProvider(id: string, modelId?: string): Promise<TestResult> {
+    testingId.value = modelId ? `${id}:${modelId}` : id
     try {
       const result = await apiFetch<TestResult>(`/api/providers/${id}/test`, {
         method: 'POST',
+        body: JSON.stringify({ modelId }),
       })
       await fetchProviders()
       return result
@@ -161,11 +173,15 @@ export function useProviders() {
     }
   }
 
-  async function activateProvider(id: string): Promise<boolean> {
+  async function activateProvider(id: string, modelId?: string): Promise<boolean> {
     error.value = null
     try {
-      await apiFetch(`/api/providers/${id}/activate`, { method: 'POST' })
-      activeProviderId.value = id
+      const result = await apiFetch<{ activeProvider: string; activeModel: string | null }>(
+        `/api/providers/${id}/activate`,
+        { method: 'POST', body: JSON.stringify({ modelId }) },
+      )
+      activeProviderId.value = result.activeProvider
+      activeModelId.value = result.activeModel
       return true
     } catch (err) {
       error.value = (err as Error).message
@@ -201,14 +217,15 @@ export function useProviders() {
     })
   }
 
-  async function setFallbackProvider(providerId: string | null): Promise<boolean> {
+  async function setFallbackProvider(providerId: string | null, modelId?: string | null): Promise<boolean> {
     error.value = null
     try {
-      await apiFetch('/api/providers/fallback', {
-        method: 'PUT',
-        body: JSON.stringify({ providerId }),
-      })
-      fallbackProviderId.value = providerId
+      const result = await apiFetch<{ fallbackProvider: string | null; fallbackModel: string | null }>(
+        '/api/providers/fallback',
+        { method: 'PUT', body: JSON.stringify({ providerId, modelId }) },
+      )
+      fallbackProviderId.value = result.fallbackProvider
+      fallbackModelId.value = result.fallbackModel
       return true
     } catch (err) {
       error.value = (err as Error).message
@@ -219,7 +236,9 @@ export function useProviders() {
   return {
     providers,
     activeProviderId,
+    activeModelId,
     fallbackProviderId,
+    fallbackModelId,
     presets,
     loading,
     error,
