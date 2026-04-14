@@ -443,10 +443,10 @@ describe('provider CRUD', () => {
     expect(() => setFallbackProvider('nonexistent')).toThrow('not found')
   })
 
-  it('setFallbackProvider rejects active provider', () => {
+  it('setFallbackProvider rejects active provider with same model', () => {
     setupEmpty()
     const p1 = addProvider({ name: 'primary', providerType: 'openai', apiKey: 'sk-1', defaultModel: 'gpt-4o' })
-    expect(() => setFallbackProvider(p1.id)).toThrow('cannot be the same as the active provider')
+    expect(() => setFallbackProvider(p1.id)).toThrow('Fallback cannot be the same provider and model as the active selection')
   })
 
   it('clearFallbackProvider removes the fallback provider setting', () => {
