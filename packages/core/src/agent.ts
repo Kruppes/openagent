@@ -507,7 +507,7 @@ export class AgentCore {
         // and clearing messages here would wipe the user's conversation history
         // before their session has a chance to generate a summary.
         if (session.userId !== 'system') {
-          this.agent.clearMessages()
+          this.agent.state.messages = []
           this.refreshSystemPrompt()
         }
 
@@ -543,7 +543,7 @@ export class AgentCore {
     this.model = buildModel(provider, modelId)
     this.apiKey = apiKey
     this.providerConfig = provider
-    this.agent.setModel(this.model)
+    this.agent.state.model = this.model
   }
 
   /**
@@ -1086,7 +1086,7 @@ Do NOT add this section if everything discussed was resolved or if there is noth
       builtinTools: builtinToolsPromptConfig,
       agentSkillsDir: getAgentSkillsDir(),
     })
-    this.agent.setSystemPrompt(prompt)
+    this.agent.state.systemPrompt = prompt
   }
 
   /**

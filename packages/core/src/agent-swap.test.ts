@@ -100,7 +100,7 @@ describe('AgentCore.swapProvider', () => {
     expect(piAgent.state.model.id).toBe('claude-sonnet-4-20250514')
   })
 
-  it('swapProvider() calls agent.setModel() with the new model', () => {
+  it('swapProvider() updates agent.state.model with the new model', () => {
     const agentCore = new AgentCore({
       model: makeModel(),
       apiKey: 'sk-primary',
@@ -109,14 +109,11 @@ describe('AgentCore.swapProvider', () => {
     })
 
     const piAgent = agentCore.getAgent()
-    const setModelSpy = vi.spyOn(piAgent, 'setModel')
 
     const fallback = makeFallbackProvider()
     agentCore.swapProvider(fallback, 'sk-fallback')
 
-    expect(setModelSpy).toHaveBeenCalledOnce()
-    const calledModel = setModelSpy.mock.calls[0][0]
-    expect(calledModel.id).toBe('claude-sonnet-4-20250514')
+    expect(piAgent.state.model.id).toBe('claude-sonnet-4-20250514')
   })
 
   it('conversation context (messages) is preserved after swap', () => {
