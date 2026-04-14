@@ -537,9 +537,10 @@ export class AgentCore {
   /**
    * Hot-swap the provider at runtime while preserving conversation context.
    * Updates model, apiKey, and providerConfig, then calls agent.setModel().
+   * If modelId is provided, builds the model for that specific model ID.
    */
-  swapProvider(provider: ProviderConfig, apiKey: string): void {
-    this.model = buildModel(provider)
+  swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string): void {
+    this.model = buildModel(provider, modelId)
     this.apiKey = apiKey
     this.providerConfig = provider
     this.agent.setModel(this.model)
