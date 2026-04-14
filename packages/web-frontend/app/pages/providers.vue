@@ -1,5 +1,5 @@
 <template>
-  <div class="flex h-full flex-col overflow-hidden">
+  <div class="flex h-full flex-col overflow-y-auto">
     <PageHeader :title="$t('providers.title')" :subtitle="$t('providers.subtitle')">
       <template #actions>
         <Button @click="openCreate">
@@ -9,7 +9,7 @@
       </template>
     </PageHeader>
 
-    <div class="mx-auto flex w-full max-w-5xl flex-1 flex-col overflow-y-auto p-6">
+    <div class="mx-auto flex w-full max-w-5xl flex-1 flex-col p-6">
       <!-- Error banner -->
       <Alert v-if="error" variant="destructive" class="mb-4">
         <AlertDescription class="flex items-center justify-between">
