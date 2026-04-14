@@ -7,6 +7,7 @@ import type { ProviderConfig } from '@openagent/core'
 import {
   getActiveProvider,
   loadProvidersDecrypted,
+  parseProviderModelId,
   ensureConfigTemplates,
   loadConfig,
   logToolCall,
@@ -465,9 +466,9 @@ export class MemoryConsolidationScheduler {
   }
 
   private resolveProvider(): ProviderConfig | null {
-    const providerId = this.settings.providerId
+    const rawId = this.settings.providerId
 
-    if (!providerId || providerId === 'default') {
+    if (!rawId || rawId === 'default') {
       // Try the injected getDefaultProvider first, then fall back to getActiveProvider
       if (this.getDefaultProviderFn) {
         const provider = this.getDefaultProviderFn()
@@ -476,9 +477,20 @@ export class MemoryConsolidationScheduler {
       return getActiveProvider()
     }
 
+    // Parse composite "providerId:modelId" format
+    const { providerId, modelId } = parseProviderModelId(rawId)
+    if (!providerId) return getActiveProvider()
+
     // Look up the specific provider
     const file = loadProvidersDecrypted()
-    return file.providers.find(p => p.id === providerId) ?? getActiveProvider()
+    let provider = file.providers.find(p => p.id === providerId) ?? null
+    if (!provider) return getActiveProvider()
+
+    // Override defaultModel if a specific model was selected
+    if (modelId) {
+      provider = { ...provider, defaultModel: modelId }
+    }
+    return provider
   }
 
   private loadSettings(): ConsolidationSettings {
