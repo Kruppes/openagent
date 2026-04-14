@@ -186,7 +186,21 @@
     "default": "Standard",
     "setDefault": "Als Standard",
     "isDefault": "Dies ist das Standardmodell",
-    "modelsCount": "Modelle"
+    "modelsCount": "Modelle",
+    "ollamaModels": "Installierte Modelle",
+    "ollamaModelsLoading": "Modelle werden von Ollama geladen...",
+    "ollamaModelsError": "Ollama nicht erreichbar",
+    "ollamaModelsEmpty": "Keine Modelle installiert. Lade ein Modell herunter um zu starten.",
+    "ollamaModelsRefresh": "Aktualisieren",
+    "ollamaModelSize": "Größe",
+    "ollamaPullModel": "Modell herunterladen",
+    "ollamaPullPlaceholder": "z.B. llama3, gemma4, mistral...",
+    "ollamaPulling": "Wird heruntergeladen",
+    "ollamaPullSuccess": "Modell erfolgreich heruntergeladen",
+    "ollamaPullError": "Download fehlgeschlagen",
+    "ollamaDeleteConfirm": "Modell {model} löschen?",
+    "ollamaDeleteSuccess": "Modell gelöscht",
+    "ollamaNoModelsHint": "Lade die Modellliste von deiner Ollama-Instanz, dann wähle die zu aktivierenden Modelle aus."
   },
   "logs": {
     "title": "Aktivitätsprotokolle",
