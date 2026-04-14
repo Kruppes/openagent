@@ -173,7 +173,9 @@ export class AgentCore {
    * Process a user message (called from the queue).
    */
   private async *processUserMessage(userId: string, text: string, source: string, attachments?: UploadDescriptor[]): AsyncIterable<ResponseChunk> {
-    const session = this.sessionManager.getOrCreateSession(userId, source)
+    // Use resolveSession with messageText to enable topic-shift detection
+    // and fact injection on new sessions / topic shifts
+    const session = this.sessionManager.resolveSession(userId, source, text)
     const sessionId = session.id
 
     // Resolve username for user profile injection (skip for group chats)
@@ -193,6 +195,17 @@ export class AgentCore {
     const channel = source.startsWith('telegram') ? 'telegram' : source
     this.refreshSystemPrompt(channel, currentUser)
     this.sessionManager.recordMessage(userId)
+
+    // Consume any pending fact injection (set during resolveSession on
+    // new session start or topic shift) and prepend to user message
+    const factInjection = this.sessionManager.consumeFactInjection(userId)
+    if (factInjection) {
+      // Inject facts as additional context in the system prompt
+      const currentPrompt = this.agent.state.systemPrompt
+      if (currentPrompt && !currentPrompt.includes('## Relevant Facts from Memory')) {
+        this.agent.setSystemPrompt(currentPrompt + factInjection)
+      }
+    }
 
     // Build image content and file context from attachments
     const images: ImageContent[] = []
