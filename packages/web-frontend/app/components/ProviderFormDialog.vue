@@ -249,7 +249,7 @@
             type="url"
             placeholder="https://..."
           />
-          <p v-if="selectedPreset?.type === 'ollama-local'" class="text-xs text-muted-foreground">
+          <p v-if="selectedPreset?.type === 'ollama'" class="text-xs text-muted-foreground">
             {{ $t('providers.ollamaUrlHint') }}
           </p>
         </div>
@@ -426,7 +426,7 @@ const ollamaPullProgress = ref(0)
 const ollamaPullResult = ref<{ success: boolean; message: string } | null>(null)
 
 const isOllamaProvider = computed(() => {
-  return form.providerType === 'ollama-local' || form.providerType === 'ollama-cloud'
+  return form.providerType === 'ollama'
 })
 
 const selectedPreset = computed(() => {
@@ -470,7 +470,7 @@ watch(() => [props.open, props.provider] as const, ([isOpen, entry]) => {
     form.degradedThresholdMs = entry.degradedThresholdMs ?? 5000
     // Reset Ollama state
     resetOllamaState()
-    if (entry.providerType === 'ollama-local' || entry.providerType === 'ollama-cloud') {
+    if (entry.providerType === 'ollama') {
       loadOllamaModels()
     } else if (entry.providerType) {
       loadModelsForType(entry.providerType)
@@ -675,7 +675,7 @@ function onTypeChange() {
   }
   oauthError.value = null
   resetOllamaState()
-  if (form.providerType === 'ollama-local' || form.providerType === 'ollama-cloud') {
+  if (form.providerType === 'ollama') {
     loadOllamaModels()
   } else {
     loadModelsForType(form.providerType)

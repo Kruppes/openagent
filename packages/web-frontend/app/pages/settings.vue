@@ -2267,7 +2267,7 @@ const sttProviderOptions = computed(() => {
 
   // Ollama providers
   const ollamaProviders = providers.value.filter(p =>
-    p.providerType.startsWith('ollama-')
+    p.providerType === 'ollama'
   )
   if (ollamaProviders.length > 0) {
     for (const p of ollamaProviders) {
