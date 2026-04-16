@@ -22,6 +22,17 @@ export type SttProvider = (typeof SETTINGS_STT_PROVIDERS)[number]
 export const SETTINGS_STT_OPENAI_MODELS = ['whisper-1', 'gpt-4o-transcribe', 'gpt-4o-mini-transcribe'] as const
 export type SttOpenAiModel = (typeof SETTINGS_STT_OPENAI_MODELS)[number]
 
+/**
+ * Thinking / reasoning level for the agent.
+ * - `off`: no reasoning (fastest, cheapest, default)
+ * - `minimal` → `xhigh`: progressively more reasoning effort
+ *
+ * Note: `xhigh` is only supported by a subset of models (e.g. OpenAI gpt-5.x).
+ * Providers that don't support the requested level usually map it down.
+ */
+export const SETTINGS_THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
+export type SettingsThinkingLevel = (typeof SETTINGS_THINKING_LEVELS)[number]
+
 export interface HealthMonitorNotificationTogglesContract {
   healthyToDegraded: boolean
   degradedToHealthy: boolean
@@ -78,6 +89,12 @@ export interface TasksSettingsContract {
   telegramDelivery: TaskTelegramDelivery
   loopDetection: TasksLoopDetectionSettingsContract
   statusUpdateIntervalMinutes: number
+  /**
+   * Thinking level used for background task agents, the task runner's loop
+   * detection calls, and internal background jobs (fact extraction, memory
+   * consolidation, session summaries). Defaults to `off`.
+   */
+  backgroundThinkingLevel: SettingsThinkingLevel
 }
 
 export interface TtsSettingsContract {
@@ -111,6 +128,11 @@ export interface SettingsContract {
   sessionSummaryProviderId: string
   language: string
   timezone: string
+  /**
+   * Thinking level used for the main chat agent (web + telegram).
+   * Defaults to `off` so existing installations keep zero-cost behavior.
+   */
+  thinkingLevel: SettingsThinkingLevel
   healthMonitorIntervalMinutes: number
   batchingDelayMs: number
   uploadRetentionDays: number
@@ -132,6 +154,7 @@ export interface SettingsStorageContract {
   sessionSummaryProviderId?: string
   language?: string
   timezone?: string
+  thinkingLevel?: SettingsThinkingLevel
   healthMonitorIntervalMinutes?: number
   healthMonitor?: Partial<HealthMonitorSettingsContract> & { intervalMinutes?: number }
   batchingDelayMs?: number
@@ -175,6 +198,7 @@ export const DEFAULT_SETTINGS_CONTRACT: SettingsContract = {
   sessionSummaryProviderId: '',
   language: 'match',
   timezone: 'UTC',
+  thinkingLevel: 'off',
   healthMonitorIntervalMinutes: 5,
   batchingDelayMs: 2500,
   uploadRetentionDays: 30,
@@ -219,6 +243,7 @@ export const DEFAULT_SETTINGS_CONTRACT: SettingsContract = {
       smartCheckInterval: 5,
     },
     statusUpdateIntervalMinutes: 10,
+    backgroundThinkingLevel: 'off',
   },
   tts: {
     enabled: false,
@@ -244,6 +269,16 @@ export const DEFAULT_SETTINGS_CONTRACT: SettingsContract = {
   },
 }
 
+function normalizeThinkingLevel(
+  value: SettingsThinkingLevel | undefined,
+  fallback: SettingsThinkingLevel,
+): SettingsThinkingLevel {
+  if (value && (SETTINGS_THINKING_LEVELS as readonly string[]).includes(value)) {
+    return value
+  }
+  return fallback
+}
+
 export function normalizeSettingsContract(input: DeepPartial<SettingsContract> | null | undefined): SettingsContract {
   const source = input ?? {}
 
@@ -252,6 +287,7 @@ export function normalizeSettingsContract(input: DeepPartial<SettingsContract> |
     sessionSummaryProviderId: source.sessionSummaryProviderId ?? DEFAULT_SETTINGS_CONTRACT.sessionSummaryProviderId,
     language: source.language ?? DEFAULT_SETTINGS_CONTRACT.language,
     timezone: source.timezone ?? DEFAULT_SETTINGS_CONTRACT.timezone,
+    thinkingLevel: normalizeThinkingLevel(source.thinkingLevel, DEFAULT_SETTINGS_CONTRACT.thinkingLevel),
     healthMonitorIntervalMinutes: source.healthMonitorIntervalMinutes ?? DEFAULT_SETTINGS_CONTRACT.healthMonitorIntervalMinutes,
     batchingDelayMs: source.batchingDelayMs ?? DEFAULT_SETTINGS_CONTRACT.batchingDelayMs,
     uploadRetentionDays: source.uploadRetentionDays ?? DEFAULT_SETTINGS_CONTRACT.uploadRetentionDays,
@@ -327,6 +363,10 @@ export function normalizeSettingsContract(input: DeepPartial<SettingsContract> |
       },
       statusUpdateIntervalMinutes:
         source.tasks?.statusUpdateIntervalMinutes ?? DEFAULT_SETTINGS_CONTRACT.tasks.statusUpdateIntervalMinutes,
+      backgroundThinkingLevel: normalizeThinkingLevel(
+        source.tasks?.backgroundThinkingLevel,
+        DEFAULT_SETTINGS_CONTRACT.tasks.backgroundThinkingLevel,
+      ),
     },
     tts: {
       enabled: source.tts?.enabled ?? DEFAULT_SETTINGS_CONTRACT.tts.enabled,

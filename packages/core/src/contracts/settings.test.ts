@@ -54,4 +54,37 @@ describe('settings contracts', () => {
 
     expect(payload.healthMonitorIntervalMinutes).toBe(4)
   })
+
+  describe('thinking level', () => {
+    it('defaults both thinking levels to "off"', () => {
+      expect(DEFAULT_SETTINGS_CONTRACT.thinkingLevel).toBe('off')
+      expect(DEFAULT_SETTINGS_CONTRACT.tasks.backgroundThinkingLevel).toBe('off')
+    })
+
+    it('preserves valid thinking levels on normalization', () => {
+      const normalized = normalizeSettingsContract({
+        thinkingLevel: 'medium',
+        tasks: {
+          backgroundThinkingLevel: 'low',
+        },
+      })
+
+      expect(normalized.thinkingLevel).toBe('medium')
+      expect(normalized.tasks.backgroundThinkingLevel).toBe('low')
+    })
+
+    it('falls back to defaults when thinking level values are invalid', () => {
+      const normalized = normalizeSettingsContract({
+        // @ts-expect-error — deliberately passing an unsupported value
+        thinkingLevel: 'extreme',
+        tasks: {
+          // @ts-expect-error — deliberately passing an unsupported value
+          backgroundThinkingLevel: '',
+        },
+      })
+
+      expect(normalized.thinkingLevel).toBe('off')
+      expect(normalized.tasks.backgroundThinkingLevel).toBe('off')
+    })
+  })
 })
