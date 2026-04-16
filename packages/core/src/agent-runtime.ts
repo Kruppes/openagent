@@ -10,6 +10,8 @@ import { logTokenUsage, logToolCall } from './token-logger.js'
 import { estimateCost, getApiKeyForProvider, buildModel } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import type { ProviderManager } from './provider-manager.js'
+import type { SettingsThinkingLevel } from './contracts/settings.js'
+import { normalizeThinkingLevel } from './thinking-level.js'
 import { assembleSystemPrompt, ensureMemoryStructure, ensureConfigStructure, getMemoryDir } from './memory.js'
 import type { SkillPromptEntry } from './memory.js'
 import { getWorkspaceDir } from './workspace.js'
@@ -34,6 +36,11 @@ export interface AgentRuntimeOptions {
   providerConfig?: ProviderConfig
   providerManager?: ProviderManager
   getCurrentToolUserId?: () => number | undefined
+  /**
+   * Reasoning / thinking level applied to every LLM turn. Defaults to the value
+   * stored in `settings.json` (`thinkingLevel`), or `off` if not configured.
+   */
+  thinkingLevel?: SettingsThinkingLevel
 }
 
 export interface AgentRuntimeBoundary {
@@ -46,6 +53,8 @@ export interface AgentRuntimeBoundary {
   getStateSnapshot(): AgentRuntimeStateSnapshot
   getCurrentModel(): Model<Api>
   getCurrentApiKey(): string
+  /** Update the thinking level used for future turns. */
+  setThinkingLevel(level: SettingsThinkingLevel | string): void
 }
 
 /**
@@ -420,7 +429,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     ensureMemoryStructure(options.memoryDir)
     ensureConfigStructure()
 
-    const { builtinToolsConfig, sttEnabled } = this.readRuntimeSettings()
+    const { builtinToolsConfig, sttEnabled, thinkingLevel: storedThinkingLevel } = this.readRuntimeSettings()
+    const effectiveThinkingLevel = normalizeThinkingLevel(options.thinkingLevel) ?? storedThinkingLevel ?? 'off'
 
     const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt()
 
@@ -441,6 +451,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         systemPrompt,
         model: this.model,
         tools,
+        thinkingLevel: effectiveThinkingLevel,
       },
       getApiKey: this.providerConfig?.authMethod === 'oauth'
         ? async () => {
@@ -467,6 +478,12 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
   refreshSystemPrompt(channel?: string, currentUser?: { username: string }): void {
     this.agent.state.systemPrompt = this.buildSystemPrompt(channel, currentUser)
+  }
+
+  setThinkingLevel(level: SettingsThinkingLevel | string): void {
+    const normalized = normalizeThinkingLevel(level)
+    if (!normalized) return
+    this.agent.state.thinkingLevel = normalized
   }
 
   swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string): void {
@@ -513,16 +530,24 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     timezone: string | undefined
     builtinToolsConfig: BuiltinToolsConfig | undefined
     sttEnabled: boolean
+    thinkingLevel: SettingsThinkingLevel | undefined
   } {
     let language: string | undefined
     let timezone: string | undefined
     let builtinToolsConfig: BuiltinToolsConfig | undefined
+    let thinkingLevel: SettingsThinkingLevel | undefined
     try {
       ensureConfigTemplates()
-      const settings = loadConfig<{ language?: string; timezone?: string; builtinTools?: BuiltinToolsConfig }>('settings.json')
+      const settings = loadConfig<{
+        language?: string
+        timezone?: string
+        builtinTools?: BuiltinToolsConfig
+        thinkingLevel?: string
+      }>('settings.json')
       language = settings.language
       timezone = settings.timezone
       builtinToolsConfig = settings.builtinTools
+      thinkingLevel = normalizeThinkingLevel(settings.thinkingLevel)
     } catch {
       // Config not available yet, use defaults
     }
@@ -534,7 +559,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       // STT settings not available
     }
 
-    return { language, timezone, builtinToolsConfig, sttEnabled }
+    return { language, timezone, builtinToolsConfig, sttEnabled, thinkingLevel }
   }
 
   private buildSystemPrompt(channel?: string, currentUser?: { username: string }): string {
