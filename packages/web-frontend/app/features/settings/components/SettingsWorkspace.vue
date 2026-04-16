@@ -158,6 +158,22 @@
                   <p class="text-xs text-muted-foreground">{{ $t('settings.timezoneHint') }}</p>
                 </div>
 
+                <!-- Thinking level (main chat agent) -->
+                <div class="flex flex-col gap-2">
+                  <Label for="thinking-level">{{ $t('settings.thinkingLevel') }}</Label>
+                  <Select v-model="form.thinkingLevel">
+                    <SelectTrigger id="thinking-level">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="lvl in thinkingLevelOptions" :key="lvl.value" :value="lvl.value">
+                        {{ lvl.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.thinkingLevelHint') }}</p>
+                </div>
+
                 <Separator />
 
                 <div class="rounded-xl border border-border bg-card px-4 py-4">
@@ -979,6 +995,22 @@
                   <p class="text-xs text-muted-foreground">{{ $t('settings.tasksTelegramDeliveryHint') }}</p>
                 </div>
 
+                <!-- Background thinking level (task agent + internal background jobs) -->
+                <div class="flex flex-col gap-2">
+                  <Label for="background-thinking-level">{{ $t('settings.backgroundThinkingLevel') }}</Label>
+                  <Select v-model="form.tasks.backgroundThinkingLevel">
+                    <SelectTrigger id="background-thinking-level">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="lvl in thinkingLevelOptions" :key="lvl.value" :value="lvl.value">
+                        {{ lvl.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.backgroundThinkingLevelHint') }}</p>
+                </div>
+
                 <Separator />
 
                 <!-- Loop Detection Section -->
@@ -1632,7 +1664,7 @@
 </template>
 
 <script setup lang="ts">
-import { canonicalizeProviderModelRef } from '@openagent/core/contracts'
+import { canonicalizeProviderModelRef, SETTINGS_THINKING_LEVELS, type SettingsThinkingLevel } from '@openagent/core/contracts'
 import { useSettingsApi } from '~/api/settings'
 import type { MemoryConsolidationSettings, FactExtractionSettings, HealthMonitorNotificationToggles, HealthMonitorSettings, AgentHeartbeatSettings, TasksSettings, TtsSettings, SttSettings } from '~/composables/useSettings'
 import type { TelegramUser } from '~/composables/useTelegramUsers'
@@ -1912,12 +1944,21 @@ async function handleRunConsolidation() {
   }
 }
 
+/* ── Thinking level options (shared by Agent + Tasks tabs) ── */
+const thinkingLevelOptions = computed(() =>
+  SETTINGS_THINKING_LEVELS.map(value => ({
+    value,
+    label: t(`settings.thinkingLevelOptions.${value}`),
+  })),
+)
+
 /* ── Form state ── */
 interface SettingsForm {
   sessionTimeoutMinutes: number
   sessionSummaryProviderId: string
   language: string
   timezone: string
+  thinkingLevel: SettingsThinkingLevel
   healthMonitorIntervalMinutes: number
   batchingDelayMs: number
   uploadRetentionDays: number
@@ -1954,6 +1995,7 @@ function hydrateForm() {
     sessionSummaryProviderId: migrateProviderValue(s.sessionSummaryProviderId ?? ''),
     language: s.language,
     timezone: s.timezone,
+    thinkingLevel: s.thinkingLevel,
     healthMonitorIntervalMinutes: s.healthMonitorIntervalMinutes,
     batchingDelayMs: s.batchingDelayMs,
     uploadRetentionDays: s.uploadRetentionDays,
