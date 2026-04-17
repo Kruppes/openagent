@@ -1,6 +1,7 @@
 services:
   openagent:
-    image: ghcr.io/meteyou/openagent:latest
+    build: .
+    image: openagent:local
     container_name: openagent
     restart: unless-stopped
     ports:
