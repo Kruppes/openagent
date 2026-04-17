@@ -644,7 +644,11 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       telegramBot = null
     }
 
-    telegramBot = createTelegramBot(agentCore, db, onTelegramChatEvent)
+    telegramBot = createTelegramBot(agentCore, db, onTelegramChatEvent, () => {
+      initOrUpdateAgentCore().catch((err) => {
+        logger.error('[openagent] Error initializing agent core after Telegram provider change:', err)
+      })
+    })
     if (telegramBot) {
       try {
         await telegramBot.start()
