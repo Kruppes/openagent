@@ -89,20 +89,20 @@ if [ -f "$AGENT_PACKAGES" ] && [ -s "$AGENT_PACKAGES" ]; then
 
     if [ ${#available[@]} -gt 0 ]; then
         echo "[openagent] Restoring ${#available[@]} agent-installed package(s)..."
-        # Try batch install first (fast)
-        if apt-get install -y "${available[@]}" > /tmp/apt-restore.log 2>&1; then
+        failed=()
+        idx=0
+        for pkg in "${available[@]}"; do
+            idx=$((idx + 1))
+            echo "[openagent]   [$idx/${#available[@]}] Installing $pkg..."
+            if ! apt-get install -y "$pkg" > /dev/null 2>&1; then
+                failed+=("$pkg")
+                echo "[openagent]   ✗ Failed: $pkg"
+            fi
+        done
+        succeeded=$(( ${#available[@]} - ${#failed[@]} ))
+        if [ ${#failed[@]} -eq 0 ]; then
             echo "[openagent] ✓ All ${#available[@]} packages restored successfully."
         else
-            # Fallback: install one by one to identify problematic packages
-            echo "[openagent] ⚠ Batch install failed, trying packages individually..."
-            failed=()
-            for pkg in "${available[@]}"; do
-                if ! apt-get install -y "$pkg" > /dev/null 2>&1; then
-                    failed+=("$pkg")
-                    echo "[openagent]   ✗ Failed: $pkg"
-                fi
-            done
-            succeeded=$(( ${#available[@]} - ${#failed[@]} ))
             echo "[openagent] ✓ Restored $succeeded/${#available[@]} packages (${#failed[@]} failed)."
         fi
     else
