@@ -201,8 +201,6 @@
         </div>
       </div>
 
-
-
       <!-- Auto-scroll anchor -->
       <div ref="scrollAnchor" />
     </div>
@@ -210,7 +208,8 @@
 </template>
 
 <script setup lang="ts">
-import type { TaskEventItem } from '~/composables/useTaskViewer'
+import type { TaskEventItem } from '~/api/tasks'
+import { useTaskEvents } from '~/features/tasks/composables/useTaskEvents'
 
 const props = defineProps<{
   taskId: string
@@ -220,7 +219,6 @@ defineEmits<{
   back: []
 }>()
 
-const { t } = useI18n()
 const { renderMarkdown } = useMarkdown()
 
 const {
@@ -231,9 +229,8 @@ const {
   isLive,
   loadTaskEvents,
   disconnect,
-} = useTaskViewer()
+} = useTaskEvents()
 
-// Expandable items
 const expandedItems = ref(new Set<number>())
 const expandedThinking = ref(new Set<number>())
 
@@ -259,9 +256,6 @@ function toggleThinking(idx: number) {
   expandedThinking.value = new Set(expandedThinking.value)
 }
 
-/**
- * Group consecutive text_delta events into single blocks
- */
 const groupedEvents = computed(() => {
   const result: TaskEventItem[] = []
   let pendingText: TaskEventItem | null = null
@@ -269,17 +263,14 @@ const groupedEvents = computed(() => {
   for (const event of events.value) {
     if (event.type === 'text_delta' && event.text) {
       if (pendingText && pendingText.type === 'text_delta') {
-        // Merge with previous text
         pendingText = Object.assign({}, pendingText, {
           text: (pendingText.text ?? '') + event.text,
         })
       } else {
-        // Flush previous non-text event
         if (pendingText) result.push(pendingText)
         pendingText = Object.assign({}, event)
       }
     } else {
-      // Flush pending text
       if (pendingText) {
         result.push(pendingText)
         pendingText = null
@@ -288,14 +279,11 @@ const groupedEvents = computed(() => {
     }
   }
 
-  // Flush final pending text
   if (pendingText) result.push(pendingText)
 
   return result
 })
 
-// Auto-scroll to bottom when new events arrive (for live tasks)
-const eventsContainer = ref<HTMLElement | null>(null)
 const scrollAnchor = ref<HTMLElement | null>(null)
 
 watch(() => events.value.length, () => {
@@ -306,7 +294,6 @@ watch(() => events.value.length, () => {
   }
 })
 
-// Status badge variant
 function statusVariant(status: string): 'default' | 'success' | 'destructive' | 'warning' | 'muted' {
   switch (status) {
     case 'running': return 'default'
@@ -332,10 +319,6 @@ function formatDurationMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
-/**
- * Parse structured agent responses that follow the "STATUS: ...\nSUMMARY:\n..." format.
- * Returns parsed data or null if the text doesn't match.
- */
 function parseStructuredResponse(text: string): { status: string; statusLabel: string; summary: string } | null {
   const match = text.match(/^STATUS:\s*(\S+)\s*\nSUMMARY:\s*\n?(.*)/s)
   if (!match) return null
@@ -348,12 +331,10 @@ function parseStructuredResponse(text: string): { status: string; statusLabel: s
   return { status: rawStatus, statusLabel, summary }
 }
 
-// Load events on mount
 onMounted(() => {
   loadTaskEvents(props.taskId)
 })
 
-// Reload when taskId changes
 watch(() => props.taskId, (newId) => {
   disconnect()
   expandedItems.value.clear()

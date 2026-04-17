@@ -8,8 +8,10 @@ const TEMPLATES: Record<string, object> = {
   },
   'settings.json': {
     sessionTimeoutMinutes: 15,
+    sessionSummaryProviderId: '',
     language: 'en',
     timezone: 'UTC',
+    thinkingLevel: 'off',
     heartbeat: {
       intervalMinutes: 5,
       fallbackTrigger: 'down',
@@ -39,6 +41,11 @@ const TEMPLATES: Record<string, object> = {
       lookbackDays: 3,
       providerId: '',
     },
+    factExtraction: {
+      enabled: false,
+      providerId: '',
+      minSessionMessages: 3,
+    },
     agentHeartbeat: {
       enabled: false,
       intervalMinutes: 60,
@@ -66,6 +73,7 @@ const TEMPLATES: Record<string, object> = {
         smartCheckInterval: 5,
       },
       statusUpdateIntervalMinutes: 10,
+      backgroundThinkingLevel: 'off',
     },
   },
   'skills.json': {

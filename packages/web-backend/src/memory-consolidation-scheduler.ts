@@ -1,12 +1,13 @@
 import type { Database } from '@openagent/core'
 import type { ConsolidationResult } from '@openagent/core'
 import type { AgentCore } from '@openagent/core'
-import type { TaskStore, Task } from '@openagent/core'
-import type { TaskRunner } from '@openagent/core'
+import type { Task } from '@openagent/core'
+import type { TaskRuntimeTaskBoundary } from '@openagent/core'
 import type { ProviderConfig } from '@openagent/core'
 import {
   getActiveProvider,
   loadProvidersDecrypted,
+  parseProviderModelId,
   ensureConfigTemplates,
   loadConfig,
   logToolCall,
@@ -91,6 +92,19 @@ You must NOT write to any other file. No config files, no code files, no files o
 
 8. **Always complete with STATUS: silent.** Memory consolidation is a background maintenance task. The user does not need to be notified about it.
 
+## Additional input: Extracted Facts
+
+The system automatically extracts atomic facts from conversations and stores them in a database table called "memories".
+You can search these facts using the **search_memories** tool with a query string.
+
+Use this as an additional signal when deciding what to promote:
+- Search for key topics from daily files to see if related facts were extracted
+- Facts are already deduplicated — if a fact exists, it was considered significant enough to store
+- Do NOT copy facts verbatim into MEMORY.md — synthesize and integrate them into the existing structure
+- Do NOT write to the memories table — it is managed automatically by the fact extraction system
+
+This is optional: if no relevant facts are found, continue with the daily files alone as before.
+
 ## Important Rules
 
 - Always use ABSOLUTE paths starting with \`${memoryDir}/\` — never use relative paths.
@@ -101,11 +115,12 @@ You must NOT write to any other file. No config files, no code files, no files o
 - You are a knowledge extractor. You store facts. You do NOT execute tasks, fix problems, apply changes, or modify configuration discussed in conversations.`
 }
 
+type ConsolidationTaskRuntime = Pick<TaskRuntimeTaskBoundary, 'create' | 'getById' | 'start'>
+
 export interface ConsolidationSchedulerOptions {
   db: Database
   agentCore?: AgentCore | null
-  taskStore?: TaskStore | null
-  taskRunner?: TaskRunner | null
+  taskRuntime?: ConsolidationTaskRuntime | null
   getDefaultProvider?: () => ProviderConfig | null
 }
 
@@ -122,8 +137,7 @@ export interface ConsolidationSnapshot {
 export class MemoryConsolidationScheduler {
   private db: Database
   private agentCore: AgentCore | null
-  private taskStore: TaskStore | null
-  private taskRunner: TaskRunner | null
+  private taskRuntime: ConsolidationTaskRuntime | null
   private getDefaultProviderFn: (() => ProviderConfig | null) | null
   private timer: ReturnType<typeof setTimeout> | null = null
   private running = false
@@ -135,8 +149,7 @@ export class MemoryConsolidationScheduler {
   constructor(options: ConsolidationSchedulerOptions) {
     this.db = options.db
     this.agentCore = options.agentCore ?? null
-    this.taskStore = options.taskStore ?? null
-    this.taskRunner = options.taskRunner ?? null
+    this.taskRuntime = options.taskRuntime ?? null
     this.getDefaultProviderFn = options.getDefaultProvider ?? null
   }
 
@@ -204,17 +217,14 @@ export class MemoryConsolidationScheduler {
   }
 
   /**
-   * Update the task store reference
+   * Update the task runtime boundary reference
    */
-  setTaskStore(taskStore: TaskStore | null): void {
-    this.taskStore = taskStore
+  setTaskRuntime(taskRuntime: ConsolidationTaskRuntime | null): void {
+    this.taskRuntime = taskRuntime
   }
 
-  /**
-   * Update the task runner reference
-   */
-  setTaskRunner(taskRunner: TaskRunner | null): void {
-    this.taskRunner = taskRunner
+  private resolveTaskRuntime(): ConsolidationTaskRuntime | null {
+    return this.taskRuntime
   }
 
   private scheduleNext(): void {
@@ -256,12 +266,14 @@ export class MemoryConsolidationScheduler {
     const startTime = Date.now()
     const sessionId = `nightly-consolidation-${Date.now()}`
 
-    // Ensure we have TaskStore and TaskRunner
-    if (!this.taskStore || !this.taskRunner) {
+    const taskRuntime = this.resolveTaskRuntime()
+
+    // Ensure task runtime is available
+    if (!taskRuntime) {
       const result: ConsolidationResult = {
         updated: false,
         dailyFilesReviewed: 0,
-        reason: 'TaskStore or TaskRunner not available for consolidation',
+        reason: 'Task runtime not available for consolidation',
       }
       this.lastRun = new Date().toISOString()
       this.lastResult = result
@@ -270,12 +282,12 @@ export class MemoryConsolidationScheduler {
         sessionId,
         toolName: 'memory_consolidation',
         input: JSON.stringify({ lookbackDays: this.settings.lookbackDays }),
-        output: JSON.stringify({ error: 'TaskStore or TaskRunner not available' }),
+        output: JSON.stringify({ error: 'Task runtime not available' }),
         durationMs: Date.now() - startTime,
         status: 'error',
       })
 
-      console.warn('[openagent] Memory consolidation skipped: TaskStore or TaskRunner not available')
+      console.warn('[openagent] Memory consolidation skipped: task runtime not available')
       return result
     }
 
@@ -307,9 +319,9 @@ export class MemoryConsolidationScheduler {
       // Read user-defined consolidation rules
       const consolidationRules = readConsolidationFile()
 
-      // Create a task via TaskStore
+      // Create a task via task runtime boundary
       const prompt = buildConsolidationTaskPrompt(this.settings.lookbackDays, consolidationRules)
-      const task: Task = this.taskStore.create({
+      const task: Task = taskRuntime.create({
         name: 'Nightly Memory Consolidation',
         prompt,
         triggerType: 'consolidation',
@@ -319,13 +331,13 @@ export class MemoryConsolidationScheduler {
         sessionId,
       })
 
-      // Start the task via TaskRunner
-      await this.taskRunner.startTask(task, provider)
+      // Start the task via task runtime boundary
+      await taskRuntime.start(task, provider)
 
       console.log(`[openagent] Memory consolidation task started: ${task.id}`)
 
       // Wait for the task to complete by polling
-      const result = await this.waitForTaskCompletion(task.id, startTime, sessionId)
+      const result = await this.waitForTaskCompletion(task.id, startTime, taskRuntime)
 
       this.lastRun = new Date().toISOString()
       this.lastResult = result
@@ -400,14 +412,14 @@ export class MemoryConsolidationScheduler {
   private async waitForTaskCompletion(
     taskId: string,
     startTime: number,
-    sessionId: string,
+    taskRuntime: ConsolidationTaskRuntime,
   ): Promise<ConsolidationResult> {
     const POLL_INTERVAL_MS = 2000
     const MAX_WAIT_MS = 30 * 60 * 1000 // 30 minutes max
 
     return new Promise<ConsolidationResult>((resolve) => {
       const checkTask = () => {
-        const task = this.taskStore!.getById(taskId)
+        const task = taskRuntime.getById(taskId)
         if (!task) {
           resolve({
             updated: false,
@@ -453,9 +465,9 @@ export class MemoryConsolidationScheduler {
   }
 
   private resolveProvider(): ProviderConfig | null {
-    const providerId = this.settings.providerId
+    const rawId = this.settings.providerId
 
-    if (!providerId || providerId === 'default') {
+    if (!rawId || rawId === 'default') {
       // Try the injected getDefaultProvider first, then fall back to getActiveProvider
       if (this.getDefaultProviderFn) {
         const provider = this.getDefaultProviderFn()
@@ -464,9 +476,20 @@ export class MemoryConsolidationScheduler {
       return getActiveProvider()
     }
 
+    // Parse composite "providerId:modelId" format
+    const { providerId, modelId } = parseProviderModelId(rawId)
+    if (!providerId) return getActiveProvider()
+
     // Look up the specific provider
     const file = loadProvidersDecrypted()
-    return file.providers.find(p => p.id === providerId) ?? getActiveProvider()
+    let provider = file.providers.find(p => p.id === providerId) ?? null
+    if (!provider) return getActiveProvider()
+
+    // Override defaultModel if a specific model was selected
+    if (modelId) {
+      provider = { ...provider, defaultModel: modelId }
+    }
+    return provider
   }
 
   private loadSettings(): ConsolidationSettings {

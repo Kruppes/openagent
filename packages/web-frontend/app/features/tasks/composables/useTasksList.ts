@@ -1,42 +1,8 @@
-export interface Task {
-  id: string
-  name: string
-  prompt: string
-  status: 'running' | 'paused' | 'completed' | 'failed'
-  triggerType: 'user' | 'agent' | 'cronjob' | 'heartbeat' | 'consolidation'
-  triggerSourceId: string | null
-  provider: string | null
-  model: string | null
-  maxDurationMinutes: number | null
-  promptTokens: number
-  completionTokens: number
-  estimatedCost: number
-  toolCallCount: number
-  resultSummary: string | null
-  resultStatus: string | null
-  errorMessage: string | null
-  createdAt: string
-  startedAt: string | null
-  completedAt: string | null
-  sessionId: string | null
-}
+import type { Task } from '~/api/tasks'
+import { useTasksApi } from '~/api/tasks'
 
-interface TasksResponse {
-  tasks: Task[]
-  pagination: {
-    page: number
-    limit: number
-    total: number
-    totalPages: number
-  }
-}
-
-interface TaskResponse {
-  task: Task
-}
-
-export function useTasks() {
-  const { apiFetch } = useApi()
+export function useTasksList() {
+  const tasksApi = useTasksApi()
 
   const tasks = ref<Task[]>([])
   const loading = ref(false)
@@ -53,15 +19,13 @@ export function useTasks() {
     triggerType: '' as string,
   })
 
-  // Sort state
   const sortField = ref<string>('createdAt')
   const sortDirection = ref<'asc' | 'desc'>('desc')
 
-  // Polling
   let pollTimer: ReturnType<typeof setInterval> | null = null
 
   const hasRunningTasks = computed(() =>
-    tasks.value.some(t => t.status === 'running')
+    tasks.value.some(task => task.status === 'running'),
   )
 
   async function loadTasks(page: number = 1, { silent = false }: { silent?: boolean } = {}) {
@@ -71,13 +35,13 @@ export function useTasks() {
     error.value = null
 
     try {
-      const params = new URLSearchParams()
-      params.set('page', String(page))
-      params.set('limit', String(pagination.value.limit))
-      if (filters.status) params.set('status', filters.status)
-      if (filters.triggerType) params.set('trigger_type', filters.triggerType)
+      const data = await tasksApi.listTasks({
+        page,
+        limit: pagination.value.limit,
+        status: filters.status || undefined,
+        triggerType: filters.triggerType || undefined,
+      })
 
-      const data = await apiFetch<TasksResponse>(`/api/tasks?${params.toString()}`)
       tasks.value = data.tasks
       pagination.value = data.pagination
     } catch (err) {
@@ -93,8 +57,7 @@ export function useTasks() {
 
   async function killTask(id: string): Promise<boolean> {
     try {
-      await apiFetch<TaskResponse>(`/api/tasks/${id}/kill`, { method: 'POST' })
-      // Reload tasks to get updated status
+      await tasksApi.killTask(id)
       await loadTasks(pagination.value.page)
       return true
     } catch (err) {
@@ -114,31 +77,28 @@ export function useTasks() {
 
   const sortedTasks = computed(() => {
     const field = sortField.value
-    const dir = sortDirection.value === 'asc' ? 1 : -1
+    const directionMultiplier = sortDirection.value === 'asc' ? 1 : -1
 
-    return [...tasks.value].sort((a, b) => {
-      const aVal: unknown = (a as Record<string, unknown>)[field]
-      const bVal: unknown = (b as Record<string, unknown>)[field]
+    return [...tasks.value].sort((leftTask, rightTask) => {
+      const leftValue: unknown = (leftTask as Record<string, unknown>)[field]
+      const rightValue: unknown = (rightTask as Record<string, unknown>)[field]
 
-      // Handle null values
-      if (aVal == null && bVal == null) return 0
-      if (aVal == null) return 1
-      if (bVal == null) return -1
+      if (leftValue == null && rightValue == null) return 0
+      if (leftValue == null) return 1
+      if (rightValue == null) return -1
 
-      // Handle numeric fields
-      if (typeof aVal === 'number' && typeof bVal === 'number') {
-        return (aVal - bVal) * dir
+      if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+        return (leftValue - rightValue) * directionMultiplier
       }
 
-      // Handle string/date fields
-      return String(aVal).localeCompare(String(bVal)) * dir
+      return String(leftValue).localeCompare(String(rightValue)) * directionMultiplier
     })
   })
 
   function startPolling(intervalMs: number = 5000) {
     stopPolling()
+
     pollTimer = setInterval(() => {
-      // Only poll if there are running tasks or on first loads
       if (hasRunningTasks.value || tasks.value.length === 0) {
         loadTasks(pagination.value.page, { silent: true })
       }

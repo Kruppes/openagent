@@ -31,6 +31,10 @@
           <div class="flex flex-col gap-3">
             <p class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{{ $t('chat.displayFilters') }}</p>
             <div class="flex items-center justify-between gap-3">
+              <Label class="cursor-pointer text-sm" for="filter-thinking">{{ $t('chat.filterThinking') }}</Label>
+              <Switch id="filter-thinking" v-model:checked="showThinking" />
+            </div>
+            <div class="flex items-center justify-between gap-3">
               <Label class="cursor-pointer text-sm" for="filter-tools">{{ $t('chat.filterToolCalls') }}</Label>
               <Switch id="filter-tools" v-model:checked="showToolCalls" />
             </div>
@@ -60,10 +64,10 @@
           v-for="(msg, i) in filteredMessages"
           :key="i"
           :class="[
-            msg.role === 'divider' ? 'w-full' : (msg.role === 'tool' || (msg.role === 'system' && msg.isTaskResult)) ? 'self-start w-full max-w-[80%] sm:max-w-[75%] pl-11' : 'flex max-w-[80%] gap-3 sm:max-w-[75%]',
+            msg.role === 'divider' ? 'w-full' : (msg.role === 'tool' || (msg.role === 'system' && msg.isTaskResult) || msg.isThinking) ? 'self-start w-full max-w-[80%] sm:max-w-[75%] pl-11' : 'flex max-w-[80%] gap-3 sm:max-w-[75%]',
             {
               'self-end flex-row-reverse': msg.role === 'user',
-              'self-start': msg.role === 'assistant',
+              'self-start': msg.role === 'assistant' && !msg.isThinking,
               'self-center max-w-[90%] !sm:max-w-[85%]': msg.role === 'system' && !msg.isTaskResult,
             },
           ]"
@@ -105,6 +109,31 @@
                   <span>{{ $t('chat.newSessionDivider') }}</span>
                 </div>
                 <div class="grow border-t border-border" />
+              </div>
+            </div>
+          </template>
+
+          <!-- Thinking card (clickable/expandable) -->
+          <template v-else-if="msg.isThinking">
+            <div class="w-full overflow-hidden rounded-lg border border-border">
+              <button
+                class="group flex w-full items-center gap-2 bg-muted/30 px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60"
+                :class="{ 'border-b border-border': expandedThinking.has(String(msg.id ?? i)) }"
+                @click="toggleThinking(String(msg.id ?? i))"
+              >
+                <svg class="h-3 w-3 shrink-0 transition-transform duration-200" :class="{ 'rotate-90': expandedThinking.has(String(msg.id ?? i)) }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6" /></svg>
+                <AppIcon name="sparkles" class="h-3 w-3 shrink-0 opacity-60" />
+                <span class="font-medium">{{ $t('chat.thinking') }}</span>
+                <span v-if="msg.streaming" class="ml-2 inline-flex items-center gap-1">
+                  <span class="h-1 w-1 animate-pulse rounded-full bg-current opacity-60" />
+                  <span class="h-1 w-1 animate-pulse rounded-full bg-current opacity-60" />
+                  <span class="h-1 w-1 animate-pulse rounded-full bg-current opacity-60" />
+                </span>
+              </button>
+              <div v-if="expandedThinking.has(String(msg.id ?? i))" class="bg-background text-xs">
+                <div class="max-h-80 overflow-y-auto px-3 py-2">
+                  <p class="whitespace-pre-wrap break-words text-muted-foreground">{{ msg.content }}</p>
+                </div>
               </div>
             </div>
           </template>
@@ -285,6 +314,50 @@
             <AppIcon v-else name="mic" class="h-4 w-4" />
           </button>
           <textarea ref="inputRef" v-model="inputText" class="min-h-[42px] max-h-[150px] flex-1 resize-none rounded-xl border border-input bg-background px-3.5 py-2.5 text-sm" :placeholder="$t('chat.placeholder')" rows="1" @keydown.enter.exact.prevent="handleSend" @input="autoResize" />
+
+          <!-- Thinking-level quick switch (admin-only; the main agent is single-tenant, so changing this affects everyone's next turn) -->
+          <Popover v-if="isAdmin" v-model:open="thinkingLevelPickerOpen">
+            <PopoverTrigger as-child>
+              <button
+                type="button"
+                class="inline-flex h-[42px] shrink-0 select-none items-center gap-1.5 rounded-xl border border-input px-3 text-sm text-muted-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="thinkingLevelSaving"
+                :title="$t('chat.thinkingLevelTooltip')"
+                :aria-label="$t('chat.thinkingLevelTooltip')"
+              >
+                <AppIcon
+                  :name="thinkingLevelSaving ? 'loader' : 'brain'"
+                  class="h-4 w-4"
+                  :class="[
+                    thinkingLevelSaving ? 'animate-spin' : '',
+                    currentThinkingLevel !== 'off' && !thinkingLevelSaving ? 'text-foreground' : '',
+                  ]"
+                />
+                <span
+                  class="text-xs font-medium uppercase tracking-wide"
+                  :class="currentThinkingLevel !== 'off' ? 'text-foreground' : ''"
+                >{{ thinkingLevelShortLabel(currentThinkingLevel) }}</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" class="w-56 p-1">
+              <p class="px-2 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {{ $t('settings.thinkingLevel') }}
+              </p>
+              <button
+                v-for="lvl in THINKING_LEVELS"
+                :key="lvl"
+                type="button"
+                class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                :class="currentThinkingLevel === lvl ? 'bg-accent/60 text-accent-foreground' : 'text-foreground'"
+                :disabled="thinkingLevelSaving"
+                @click="handleThinkingLevelChange(lvl)"
+              >
+                <span>{{ $t(`chat.thinkingLevelMenu.${lvl}`) }}</span>
+                <AppIcon v-if="currentThinkingLevel === lvl" name="check" class="h-4 w-4 text-primary" />
+              </button>
+            </PopoverContent>
+          </Popover>
+
           <Button type="submit" size="sm" :disabled="(!inputText.trim() && pendingFiles.length === 0) || connectionStatus !== 'connected'" class="h-[42px] shrink-0 px-4">{{ $t('chat.send') }}</Button>
         </div>
       </form>
@@ -294,9 +367,67 @@
 
 <script setup lang="ts">
 import type { ChatMessage, ToolCallData } from '~/composables/useChat'
+import { SETTINGS_THINKING_LEVELS, type SettingsThinkingLevel } from '@openagent/core/contracts'
+import { useSettingsApi } from '~/api/settings'
 const { t } = useI18n()
 const { apiFetch } = useApi()
 const { user } = useAuth()
+const isAdmin = computed(() => user.value?.role === 'admin')
+const settingsApi = useSettingsApi()
+
+/* ── Thinking level quick-switch in the composer ──
+   Backed by the same `thinkingLevel` setting as the Settings page; changes are
+   live-applied to the agent (see `AgentCore.setThinkingLevel`). Admin-only
+   because the main agent is single-tenant — flipping this affects everyone's
+   next turn. */
+const THINKING_LEVELS = SETTINGS_THINKING_LEVELS
+const currentThinkingLevel = ref<SettingsThinkingLevel>('off')
+const thinkingLevelPickerOpen = ref(false)
+const thinkingLevelSaving = ref(false)
+
+function thinkingLevelShortLabel(level: SettingsThinkingLevel): string {
+  // Short labels avoid the dropdown trigger growing too wide.
+  const map: Record<SettingsThinkingLevel, string> = {
+    off: 'off',
+    minimal: 'min',
+    low: 'low',
+    medium: 'med',
+    high: 'high',
+    xhigh: 'x-hi',
+  }
+  return map[level]
+}
+
+async function loadThinkingLevel() {
+  if (!isAdmin.value) return
+  try {
+    const settings = await settingsApi.getSettings()
+    if (settings.thinkingLevel && (SETTINGS_THINKING_LEVELS as readonly string[]).includes(settings.thinkingLevel)) {
+      currentThinkingLevel.value = settings.thinkingLevel as SettingsThinkingLevel
+    }
+  } catch {
+    // keep default 'off' if we can't reach the endpoint
+  }
+}
+
+async function handleThinkingLevelChange(level: SettingsThinkingLevel) {
+  if (level === currentThinkingLevel.value) {
+    thinkingLevelPickerOpen.value = false
+    return
+  }
+  const previous = currentThinkingLevel.value
+  currentThinkingLevel.value = level // optimistic
+  thinkingLevelPickerOpen.value = false
+  thinkingLevelSaving.value = true
+  try {
+    await settingsApi.updateSettings({ thinkingLevel: level })
+  } catch {
+    // rollback on failure
+    currentThinkingLevel.value = previous
+  } finally {
+    thinkingLevelSaving.value = false
+  }
+}
 const { userAvatarUrl, avatarFailed, userInitial, onAvatarError } = useUserAvatar()
 const { renderMarkdown, handleCopyAsMarkdown } = useMarkdown()
 const { isSkillLoad, getSkillName } = useSkillDetection()
@@ -340,6 +471,7 @@ function saveFilters() {
     showToolCalls: showToolCalls.value,
     showInjections: showInjections.value,
     showSessionSummaries: showSessionSummaries.value,
+    showThinking: showThinking.value,
   }))
 }
 
@@ -347,8 +479,10 @@ const savedFilters = loadFilters()
 const showToolCalls = ref(savedFilters?.showToolCalls ?? true)
 const showInjections = ref(savedFilters?.showInjections ?? false)
 const showSessionSummaries = ref(savedFilters?.showSessionSummaries ?? false)
+// Thinking blocks default to visible (but collapsed) — mirrors TaskViewer behaviour.
+const showThinking = ref(savedFilters?.showThinking ?? true)
 
-watch([showToolCalls, showInjections, showSessionSummaries], () => saveFilters())
+watch([showToolCalls, showInjections, showSessionSummaries, showThinking], () => saveFilters())
 const expandedSummaries = ref<Set<string>>(new Set())
 function toggleSummary(id: string) { const updated = new Set(expandedSummaries.value); updated.has(id) ? updated.delete(id) : updated.add(id); expandedSummaries.value = updated }
 
@@ -356,6 +490,7 @@ const filteredMessages = computed(() => {
   return messages.value.filter((msg) => {
     if (!showToolCalls.value && msg.role === 'tool' && msg.toolData) return false
     if (!showInjections.value && msg.role === 'system' && msg.isTaskResult) return false
+    if (!showThinking.value && msg.isThinking) return false
     return true
   })
 })
@@ -363,6 +498,11 @@ const expandedTools = ref<Set<string>>(new Set())
 function toggleTool(toolCallId: string) { const updated = new Set(expandedTools.value); updated.has(toolCallId) ? updated.delete(toolCallId) : updated.add(toolCallId); expandedTools.value = updated }
 const expandedInjections = ref<Set<number>>(new Set())
 function toggleInjection(index: number) { const updated = new Set(expandedInjections.value); updated.has(index) ? updated.delete(index) : updated.add(index); expandedInjections.value = updated }
+// Thinking blocks default to collapsed per-message. We keep a Set of expanded IDs
+// (the DB row id when loaded from history, otherwise the array index fallback)
+// mirroring how tool calls/injections/summaries are toggled.
+const expandedThinking = ref<Set<string>>(new Set())
+function toggleThinking(id: string) { const updated = new Set(expandedThinking.value); updated.has(id) ? updated.delete(id) : updated.add(id); expandedThinking.value = updated }
 function taskResultBody(content: string): string {
   const lines = (content ?? '').split('\n')
   const bodyLines = lines.slice(1)
@@ -386,7 +526,7 @@ const isNearBottom = ref(true)
 const SCROLL_THRESHOLD = 120
 function onMessagesScroll() { const el = messagesContainer.value; if (!el) return; isNearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight <= SCROLL_THRESHOLD }
 function jumpToBottom() { isNearBottom.value = true; nextTick(() => scrollToBottom()) }
-onMounted(async () => { connect(); await Promise.all([loadHistory(), fetchTtsSettings(), fetchSttSettings()]) })
+onMounted(async () => { connect(); await Promise.all([loadHistory(), fetchTtsSettings(), fetchSttSettings(), loadThinkingLevel()]) })
 onUnmounted(() => { disconnect(); ttsStop(); sttCleanup() })
 watch(() => messages.value.length, () => {
   if (isNearBottom.value) nextTick(() => scrollToBottom())
@@ -428,6 +568,15 @@ async function loadHistory() {
             taskResultName: meta.taskName ?? 'Background Task',
             taskResultStatus: meta.taskResultStatus ?? meta.taskStatus ?? 'completed',
             taskResultDuration: meta.durationMinutes,
+          } as ChatMessage
+        }
+
+        // Parse thinking blocks (assistant messages with metadata.kind === 'thinking').
+        // Persisted live by ws-chat so they survive a page reload.
+        if (m.role === 'assistant' && meta.kind === 'thinking') {
+          return {
+            id: m.id, role: 'assistant' as const, content: m.content, timestamp: m.timestamp, source,
+            isThinking: true,
           } as ChatMessage
         }
 

@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { initDatabase, TaskStore, initTasksTable } from '@openagent/core'
-import type { Database, Task, ProviderConfig } from '@openagent/core'
+import type { AgentCore, Database, Task, ProviderConfig } from '@openagent/core'
 import { MemoryConsolidationScheduler, DEFAULT_CONSOLIDATION_SETTINGS } from './memory-consolidation-scheduler.js'
 
 let tempDataDir: string
@@ -30,8 +30,7 @@ function makeProvider(overrides: Partial<ProviderConfig> = {}): ProviderConfig {
   }
 }
 
-/** Minimal mock TaskRunner that records startTask calls */
-function createMockTaskRunner() {
+function createMockTaskRuntime(taskStore: TaskStore) {
   const startedTasks: Array<{ task: Task; provider: ProviderConfig }> = []
   let taskCompletionCallback: ((taskId: string) => void) | null = null
 
@@ -40,19 +39,15 @@ function createMockTaskRunner() {
     setTaskCompletionCallback(cb: (taskId: string) => void) {
       taskCompletionCallback = cb
     },
-    startTask: vi.fn(async (task: Task, provider: ProviderConfig) => {
+    create: vi.fn((input) => taskStore.create(input)),
+    getById: vi.fn((taskId: string) => taskStore.getById(taskId)),
+    start: vi.fn(async (task: Task, provider: ProviderConfig) => {
       startedTasks.push({ task, provider })
-      // Simulate async completion — mark task as completed in DB after a tick
       if (taskCompletionCallback) {
-        setTimeout(() => taskCompletionCallback!(task.id), 10)
+        setTimeout(() => taskCompletionCallback?.(task.id), 10)
       }
       return task.id
     }),
-    isRunning: vi.fn(() => false),
-    getRunningTaskIds: vi.fn(() => []),
-    getStore: vi.fn(),
-    abortTask: vi.fn(),
-    dispose: vi.fn(),
   }
 }
 
@@ -89,7 +84,6 @@ describe('MemoryConsolidationScheduler', () => {
       const scheduler = new MemoryConsolidationScheduler({ db })
       scheduler.start()
 
-      // Write enabled settings
       writeConfig('settings.json', {
         memoryConsolidation: { enabled: true, runAtHour: 4 },
       })
@@ -117,37 +111,22 @@ describe('MemoryConsolidationScheduler', () => {
   })
 
   describe('executeConsolidation via runNow', () => {
-    it('returns error result when TaskStore is not available', async () => {
+    it('returns error result when task runtime is not available', async () => {
       const scheduler = new MemoryConsolidationScheduler({ db })
 
       const result = await scheduler.runNow()
 
       expect(result.updated).toBe(false)
-      expect(result.reason).toContain('TaskStore or TaskRunner not available')
-    })
-
-    it('returns error result when TaskRunner is not available', async () => {
-      const taskStore = new TaskStore(db)
-      const scheduler = new MemoryConsolidationScheduler({
-        db,
-        taskStore,
-        taskRunner: null,
-      })
-
-      const result = await scheduler.runNow()
-
-      expect(result.updated).toBe(false)
-      expect(result.reason).toContain('TaskStore or TaskRunner not available')
+      expect(result.reason).toContain('Task runtime not available')
     })
 
     it('returns error result when no provider is available', async () => {
       const taskStore = new TaskStore(db)
-      const mockRunner = createMockTaskRunner()
+      const taskRuntime = createMockTaskRuntime(taskStore)
 
       const scheduler = new MemoryConsolidationScheduler({
         db,
-        taskStore,
-        taskRunner: mockRunner as any,
+        taskRuntime,
         getDefaultProvider: () => null,
       })
 
@@ -155,16 +134,15 @@ describe('MemoryConsolidationScheduler', () => {
 
       expect(result.updated).toBe(false)
       expect(result.reason).toContain('No provider available')
-      expect(mockRunner.startTask).not.toHaveBeenCalled()
+      expect(taskRuntime.start).not.toHaveBeenCalled()
     })
 
-    it('creates a task via TaskStore and starts it via TaskRunner', async () => {
+    it('creates and starts a consolidation task via task runtime boundary', async () => {
       const taskStore = new TaskStore(db)
-      const mockRunner = createMockTaskRunner()
+      const taskRuntime = createMockTaskRuntime(taskStore)
       const provider = makeProvider()
 
-      // Set up mock to complete the task after starting
-      mockRunner.setTaskCompletionCallback((taskId: string) => {
+      taskRuntime.setTaskCompletionCallback((taskId: string) => {
         taskStore.update(taskId, {
           status: 'completed',
           resultStatus: 'silent',
@@ -175,43 +153,44 @@ describe('MemoryConsolidationScheduler', () => {
 
       const scheduler = new MemoryConsolidationScheduler({
         db,
-        taskStore,
-        taskRunner: mockRunner as any,
+        taskRuntime,
         getDefaultProvider: () => provider,
       })
 
       const result = await scheduler.runNow()
 
-      // Verify task was created and started
-      expect(mockRunner.startTask).toHaveBeenCalledOnce()
-      const startedTask = mockRunner.startedTasks[0]
+      expect(taskRuntime.create).toHaveBeenCalledOnce()
+      expect(taskRuntime.start).toHaveBeenCalledOnce()
+
+      const startedTask = taskRuntime.startedTasks[0]
       expect(startedTask.task.name).toBe('Nightly Memory Consolidation')
       expect(startedTask.task.triggerType).toBe('consolidation')
       expect(startedTask.task.triggerSourceId).toBe('memory-consolidation')
       expect(startedTask.task.sessionId).toMatch(/^nightly-consolidation-\d+$/)
       expect(startedTask.provider).toBe(provider)
 
-      // Verify the prompt contains consolidation instructions
       expect(startedTask.task.prompt).toContain('nightly memory consolidation')
       expect(startedTask.task.prompt).toContain('daily files')
       expect(startedTask.task.prompt).toContain('MEMORY.md')
       expect(startedTask.task.prompt).toContain('project notes')
       expect(startedTask.task.prompt).toContain('user profiles')
       expect(startedTask.task.prompt).toContain('read_chat_history')
-      // Verify it embeds the consolidation rules from CONSOLIDATION.md
+      expect(startedTask.task.prompt).toContain('Additional input: Extracted Facts')
+      expect(startedTask.task.prompt).toContain('search_memories')
+      expect(startedTask.task.prompt).toContain('Do NOT write to the memories table')
+      expect(startedTask.task.prompt).toContain('if no relevant facts are found, continue with the daily files alone as before')
       expect(startedTask.task.prompt).toContain('Consolidation Rules')
       expect(startedTask.task.prompt).toContain('Memory Consolidation Rules')
 
-      // Verify result
-      expect(result.updated).toBe(false) // silent completion = not updated
+      expect(result.updated).toBe(false)
     })
 
     it('completes silently when task finishes with silent status', async () => {
       const taskStore = new TaskStore(db)
-      const mockRunner = createMockTaskRunner()
+      const taskRuntime = createMockTaskRuntime(taskStore)
       const provider = makeProvider()
 
-      mockRunner.setTaskCompletionCallback((taskId: string) => {
+      taskRuntime.setTaskCompletionCallback((taskId: string) => {
         taskStore.update(taskId, {
           status: 'completed',
           resultStatus: 'silent',
@@ -224,8 +203,7 @@ describe('MemoryConsolidationScheduler', () => {
 
       const scheduler = new MemoryConsolidationScheduler({
         db,
-        taskStore,
-        taskRunner: mockRunner as any,
+        taskRuntime,
         getDefaultProvider: () => provider,
       })
 
@@ -237,11 +215,11 @@ describe('MemoryConsolidationScheduler', () => {
 
     it('refreshes system prompt after task completion when agentCore is set', async () => {
       const taskStore = new TaskStore(db)
-      const mockRunner = createMockTaskRunner()
+      const taskRuntime = createMockTaskRuntime(taskStore)
       const provider = makeProvider()
       const mockAgentCore = { refreshSystemPrompt: vi.fn() }
 
-      mockRunner.setTaskCompletionCallback((taskId: string) => {
+      taskRuntime.setTaskCompletionCallback((taskId: string) => {
         taskStore.update(taskId, {
           status: 'completed',
           resultStatus: 'completed',
@@ -252,9 +230,8 @@ describe('MemoryConsolidationScheduler', () => {
 
       const scheduler = new MemoryConsolidationScheduler({
         db,
-        agentCore: mockAgentCore as any,
-        taskStore,
-        taskRunner: mockRunner as any,
+        agentCore: mockAgentCore as unknown as AgentCore,
+        taskRuntime,
         getDefaultProvider: () => provider,
       })
 
@@ -265,10 +242,10 @@ describe('MemoryConsolidationScheduler', () => {
 
     it('deduplicates concurrent runNow calls', async () => {
       const taskStore = new TaskStore(db)
-      const mockRunner = createMockTaskRunner()
+      const taskRuntime = createMockTaskRuntime(taskStore)
       const provider = makeProvider()
 
-      mockRunner.setTaskCompletionCallback((taskId: string) => {
+      taskRuntime.setTaskCompletionCallback((taskId: string) => {
         taskStore.update(taskId, {
           status: 'completed',
           resultStatus: 'silent',
@@ -279,28 +256,25 @@ describe('MemoryConsolidationScheduler', () => {
 
       const scheduler = new MemoryConsolidationScheduler({
         db,
-        taskStore,
-        taskRunner: mockRunner as any,
+        taskRuntime,
         getDefaultProvider: () => provider,
       })
 
-      // Call runNow twice concurrently
       const [result1, result2] = await Promise.all([
         scheduler.runNow(),
         scheduler.runNow(),
       ])
 
-      // Should only start one task
-      expect(mockRunner.startTask).toHaveBeenCalledOnce()
-      expect(result1).toBe(result2) // Same promise
+      expect(taskRuntime.start).toHaveBeenCalledOnce()
+      expect(result1).toBe(result2)
     })
 
     it('records lastRun and lastResult after execution', async () => {
       const taskStore = new TaskStore(db)
-      const mockRunner = createMockTaskRunner()
+      const taskRuntime = createMockTaskRuntime(taskStore)
       const provider = makeProvider()
 
-      mockRunner.setTaskCompletionCallback((taskId: string) => {
+      taskRuntime.setTaskCompletionCallback((taskId: string) => {
         taskStore.update(taskId, {
           status: 'completed',
           resultStatus: 'silent',
@@ -310,8 +284,7 @@ describe('MemoryConsolidationScheduler', () => {
 
       const scheduler = new MemoryConsolidationScheduler({
         db,
-        taskStore,
-        taskRunner: mockRunner as any,
+        taskRuntime,
         getDefaultProvider: () => provider,
       })
 
@@ -326,10 +299,10 @@ describe('MemoryConsolidationScheduler', () => {
 
     it('logs activity to tool_calls table', async () => {
       const taskStore = new TaskStore(db)
-      const mockRunner = createMockTaskRunner()
+      const taskRuntime = createMockTaskRuntime(taskStore)
       const provider = makeProvider()
 
-      mockRunner.setTaskCompletionCallback((taskId: string) => {
+      taskRuntime.setTaskCompletionCallback((taskId: string) => {
         taskStore.update(taskId, {
           status: 'completed',
           resultStatus: 'silent',
@@ -339,17 +312,15 @@ describe('MemoryConsolidationScheduler', () => {
 
       const scheduler = new MemoryConsolidationScheduler({
         db,
-        taskStore,
-        taskRunner: mockRunner as any,
+        taskRuntime,
         getDefaultProvider: () => provider,
       })
 
       await scheduler.runNow()
 
-      // Check that a tool_call was logged
       const rows = db.prepare(
         "SELECT * FROM tool_calls WHERE tool_name = 'memory_consolidation'"
-      ).all() as any[]
+      ).all() as Array<{ session_id: string }>
       expect(rows.length).toBeGreaterThanOrEqual(1)
       expect(rows[0].session_id).toMatch(/^nightly-consolidation-/)
     })
@@ -359,22 +330,14 @@ describe('MemoryConsolidationScheduler', () => {
     it('setAgentCore updates the agentCore reference', () => {
       const scheduler = new MemoryConsolidationScheduler({ db })
       const mockAgentCore = { refreshSystemPrompt: vi.fn() }
-      scheduler.setAgentCore(mockAgentCore as any)
-      // No error thrown
+      scheduler.setAgentCore(mockAgentCore as unknown as AgentCore)
     })
 
-    it('setTaskStore updates the taskStore reference', () => {
+    it('setTaskRuntime updates the taskRuntime reference', () => {
       const scheduler = new MemoryConsolidationScheduler({ db })
       const taskStore = new TaskStore(db)
-      scheduler.setTaskStore(taskStore)
-      // No error thrown
-    })
-
-    it('setTaskRunner updates the taskRunner reference', () => {
-      const scheduler = new MemoryConsolidationScheduler({ db })
-      const mockRunner = createMockTaskRunner()
-      scheduler.setTaskRunner(mockRunner as any)
-      // No error thrown
+      const taskRuntime = createMockTaskRuntime(taskStore)
+      scheduler.setTaskRuntime(taskRuntime)
     })
   })
 })

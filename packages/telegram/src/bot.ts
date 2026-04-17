@@ -3,7 +3,7 @@ import path from 'node:path'
 import { Bot, GrammyError, HttpError, InputFile } from 'grammy'
 import type { Context } from 'grammy'
 import type { AgentCore, Database } from '@openagent/core'
-import { loadConfig, saveUpload, serializeUploadsMetadata, parseUploadsMetadata, loadSttSettings, transcribeAudio, loadProviders, setActiveProvider, updateProvider } from '@openagent/core'
+import { loadConfig, saveUpload, serializeUploadsMetadata, parseUploadsMetadata, loadSttSettings, transcribeAudio, loadProviders, setActiveProvider, updateProvider, setActiveModel, getActiveModelId } from '@openagent/core'
 import type { UploadDescriptor } from '@openagent/core'
 
 /**
@@ -22,13 +22,15 @@ export interface TelegramConfig {
  * Chat event emitted by the Telegram bot for cross-channel sync.
  */
 export interface TelegramChatEvent {
-  type: 'user_message' | 'text' | 'tool_call_start' | 'tool_call_end' | 'done' | 'error'
+  type: 'user_message' | 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'done' | 'error'
   /** OpenAgent user ID (integer) — only set for linked users */
   userId: number | null
   /** Session ID used for chat_messages */
   sessionId: string
   /** Text content */
   text?: string
+  /** Streamed thinking/reasoning delta (for `type: 'thinking'`) */
+  thinking?: string
   /** Tool name */
   toolName?: string
   /** Tool call ID */
@@ -356,15 +358,17 @@ export class TelegramBot {
     const file = loadProviders()
     const provider = file.providers.find(p => p.id === providerId)
     if (!provider) return null
-    const pinned = (provider as any).pinnedModels ?? []
-    const currentModel = provider.defaultModel
-    const buttons = pinned.map((model: string) => ({
+    const enabledModels = provider.enabledModels ?? [provider.defaultModel]
+    const currentModel = file.activeProvider === providerId
+      ? (file.activeModel ?? provider.defaultModel)
+      : provider.defaultModel
+    const buttons = enabledModels.map((model: string) => ({
       text: `${model === currentModel ? '✅ ' : ''}${model}`,
       callback_data: `model:set:${providerId}:${model}`,
     }))
     const rows = buttons.map((b: any) => [b])
     rows.push([{ text: '⬅️ Back', callback_data: 'model:back' }])
-    return { rows, provider, pinned }
+    return { rows, provider, enabledModels }
   }
 
   /**
@@ -467,10 +471,10 @@ export class TelegramBot {
           await ctx.answerCallbackQuery({ text: 'Provider not found.' })
           return
         }
-        const { rows, provider, pinned } = result
-        if (pinned.length === 0) {
+        const { rows, provider, enabledModels } = result
+        if (enabledModels.length === 0) {
           await ctx.editMessageText(
-            `ℹ️ *${provider.name}*\n\nNo pinned models. Please configure in the web UI.`,
+            `ℹ️ *${provider.name}*\n\nNo enabled models. Please configure in the web UI.`,
             {
               parse_mode: 'Markdown',
               reply_markup: { inline_keyboard: [[{ text: '⬅️ Back', callback_data: 'model:back' }]] },
@@ -503,8 +507,7 @@ export class TelegramBot {
           await ctx.answerCallbackQuery({ text: 'Provider not found.' })
           return
         }
-        setActiveProvider(providerId)
-        updateProvider(providerId, { defaultModel: modelName })
+        setActiveProvider(providerId, modelName)
         this.onActiveProviderChanged?.()
         await ctx.editMessageText(
           `✅ *Provider:* ${provider.name}\n*Model:* ${modelName}`,
@@ -1056,6 +1059,7 @@ export class TelegramBot {
             userId: numericUserId,
             sessionId,
             text: chunk.text,
+            thinking: chunk.thinking,
             toolName: chunk.toolName,
             toolCallId: chunk.toolCallId,
             toolArgs: chunk.toolArgs,

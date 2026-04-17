@@ -14,6 +14,15 @@ export {
 } from './uploads.js'
 export type { UploadDescriptor, SaveUploadInput, UploadSettings } from './uploads.js'
 export { loadConfig, getConfigDir, ensureConfigTemplates } from './config.js'
+export * from './contracts/index.js'
+export {
+  normalizeThinkingLevel,
+  toPiAiReasoning,
+  readChatThinkingLevelFromConfig,
+  readBackgroundThinkingLevelFromConfig,
+  resolveBackgroundReasoning,
+  resolveChatReasoning,
+} from './thinking-level.js'
 export {
   ensureMemoryStructure,
   ensureConfigStructure,
@@ -66,9 +75,12 @@ export {
   updateProvider,
   deleteProvider,
   setActiveProvider,
+  setActiveModel,
+  getActiveModelId,
   updateProviderStatus,
   getActiveProvider,
   getFallbackProvider,
+  getFallbackModelId,
   setFallbackProvider,
   clearFallbackProvider,
   getApiKeyForProvider,
@@ -79,6 +91,8 @@ export {
   storedToOAuthCredentials,
   buildModel,
   estimateCost,
+  parseProviderModelId,
+  resolveProviderModelId,
   DEFAULT_PRICE_TABLE,
   getConfiguredPriceTable,
   PROVIDER_TYPE_PRESETS,
@@ -176,14 +190,24 @@ export {
   createAgentSkillTools,
 } from './agent-skills.js'
 export type { AgentSkillEntry, AgentSkillUsage } from './agent-skills.js'
-export { AgentCore, createYoloTools, getWorkspaceDir } from './agent.js'
+export { AgentCore, createYoloTools, getWorkspaceDir, isRetryablePreStreamError } from './agent.js'
 export type { ResponseChunk, AgentCoreOptions } from './agent.js'
+export { createAgentRuntime } from './agent-runtime.js'
+export type { AgentRuntimeBoundary, AgentRuntimeOptions, AgentRuntimePiAgentAccess } from './agent-runtime.js'
+export type { AgentRuntimeStateSnapshot } from './agent-runtime-types.js'
 export { ProviderManager } from './provider-manager.js'
 export type { OperatingMode, ProviderManagerEvents } from './provider-manager.js'
 export { TaskStore, initTasksTable } from './task-store.js'
 export type { Task, TaskStatus, TaskTriggerType, TaskResultStatus, CreateTaskInput, UpdateTaskInput, TaskListFilters } from './task-store.js'
 export { TaskRunner, formatTaskInjection } from './task-runner.js'
 export type { TaskRunnerOptions, TaskOverrides } from './task-runner.js'
+export { createTaskRuntime } from './task-runtime.js'
+export type {
+  TaskRuntimeBoundary,
+  TaskRuntimeTaskBoundary,
+  TaskRuntimeScheduleBoundary,
+  TaskRuntimeOptions,
+} from './task-runtime.js'
 export { TaskEventBus } from './task-event-bus.js'
 export type { TaskEvent, TaskEventType } from './task-event-bus.js'
 export {
@@ -198,6 +222,25 @@ export { createTaskTool, createResumeTaskTool, listTasksTool } from './task-tool
 export type { TaskToolsOptions } from './task-tools.js'
 export { createReadChatHistoryTool } from './chat-history-tools.js'
 export type { ChatHistoryToolsOptions } from './chat-history-tools.js'
+export {
+  searchMemories,
+  listMemories,
+  getMemoryById,
+  createMemory,
+  updateMemory,
+  deleteMemory,
+} from './memories-store.js'
+export type { MemoryFact, SearchMemoriesOptions, ListMemoriesOptions } from './memories-store.js'
+export {
+  parseFactLines,
+  isDuplicateFact,
+  storeFact,
+  extractAndStoreFacts,
+} from './fact-extraction.js'
+export { createSearchMemoriesTool } from './memories-tool.js'
+export type { SearchMemoriesToolOptions } from './memories-tool.js'
+export { normalizeFtsQuery, normalizePlainFtsQuery } from './fts-utils.js'
+export { NotFoundError, InvalidInputError } from './errors.js'
 export { MessageQueue } from './message-queue.js'
 export type { QueuedMessage } from './message-queue.js'
 export {
@@ -241,5 +284,4 @@ export type {
 export { createTranscribeAudioTool } from './stt-tool.js'
 export { createSendFileTool } from './send-file-tool.js'
 export type { SendFileToolOptions, FileSenderCallback } from './send-file-tool.js'
-export { extractAndStoreFacts, callOllamaForFacts, parseFactLines, isDuplicateFact, storeFact } from './fact-extraction.js'
-export type { FactExtractionOptions } from './fact-extraction.js'
+

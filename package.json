@@ -1,6 +1,6 @@
 {
   "name": "openagent",
-  "version": "0.10.3",
+  "version": "0.12.2",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -15,15 +15,31 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint packages/",
+    "lint:boundaries": "eslint -c eslint.boundaries.config.js \"packages/**/*.ts\"",
+    "baseline:unit": "vitest run packages/core/src packages/telegram/src packages/web-frontend/app",
+    "baseline:api": "vitest run packages/web-backend/src",
+    "baseline:smoke": "vitest run packages/web-backend/src/app.test.ts --testNamePattern=\"health endpoint|auth flow|chat history API|memory API|settings API|providers API\"",
+    "verify:critical-flows": "npm run baseline:smoke && vitest run packages/web-backend/src/api/modules/tasks/route.test.ts packages/web-backend/src/cronjobs.test.ts",
+    "baseline:parity": "npm run lint:boundaries && npm run baseline:unit && npm run baseline:api && npm run verify:critical-flows",
     "clean": "rm -rf packages/*/dist"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
+    "@types/adm-zip": "^0.5.8",
+    "@types/bcrypt": "^6.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/body-parser": "^1.19.6",
+    "@types/express": "^5.0.6",
+    "@types/express-serve-static-core": "^5.1.1",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.1.0",
     "@types/node": "^22.0.0",
+    "@types/serve-static": "^2.2.0",
+    "@types/ws": "^8.18.1",
     "eslint": "^9.0.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.0.0",
-    "vitest": "^3.1.0"
+    "vitest": "^3.2.4"
   }
 }

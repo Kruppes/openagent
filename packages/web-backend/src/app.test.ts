@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { WebSocket } from 'ws'
 import { createApp } from './app.js'
-import { initDatabase } from '@openagent/core'
+import { createMemory, initDatabase } from '@openagent/core'
 import type { Database } from '@openagent/core'
 import type { AgentCore } from '@openagent/core'
 import { setupWebSocketChat } from './ws-chat.js'
@@ -25,6 +25,7 @@ let tempDataDir: string
 let previousDataDir: string | undefined
 const setTimeoutMinutes = vi.fn()
 const refreshSystemPrompt = vi.fn()
+const setThinkingLevel = vi.fn()
 const restartHealthMonitor = vi.fn()
 const healthMonitorSnapshot: HealthMonitorSnapshot = {
   agentStatus: 'running',
@@ -45,6 +46,7 @@ beforeAll(async () => {
   const mockAgentCore = {
     getSessionManager: () => ({ setTimeoutMinutes }),
     refreshSystemPrompt,
+    setThinkingLevel,
   } as unknown as AgentCore
   const mockHealthMonitorService = {
     restart: restartHealthMonitor,
@@ -794,6 +796,96 @@ describe('memory API', () => {
     expect(refreshSystemPrompt).toHaveBeenCalled()
   })
 
+  it('lists, filters, updates, and deletes stored facts', async () => {
+    db.prepare('INSERT OR IGNORE INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)')
+      .run(2, 'regular-facts', 'hash', 'user')
+
+    const dockerFactId = createMemory(db, 1, 'facts-session-1', 'User works with Docker every day', 'session')
+    createMemory(db, 1, 'facts-session-2', 'Prefers Postgres over SQLite', 'session')
+    const userTwoFactId = createMemory(db, 2, 'facts-session-3', 'Enjoys gardening on weekends', 'session')
+
+    const listRes = await fetch(`${baseUrl}/api/memory/facts?limit=2&offset=0`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    const listBody = (await listRes.json()) as {
+      facts: Array<{ id: number }>
+      total: number
+    }
+    expect(listRes.status).toBe(200)
+    expect(listBody.total).toBeGreaterThanOrEqual(3)
+    expect(listBody.facts).toHaveLength(2)
+
+    const queryRes = await fetch(`${baseUrl}/api/memory/facts?query=docker`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    const queryBody = (await queryRes.json()) as {
+      facts: Array<{ id: number; content: string }>
+      total: number
+    }
+    expect(queryRes.status).toBe(200)
+    expect(queryBody.total).toBe(1)
+    expect(queryBody.facts[0]?.id).toBe(dockerFactId)
+    expect(queryBody.facts[0]?.content).toContain('Docker')
+
+    const userFilterRes = await fetch(`${baseUrl}/api/memory/facts?userId=1`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    const userFilterBody = (await userFilterRes.json()) as {
+      facts: Array<{ userId: number | null }>
+      total: number
+    }
+    expect(userFilterRes.status).toBe(200)
+    expect(userFilterBody.total).toBeGreaterThanOrEqual(2)
+    expect(userFilterBody.facts.every((fact) => fact.userId === 1)).toBe(true)
+
+    const updateRes = await fetch(`${baseUrl}/api/memory/facts/${dockerFactId}`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ content: 'User works with Docker and Kubernetes every day' }),
+    })
+    expect(updateRes.status).toBe(200)
+
+    const updatedFact = db.prepare('SELECT content FROM memories WHERE id = ?').get(dockerFactId) as { content: string }
+    expect(updatedFact.content).toBe('User works with Docker and Kubernetes every day')
+
+    const deleteRes = await fetch(`${baseUrl}/api/memory/facts/${userTwoFactId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    expect(deleteRes.status).toBe(200)
+
+    const deletedFact = db.prepare('SELECT id FROM memories WHERE id = ?').get(userTwoFactId)
+    expect(deletedFact).toBeUndefined()
+  })
+
+  it('enforces admin-only access for facts endpoints', async () => {
+    const userToken = generateAccessToken({ userId: 2, username: 'regular', role: 'user' })
+
+    const listRes = await fetch(`${baseUrl}/api/memory/facts`, {
+      headers: { Authorization: `Bearer ${userToken}` },
+    })
+    expect(listRes.status).toBe(403)
+
+    const updateRes = await fetch(`${baseUrl}/api/memory/facts/1`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${userToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ content: 'Nope' }),
+    })
+    expect(updateRes.status).toBe(403)
+
+    const deleteRes = await fetch(`${baseUrl}/api/memory/facts/1`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${userToken}` },
+    })
+    expect(deleteRes.status).toBe(403)
+  })
+
   it('requires authentication for memory routes', async () => {
     const soulRes = await fetch(`${baseUrl}/api/memory/soul`)
     expect(soulRes.status).toBe(401)
@@ -819,13 +911,17 @@ describe('settings API', () => {
     adminToken = body.accessToken
   })
 
-  it('reads settings including telegram token', async () => {
+  it('reads settings including telegram token and fact extraction defaults', async () => {
     const res = await fetch(`${baseUrl}/api/settings`, {
       headers: { Authorization: `Bearer ${adminToken}` },
     })
-    const body = (await res.json()) as { telegramBotToken: string }
+    const body = (await res.json()) as {
+      telegramBotToken: string
+      factExtraction: { enabled: boolean; providerId: string; minSessionMessages: number }
+    }
     expect(res.status).toBe(200)
     expect(body.telegramBotToken).toBe('')
+    expect(body.factExtraction).toEqual({ enabled: false, providerId: '', minSessionMessages: 3 })
   })
 
   it('updates settings and applies live changes', async () => {
@@ -872,6 +968,78 @@ describe('settings API', () => {
     expect(settings.language).toBe('German')
     expect(settings.batchingDelayMs).toBe(4000)
     expect(telegram.botToken).toBe('telegram-secret')
+  })
+
+  it('accepts legacy healthMonitor.intervalMinutes in update payloads', async () => {
+    const res = await fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        healthMonitor: {
+          intervalMinutes: 11,
+        },
+      }),
+    })
+
+    const body = (await res.json()) as { healthMonitorIntervalMinutes: number }
+    expect(res.status).toBe(200)
+    expect(body.healthMonitorIntervalMinutes).toBe(11)
+
+    const settingsPath = path.join(tempDataDir, 'config', 'settings.json')
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as { healthMonitorIntervalMinutes: number }
+    expect(settings.healthMonitorIntervalMinutes).toBe(11)
+  })
+
+  it('persists factExtraction when saving full form (like the frontend)', async () => {
+    const getRes = await fetch(`${baseUrl}/api/settings`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    const defaults = (await getRes.json()) as Record<string, unknown>
+    expect(defaults.factExtraction).toEqual({
+      enabled: false,
+      providerId: '',
+      minSessionMessages: 3,
+    })
+
+    const fullForm = {
+      ...defaults,
+      factExtraction: {
+        ...(defaults.factExtraction as Record<string, unknown>),
+        enabled: true,
+        providerId: 'provider-123',
+        minSessionMessages: 5,
+      },
+    }
+    delete (fullForm as Record<string, unknown>).message
+
+    const putRes = await fetch(`${baseUrl}/api/settings`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${adminToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(fullForm),
+    })
+    const putBody = (await putRes.json()) as {
+      factExtraction: { enabled: boolean; providerId: string; minSessionMessages: number }
+    }
+    expect(putRes.status).toBe(200)
+    expect(putBody.factExtraction).toEqual({ enabled: true, providerId: 'provider-123', minSessionMessages: 5 })
+
+    const settingsPath = path.join(tempDataDir, 'config', 'settings.json')
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
+    expect(raw.factExtraction).toEqual({ enabled: true, providerId: 'provider-123', minSessionMessages: 5 })
+
+    const reloadRes = await fetch(`${baseUrl}/api/settings`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+    })
+    const reloaded = (await reloadRes.json()) as {
+      factExtraction: { enabled: boolean; providerId: string; minSessionMessages: number }
+    }
+    expect(reloaded.factExtraction).toEqual({ enabled: true, providerId: 'provider-123', minSessionMessages: 5 })
   })
 
   it('persists agentHeartbeat when saving full form (like the frontend)', async () => {
@@ -947,6 +1115,52 @@ describe('settings API', () => {
     })
     const reloaded = (await reloadRes.json()) as { telegramEnabled: boolean }
     expect(reloaded.telegramEnabled).toBe(true)
+  })
+
+  it('applies live settings updates to agentCore without failures (thinkingLevel, session, prompt)', async () => {
+    // Regression: a full-form PUT from the frontend includes every live-updatable
+    // setting (thinkingLevel, language, timezone, sessionTimeoutMinutes). Every
+    // corresponding agentCore.* hook must exist and must not throw — otherwise
+    // the service would silently log "Failed to apply live settings update" and
+    // subsequent live updates in the same try-block would be skipped.
+    setTimeoutMinutes.mockClear()
+    refreshSystemPrompt.mockClear()
+    setThinkingLevel.mockClear()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    try {
+      const getRes = await fetch(`${baseUrl}/api/settings`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      })
+      const defaults = (await getRes.json()) as Record<string, unknown>
+
+      const fullForm = { ...defaults, thinkingLevel: 'medium', language: 'en', timezone: 'UTC' }
+      delete (fullForm as Record<string, unknown>).message
+
+      const putRes = await fetch(`${baseUrl}/api/settings`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${adminToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(fullForm),
+      })
+      expect(putRes.status).toBe(200)
+
+      // All live hooks must have been called — proves none of them silently threw
+      // and caused the catch-block to swallow the rest.
+      expect(setThinkingLevel).toHaveBeenCalledWith('medium')
+      expect(refreshSystemPrompt).toHaveBeenCalled()
+      expect(setTimeoutMinutes).toHaveBeenCalled()
+
+      // And the service must not have logged any live-update failure.
+      const liveUpdateErrors = errorSpy.mock.calls.filter(
+        (args) => typeof args[0] === 'string' && args[0].includes('Failed to apply live settings update')
+      )
+      expect(liveUpdateErrors).toEqual([])
+    } finally {
+      errorSpy.mockRestore()
+    }
   })
 })
 

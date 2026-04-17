@@ -83,6 +83,22 @@ packages/
 └── telegram/       # Telegram bot integration
 ```
 
+### Architecture Guardrails
+
+Structural conventions, boundary rules and the verification baseline are documented in:
+
+- `docs/architecture-conventions.md`
+
+Run the full guardrail baseline locally:
+
+```bash
+npm run baseline:parity
+```
+
+The same checks run in CI for pull requests and `main` via:
+
+- `.github/workflows/ci-guardrails.yml`
+
 ## Releasing a New Version
 
 1. Update the version in `package.json`

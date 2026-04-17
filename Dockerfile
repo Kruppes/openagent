@@ -23,6 +23,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# Install GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
+
 # Verify installations
 RUN node --version && npm --version && git --version && python3 --version && jq --version
 
@@ -56,7 +64,9 @@ RUN mkdir -p /data/db /data/config /data/memory/daily /data/skills /data/skills_
 COPY data/skills_agent /app/skills_agent_defaults
 
 # Save baseline package snapshot for auto-tracking agent-installed packages
-RUN dpkg-query -W -f='${Package}\n' | sort -u > /etc/dpkg-base-packages.txt
+# Uses apt-mark showmanual to only capture explicitly installed packages,
+# matching the tracking logic in track-packages.sh
+RUN apt-mark showmanual | sort -u > /etc/dpkg-base-packages.txt
 
 # Install apt hook to auto-track packages installed at runtime
 COPY track-packages.sh /usr/local/bin/track-packages.sh

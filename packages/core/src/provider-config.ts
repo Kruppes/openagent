@@ -18,7 +18,9 @@ export const CLAUDE_CODE_VERSION = '2.1.96'
  * Supported provider types with presets
  */
 export type ProviderType =
-  | 'openai' | 'anthropic' | 'mistral' | 'ollama-local' | 'ollama-cloud' | 'openrouter' | 'kimi' | 'zai'
+  | 'openai' | 'anthropic' | 'mistral' | 'ollama' | 'openrouter' | 'kimi' | 'zai'
+  // Legacy aliases kept for migration
+  | 'ollama-local' | 'ollama-cloud'
   | 'openai-codex' | 'github-copilot' | 'google-gemini-cli' | 'google-antigravity' | 'anthropic-oauth'
 
 export type AuthMethod = 'api-key' | 'oauth'
@@ -76,9 +78,21 @@ export const PROVIDER_TYPE_PRESETS: Record<ProviderType, ProviderTypePreset> = {
     piAiProvider: 'mistral',
     authMethod: 'api-key',
   },
+  'ollama': {
+    type: 'ollama',
+    label: 'Ollama',
+    apiType: 'openai-completions',
+    providerName: 'ollama',
+    baseUrl: 'http://localhost:11434/v1',
+    requiresApiKey: false,
+    urlEditable: true,
+    piAiProvider: null,
+    authMethod: 'api-key',
+  },
+  // Legacy aliases — map to 'ollama' so existing configs still load
   'ollama-local': {
-    type: 'ollama-local',
-    label: 'Ollama (Local)',
+    type: 'ollama',
+    label: 'Ollama',
     apiType: 'openai-completions',
     providerName: 'ollama',
     baseUrl: 'http://localhost:11434/v1',
@@ -88,12 +102,12 @@ export const PROVIDER_TYPE_PRESETS: Record<ProviderType, ProviderTypePreset> = {
     authMethod: 'api-key',
   },
   'ollama-cloud': {
-    type: 'ollama-cloud',
-    label: 'Ollama Cloud',
+    type: 'ollama',
+    label: 'Ollama',
     apiType: 'openai-completions',
     providerName: 'ollama',
-    baseUrl: '',
-    requiresApiKey: true,
+    baseUrl: 'http://localhost:11434/v1',
+    requiresApiKey: false,
     urlEditable: true,
     piAiProvider: null,
     authMethod: 'api-key',
@@ -219,14 +233,16 @@ export interface ProviderConfig {
   id: string
   name: string
   type: string // e.g., 'openai-completions', 'anthropic-messages'
-  providerType: ProviderType // e.g., 'openai', 'anthropic', 'ollama-local'
+  providerType: ProviderType // e.g., 'openai', 'anthropic', 'ollama'
   provider: string // e.g., 'openai', 'anthropic', 'xai'
   baseUrl: string
   apiKey: string // encrypted at rest
   defaultModel: string
+  enabledModels?: string[] // list of model IDs enabled for this provider
   degradedThresholdMs?: number
   models?: ProviderModelConfig[]
   status?: 'connected' | 'error' | 'untested'
+  modelStatuses?: Record<string, 'connected' | 'error' | 'untested'>
   authMethod?: AuthMethod
   oauthCredentials?: OAuthCredentialsStored // encrypted at rest
   pinnedModels?: string[] // Models pinned for Telegram /model switcher
@@ -259,7 +275,9 @@ export interface ProviderModelConfig {
 export interface ProvidersFile {
   providers: ProviderConfig[]
   activeProvider?: string
+  activeModel?: string // model ID within the active provider
   fallbackProvider?: string
+  fallbackModel?: string // model ID within the fallback provider
   _comment?: string
 }
 
@@ -292,7 +310,25 @@ export function loadProviders(): ProvidersFile {
   }
 
   const content = fs.readFileSync(filePath, 'utf-8')
-  return JSON.parse(content) as ProvidersFile
+  const data = JSON.parse(content) as ProvidersFile
+
+  // Migrate legacy ollama-local / ollama-cloud → ollama
+  let migrated = false
+  for (const p of data.providers) {
+    if (p.providerType === 'ollama-local' || p.providerType === 'ollama-cloud') {
+      p.providerType = 'ollama' as ProviderType
+      p.type = 'openai-completions'
+      p.provider = 'ollama'
+      migrated = true
+    }
+  }
+  if (migrated) {
+    // Persist the migration so it only runs once
+    const outPath = path.join(configDir, 'providers.json')
+    fs.writeFileSync(outPath, JSON.stringify(data, null, 2) + '\n', 'utf-8')
+  }
+
+  return data
 }
 
 /**
@@ -406,6 +442,7 @@ export function addProvider(input: {
   baseUrl?: string
   apiKey?: string
   defaultModel: string
+  enabledModels?: string[]
   degradedThresholdMs?: number
 }): ProviderConfig {
   const preset = PROVIDER_TYPE_PRESETS[input.providerType]
@@ -420,6 +457,13 @@ export function addProvider(input: {
     throw new Error(`Provider with name "${input.name}" already exists`)
   }
 
+  // Ensure defaultModel is included in enabledModels
+  const enabledModels = input.enabledModels && input.enabledModels.length > 0
+    ? (input.enabledModels.includes(input.defaultModel)
+        ? input.enabledModels
+        : [input.defaultModel, ...input.enabledModels])
+    : [input.defaultModel]
+
   const provider: ProviderConfig = {
     id: generateProviderId(),
     name: input.name,
@@ -429,6 +473,7 @@ export function addProvider(input: {
     baseUrl: input.baseUrl || preset.baseUrl,
     apiKey: input.apiKey ? encrypt(input.apiKey) : '',
     defaultModel: input.defaultModel,
+    enabledModels,
     degradedThresholdMs: input.degradedThresholdMs ?? 5000,
     status: 'untested',
     authMethod: preset.authMethod,
@@ -439,6 +484,7 @@ export function addProvider(input: {
   // If this is the first provider, make it active
   if (file.providers.length === 1) {
     file.activeProvider = provider.id
+    file.activeModel = input.defaultModel
   }
 
   saveProviders(file)
@@ -452,6 +498,7 @@ export function addOAuthProvider(input: {
   name: string
   providerType: ProviderType
   defaultModel: string
+  enabledModels?: string[]
   degradedThresholdMs?: number
   oauthCredentials: OAuthCredentials
 }): ProviderConfig {
@@ -470,6 +517,13 @@ export function addOAuthProvider(input: {
     throw new Error(`Provider with name "${input.name}" already exists`)
   }
 
+  // Ensure defaultModel is included in enabledModels
+  const enabledModels = input.enabledModels && input.enabledModels.length > 0
+    ? (input.enabledModels.includes(input.defaultModel)
+        ? input.enabledModels
+        : [input.defaultModel, ...input.enabledModels])
+    : [input.defaultModel]
+
   const provider: ProviderConfig = {
     id: generateProviderId(),
     name: input.name,
@@ -479,6 +533,7 @@ export function addOAuthProvider(input: {
     baseUrl: preset.baseUrl,
     apiKey: '',
     defaultModel: input.defaultModel,
+    enabledModels,
     degradedThresholdMs: input.degradedThresholdMs ?? 5000,
     status: 'untested',
     authMethod: 'oauth',
@@ -489,6 +544,7 @@ export function addOAuthProvider(input: {
 
   if (file.providers.length === 1) {
     file.activeProvider = provider.id
+    file.activeModel = input.defaultModel
   }
 
   saveProviders(file)
@@ -504,6 +560,7 @@ export function updateProvider(id: string, input: {
   baseUrl?: string
   apiKey?: string
   defaultModel?: string
+  enabledModels?: string[]
   degradedThresholdMs?: number
   pinnedModels?: string[]
 }): ProviderConfig {
@@ -539,6 +596,13 @@ export function updateProvider(id: string, input: {
   if (input.baseUrl !== undefined) existing.baseUrl = input.baseUrl
   if (input.apiKey !== undefined) existing.apiKey = input.apiKey ? encrypt(input.apiKey) : ''
   if (input.defaultModel !== undefined) existing.defaultModel = input.defaultModel
+  if (input.enabledModels !== undefined) {
+    // Ensure defaultModel is always in enabledModels
+    const dm = input.defaultModel ?? existing.defaultModel
+    existing.enabledModels = input.enabledModels.includes(dm)
+      ? input.enabledModels
+      : [dm, ...input.enabledModels]
+  }
   if (input.degradedThresholdMs !== undefined) existing.degradedThresholdMs = input.degradedThresholdMs
   if (input.pinnedModels !== undefined) existing.pinnedModels = input.pinnedModels
 
@@ -582,6 +646,12 @@ export function deleteProvider(id: string): void {
     throw new Error('Cannot delete the active provider. Set another provider as active first.')
   }
 
+  // Clean up fallback if it points to this provider
+  if (file.fallbackProvider === id) {
+    delete file.fallbackProvider
+    delete file.fallbackModel
+  }
+
   file.providers.splice(index, 1)
   saveProviders(file)
 }
@@ -589,24 +659,74 @@ export function deleteProvider(id: string): void {
 /**
  * Set the active provider
  */
-export function setActiveProvider(id: string): void {
+export function setActiveProvider(id: string, modelId?: string): void {
   const file = loadProviders()
   const provider = file.providers.find(p => p.id === id)
   if (!provider) {
     throw new Error(`Provider not found: ${id}`)
   }
   file.activeProvider = id
+  if (modelId !== undefined) {
+    file.activeModel = modelId
+  } else {
+    file.activeModel = provider.defaultModel
+  }
   saveProviders(file)
+}
+
+/**
+ * Set the active model ID (within the current active provider).
+ */
+export function setActiveModel(modelId: string): void {
+  const file = loadProviders()
+  if (!file.activeProvider) {
+    throw new Error('No active provider set')
+  }
+  const provider = file.providers.find(p => p.id === file.activeProvider)
+  if (!provider) {
+    throw new Error('Active provider not found')
+  }
+  const enabled = provider.enabledModels ?? [provider.defaultModel]
+  if (!enabled.includes(modelId)) {
+    throw new Error(`Model "${modelId}" is not enabled for provider "${provider.name}"`)
+  }
+  file.activeModel = modelId
+  saveProviders(file)
+}
+
+/**
+ * Get the active model ID.
+ */
+export function getActiveModelId(): string | null {
+  const file = loadProviders()
+  if (!file.activeProvider) return null
+  const provider = file.providers.find(p => p.id === file.activeProvider)
+  if (!provider) return null
+  return file.activeModel ?? provider.defaultModel
 }
 
 /**
  * Update a provider's status
  */
-export function updateProviderStatus(id: string, status: 'connected' | 'error' | 'untested'): void {
+export function updateProviderStatus(id: string, status: 'connected' | 'error' | 'untested', modelId?: string): void {
   const file = loadProviders()
   const provider = file.providers.find(p => p.id === id)
   if (!provider) return
-  provider.status = status
+
+  if (modelId) {
+    // Update per-model status
+    if (!provider.modelStatuses) provider.modelStatuses = {}
+    provider.modelStatuses[modelId] = status
+    // Also derive overall provider status from model statuses
+    const enabled = provider.enabledModels ?? [provider.defaultModel]
+    const statuses = enabled.map(m => provider.modelStatuses?.[m] ?? 'untested')
+    if (statuses.every(s => s === 'connected')) provider.status = 'connected'
+    else if (statuses.some(s => s === 'error')) provider.status = 'error'
+    else provider.status = 'untested'
+  } else {
+    provider.status = status
+  }
+
   saveProviders(file)
 }
 
@@ -624,16 +744,26 @@ export function getFallbackProvider(): ProviderConfig | null {
 /**
  * Set the fallback provider by ID. Validates that the ID exists and is not the active provider.
  */
-export function setFallbackProvider(id: string): void {
+export function setFallbackProvider(id: string, modelId?: string): void {
   const file = loadProviders()
   const provider = file.providers.find(p => p.id === id)
   if (!provider) {
     throw new Error(`Provider not found: ${id}`)
   }
   if (file.activeProvider === id) {
-    throw new Error('Fallback provider cannot be the same as the active provider')
+    // Only reject if both provider AND model match the active selection
+    const activeModel = file.activeModel ?? file.providers.find(p => p.id === file.activeProvider)?.defaultModel
+    const fbModel = modelId ?? provider.defaultModel
+    if (activeModel === fbModel) {
+      throw new Error('Fallback cannot be the same provider and model as the active selection')
+    }
   }
   file.fallbackProvider = id
+  if (modelId !== undefined) {
+    file.fallbackModel = modelId
+  } else {
+    file.fallbackModel = provider.defaultModel
+  }
   saveProviders(file)
 }
 
@@ -643,7 +773,19 @@ export function setFallbackProvider(id: string): void {
 export function clearFallbackProvider(): void {
   const file = loadProviders()
   delete file.fallbackProvider
+  delete file.fallbackModel
   saveProviders(file)
+}
+
+/**
+ * Get the fallback model ID.
+ */
+export function getFallbackModelId(): string | null {
+  const file = loadProviders()
+  if (!file.fallbackProvider) return null
+  const provider = file.providers.find(p => p.id === file.fallbackProvider)
+  if (!provider) return null
+  return file.fallbackModel ?? provider.defaultModel
 }
 
 /**
@@ -787,6 +929,41 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
     maxTokens: modelConfig?.maxTokens ?? 16384,
     ...(headers && { headers }),
   }
+}
+
+/**
+ * Parse a composite provider:model ID string into its parts.
+ * Supports formats:
+ *   - "providerId:modelId" → { providerId, modelId }
+ *   - "providerId"         → { providerId, modelId: undefined }
+ *   - "" / undefined        → { providerId: '', modelId: undefined }
+ *
+ * When modelId is undefined, callers should fall back to the provider's defaultModel.
+ */
+export function parseProviderModelId(value?: string): { providerId: string; modelId?: string } {
+  if (!value) return { providerId: '' }
+  const colonIdx = value.indexOf(':')
+  if (colonIdx === -1) return { providerId: value }
+  return {
+    providerId: value.slice(0, colonIdx),
+    modelId: value.slice(colonIdx + 1) || undefined,
+  }
+}
+
+/**
+ * Resolve a composite provider:model ID to a provider config and model.
+ * Returns null if the provider is not found.
+ */
+export function resolveProviderModelId(value?: string): {
+  provider: ProviderConfig
+  modelId?: string
+} | null {
+  const { providerId, modelId } = parseProviderModelId(value)
+  if (!providerId) return null
+  const file = loadProvidersDecrypted()
+  const provider = file.providers.find(p => p.id === providerId)
+  if (!provider) return null
+  return { provider, modelId }
 }
 
 /**

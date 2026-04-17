@@ -1,175 +1,220 @@
-/**
- * fact-extraction.ts — Extract atomic facts from a conversation and store them
- * in the memories table. Called at session-end, after the session summary is written.
- *
- * Uses Ollama /api/chat with a local model (default: gemma4:26b) to extract
- * factual statements worth remembering long-term.
- */
-
+import type { Api, Model } from '@mariozechner/pi-ai'
+import { completeSimple } from '@mariozechner/pi-ai'
 import type { Database } from './database.js'
+import { createMemory } from './memories-store.js'
+import { resolveBackgroundReasoning } from './thinking-level.js'
 
-export interface FactExtractionOptions {
-  /** Ollama base URL (default: process.env.OLLAMA_URL || 'http://192.168.10.222:11434') */
-  ollamaUrl?: string
-  /** Model to use (default: process.env.FACT_EXTRACTION_MODEL || 'gemma4:26b') */
-  model?: string
-  /** Maximum number of facts to extract (default: 10) */
-  maxFacts?: number
-  /** Source label stored with each fact (default: 'fact_extraction') */
-  source?: string
+const MAX_FACTS = 10
+const DUPLICATE_OVERLAP_THRESHOLD = 0.7
+const DUPLICATE_SEARCH_LIMIT = 25
+
+const COMMON_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'das', 'der', 'die', 'ein', 'eine', 'einer', 'einem', 'einen',
+  'for', 'from', 'i', 'ich', 'in', 'is', 'it', 'mit', 'of', 'on', 'or', 'the', 'to', 'und', 'user', 'uses', 'with',
+])
+
+const systemPrompt = `You are a fact extraction assistant. Your job is to extract atomic, reusable facts from a conversation transcript.
+
+Rules:
+- Extract a maximum of 10 facts per conversation
+- Each fact must be a single, self-contained statement
+- Facts should be things worth remembering long-term (preferences, decisions, technical details, personal info)
+- Do NOT extract ephemeral details (greetings, temporary commands, one-off questions)
+- Do NOT extract opinions or subjective assessments by the assistant
+- Write each fact on its own line, prefixed with "- "
+- Write facts in the same language as the conversation
+- If no facts worth remembering are found, respond with: NO_FACTS
+
+Example output:
+- User prefers dark mode in all applications
+- The project uses PostgreSQL on port 5433 (non-standard)
+- Deployment is done via Docker Compose with 3 services`
+
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
 }
 
-const SYSTEM_PROMPT = `Extract max 10 atomic, factual statements from this conversation. Each fact should be a single sentence. Only extract facts worth remembering long-term. Output one fact per line, nothing else. Skip greetings, small talk, and ephemeral details.`
+function normalizeWord(word: string): string {
+  return word
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+}
 
-/**
- * Call Ollama /api/chat to extract facts from conversation text.
- * Returns an array of fact strings (one per line).
- */
-export async function callOllamaForFacts(
-  conversationHistory: string,
-  options?: FactExtractionOptions,
-): Promise<string[]> {
-  const ollamaUrl = options?.ollamaUrl || process.env.OLLAMA_URL || 'http://192.168.10.222:11434'
-  const model = options?.model || process.env.FACT_EXTRACTION_MODEL || 'gemma4:26b'
+function getNormalizedWords(text: string): string[] {
+  return Array.from(new Set(
+    (text.match(/[\p{L}\p{N}]+/gu) ?? [])
+      .map(normalizeWord)
+      .filter(Boolean)
+  ))
+}
 
-  const body = {
-    model,
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: conversationHistory },
-    ],
-    stream: false,
-    // IMPORTANT: gemma4 models require think: false at top level,
-    // otherwise you get empty content
-    think: false,
+function getSearchKeywords(text: string): string[] {
+  return getNormalizedWords(text)
+    .filter(word => word.length >= 3 && !COMMON_WORDS.has(word))
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 6)
+}
+
+function buildFtsOrQuery(keywords: string[]): string {
+  return keywords
+    .map(keyword => `"${keyword.replaceAll('"', '""')}"`)
+    .join(' OR ')
+}
+
+function computeWordOverlap(a: string, b: string): number {
+  const aWords = new Set(getNormalizedWords(a))
+  const bWords = new Set(getNormalizedWords(b))
+
+  if (aWords.size === 0 || bWords.size === 0) {
+    return normalizeWhitespace(a).toLowerCase() === normalizeWhitespace(b).toLowerCase() ? 1 : 0
   }
 
-  const response = await fetch(`${ollamaUrl}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(`Ollama API error ${response.status}: ${text}`)
+  let intersection = 0
+  for (const word of aWords) {
+    if (bWords.has(word)) intersection += 1
   }
 
-  const data = await response.json() as { message?: { content?: string } }
-  const content = data?.message?.content ?? ''
+  return intersection / Math.max(aWords.size, bWords.size)
+}
 
-  return parseFactLines(content, options?.maxFacts ?? 10)
+function normalizeFactCandidate(line: string): string {
+  const trimmed = line.trim()
+  if (!trimmed) return ''
+
+  const withoutPrefix = trimmed
+    .replace(/^[-*•]\s+/, '')
+    .replace(/^\d+[.)]\s+/, '')
+
+  return normalizeWhitespace(withoutPrefix)
+}
+
+interface CandidateRow {
+  content: string
 }
 
 /**
- * Parse the LLM response into individual fact lines.
- * Strips numbering, bullets, and empty lines.
+ * Parse an LLM fact extraction response into a normalized fact array.
  */
-export function parseFactLines(content: string, maxFacts: number = 10): string[] {
-  return content
-    .split('\n')
-    .map(line => line
-      .trim()
-      // Remove leading numbering: "1. ", "1) ", "- ", "* "
-      .replace(/^\d+[.)]\s*/, '')
-      .replace(/^[-*]\s+/, '')
-      .trim()
-    )
-    .filter(line => line.length > 10) // Skip very short / empty lines
-    .slice(0, maxFacts)
+export function parseFactLines(response: string): string[] {
+  const trimmed = response.trim()
+  if (!trimmed || trimmed.toUpperCase() === 'NO_FACTS') {
+    return []
+  }
+
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+
+  const structuredFacts = lines
+    .filter(line => /^([-*•]\s+|\d+[.)]\s+)/.test(line))
+    .map(normalizeFactCandidate)
+    .filter(Boolean)
+
+  if (structuredFacts.length > 0) {
+    return structuredFacts.slice(0, MAX_FACTS)
+  }
+
+  return lines
+    .map(normalizeFactCandidate)
+    .filter(Boolean)
+    .slice(0, MAX_FACTS)
 }
 
 /**
- * Strip trailing punctuation for fuzzy matching.
+ * Check whether a fact already exists for the same user.
+ * Uses FTS5 candidate search followed by normalized word-overlap matching.
  */
-function stripTrailingPunct(s: string): string {
-  return s.replace(/[.!?;:,]+$/, '')
-}
+export function isDuplicateFact(db: Database, userId: number | null, newFact: string): boolean {
+  const normalizedFact = normalizeWhitespace(newFact)
+  if (!normalizedFact) return false
 
-/**
- * Check if a very similar fact already exists in the memories table.
- * Uses bidirectional LIKE matching:
- * 1. Check if any stored fact contains the new fact's core (first 40 chars)
- * 2. Check if the new fact contains any stored fact's core text
- */
-export function isDuplicateFact(db: Database, fact: string): boolean {
-  const normalized = stripTrailingPunct(fact.trim().toLowerCase())
-  if (normalized.length === 0) return false
+  const keywords = getSearchKeywords(normalizedFact)
+  const fallbackWords = getNormalizedWords(normalizedFact).slice(0, 6)
+  const queryTerms = keywords.length > 0 ? keywords : fallbackWords
+  if (queryTerms.length === 0) return false
 
-  // Direction 1: Check if any stored fact contains the core of the new fact
-  const searchTerm = normalized.length > 40
-    ? normalized.slice(0, 40)
-    : normalized
+  const ftsQuery = buildFtsOrQuery(queryTerms)
+  const userClause = userId === null ? 'm.user_id IS NULL' : 'm.user_id = ?'
+  const params = userId === null
+    ? [ftsQuery, DUPLICATE_SEARCH_LIMIT]
+    : [ftsQuery, userId, DUPLICATE_SEARCH_LIMIT]
 
-  // Escape % and _ for LIKE
-  const escaped = searchTerm.replace(/%/g, '\\%').replace(/_/g, '\\_')
-
-  const row1 = db.prepare(
-    `SELECT COUNT(*) as cnt FROM memories WHERE LOWER(content) LIKE ? ESCAPE '\\'`
-  ).get(`%${escaped}%`) as { cnt: number }
-
-  if (row1.cnt > 0) return true
-
-  // Direction 2: Check if any stored fact's core is contained in the new fact
-  const candidates = db.prepare(
-    `SELECT content FROM memories`
-  ).all() as Array<{ content: string }>
+  const candidates = db.prepare(`
+    SELECT m.content
+    FROM memories_fts
+    INNER JOIN memories m ON m.id = memories_fts.rowid
+    WHERE memories_fts MATCH ? AND ${userClause}
+    ORDER BY bm25(memories_fts) ASC, m.timestamp DESC, m.id DESC
+    LIMIT ?
+  `).all(...params) as CandidateRow[]
 
   for (const candidate of candidates) {
-    const storedNorm = stripTrailingPunct(candidate.content.trim().toLowerCase())
-    const storedCore = storedNorm.length > 40 ? storedNorm.slice(0, 40) : storedNorm
-    if (storedCore.length > 10 && normalized.includes(storedCore)) return true
+    if (computeWordOverlap(candidate.content, normalizedFact) > DUPLICATE_OVERLAP_THRESHOLD) {
+      return true
+    }
   }
 
   return false
 }
 
 /**
- * Store a single fact in the memories table.
+ * Store a single extracted fact in the memories table.
  */
-export function storeFact(
-  db: Database,
-  fact: string,
-  source: string = 'fact_extraction',
-): void {
-  db.prepare(
-    `INSERT INTO memories (content, source) VALUES (?, ?)`
-  ).run(fact, source)
+export function storeFact(db: Database, userId: number | null, sessionId: string, content: string): number {
+  return createMemory(db, userId, sessionId, normalizeWhitespace(content), 'extracted_fact')
 }
 
 /**
- * Extract atomic facts from a conversation and store them in the memories table.
- *
- * @param db - Database instance
- * @param conversationHistory - The conversation text to extract facts from
- * @param sessionId - Session ID (used for logging)
- * @param options - Extraction options (Ollama URL, model, etc.)
- * @returns Number of new facts stored
+ * Extract facts from a conversation transcript, deduplicate them, and store new facts.
  */
 export async function extractAndStoreFacts(
   db: Database,
-  conversationHistory: string,
+  userId: number | null,
   sessionId: string,
-  options?: FactExtractionOptions,
-): Promise<number> {
-  if (!conversationHistory || conversationHistory.trim().length < 50) {
-    return 0
-  }
+  conversationHistory: string,
+  model: Model<Api>,
+  apiKey: string,
+): Promise<{ extracted: number; stored: number; duplicates: number }> {
+  const userMessage = `Analyze the following session transcript and extract atomic facts worth remembering:\n\n<transcript>\n${conversationHistory}\n</transcript>`
 
-  const source = options?.source ?? 'fact_extraction'
-  const facts = await callOllamaForFacts(conversationHistory, options)
+  const response = await completeSimple(model, {
+    systemPrompt,
+    messages: [{
+      role: 'user' as const,
+      content: userMessage,
+      timestamp: Date.now(),
+    }],
+  }, {
+    apiKey,
+    temperature: 0,
+    reasoning: resolveBackgroundReasoning(),
+  })
 
+  const responseText = response.content
+    .filter(item => item.type === 'text')
+    .map(item => (item as { type: 'text'; text: string }).text)
+    .join('')
+    .trim()
+
+  const facts = parseFactLines(responseText)
   let stored = 0
+  let duplicates = 0
+
   for (const fact of facts) {
-    if (!isDuplicateFact(db, fact)) {
-      storeFact(db, fact, source)
-      stored++
+    if (isDuplicateFact(db, userId, fact)) {
+      duplicates += 1
+      continue
     }
+
+    storeFact(db, userId, sessionId, fact)
+    stored += 1
   }
 
-  if (stored > 0) {
-    console.log(`[fact-extraction] Stored ${stored} new facts from session ${sessionId} (${facts.length} extracted, ${facts.length - stored} duplicates skipped)`)
+  return {
+    extracted: facts.length,
+    stored,
+    duplicates,
   }
-
-  return stored
 }

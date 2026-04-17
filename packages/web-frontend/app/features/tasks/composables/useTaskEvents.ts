@@ -1,44 +1,11 @@
-export interface TaskEventItem {
-  type: string
-  timestamp: string
-  toolName?: string
-  toolCallId?: string
-  toolArgs?: unknown
-  toolResult?: unknown
-  toolIsError?: boolean
-  durationMs?: number
-  text?: string
-  status?: string
-  statusMessage?: string
-  // For REST API tool_call events
-  input?: string
-  output?: string
-  // For REST API message events
-  role?: string
-  content?: string
-  metadata?: unknown
-  thinking?: string
-}
-
-interface TaskInfo {
-  id: string
-  name: string
-  status: string
-  prompt?: string
-  resultSummary?: string
-  errorMessage?: string
-}
-
-interface TaskEventsResponse {
-  events: TaskEventItem[]
-  task: TaskInfo
-}
+import type { TaskEventItem, TaskInfo } from '~/api/tasks'
+import { useTasksApi } from '~/api/tasks'
 
 /**
  * Composable for viewing task events — live via WebSocket or historical via REST API.
  */
-export function useTaskViewer() {
-  const { apiFetch } = useApi()
+export function useTaskEvents() {
+  const tasksApi = useTasksApi()
   const { getAccessToken } = useAuth()
   const config = useRuntimeConfig()
 
@@ -49,17 +16,10 @@ export function useTaskViewer() {
   const isLive = ref(false)
 
   let ws: WebSocket | null = null
-  // Track pending tool calls (tool_call_start without matching tool_call_end)
   const pendingToolCalls = new Map<string, TaskEventItem>()
 
-  /**
-   * Accumulated text for grouping text_delta events
-   */
   const textBuffer = ref('')
 
-  /**
-   * Load task events — uses WebSocket for running tasks, REST for completed/failed
-   */
   async function loadTaskEvents(taskId: string) {
     loading.value = true
     error.value = null
@@ -69,16 +29,13 @@ export function useTaskViewer() {
     pendingToolCalls.clear()
 
     try {
-      // First fetch task info to determine if we need live or historical
-      const taskData = await apiFetch<{ task: TaskInfo }>(`/api/tasks/${taskId}`)
+      const taskData = await tasksApi.getTask(taskId)
       taskInfo.value = taskData.task
 
       if (taskData.task.status === 'running' || taskData.task.status === 'paused') {
-        // Connect via WebSocket for live streaming
         connectWebSocket(taskId)
       } else {
-        // Load historical events from REST API
-        const data = await apiFetch<TaskEventsResponse>(`/api/tasks/${taskId}/events`)
+        const data = await tasksApi.getTaskEvents(taskId)
         taskInfo.value = data.task
         events.value = normalizeRestEvents(data.events)
         loading.value = false
@@ -89,9 +46,6 @@ export function useTaskViewer() {
     }
   }
 
-  /**
-   * Connect to WebSocket for live task events
-   */
   function connectWebSocket(taskId: string) {
     const token = getAccessToken()
     if (!token) {
@@ -101,7 +55,6 @@ export function useTaskViewer() {
     }
 
     const apiBase = config.public.apiBase || ''
-    // Convert http(s) to ws(s)
     const wsBase = apiBase.replace(/^http/, 'ws')
     const wsUrl = `${wsBase}/ws/task/${taskId}?token=${encodeURIComponent(token)}`
 
@@ -112,12 +65,12 @@ export function useTaskViewer() {
       loading.value = false
     }
 
-    ws.onmessage = (evt: MessageEvent) => {
+    ws.onmessage = (event: MessageEvent) => {
       try {
-        const data = JSON.parse(evt.data as string) as Record<string, unknown>
+        const data = JSON.parse(event.data as string) as Record<string, unknown>
         handleWsMessage(data)
       } catch {
-        // ignore parse errors
+        // Ignore JSON parse errors from malformed messages.
       }
     }
 
@@ -150,7 +103,6 @@ export function useTaskViewer() {
 
       case 'backlog_start':
       case 'history_start':
-        // Control messages, no-op
         break
 
       case 'backlog_end':
@@ -176,7 +128,6 @@ export function useTaskViewer() {
         events.value.push(data as unknown as TaskEventItem)
         if (data.status && taskInfo.value) {
           taskInfo.value.status = data.status as string
-          // Capture statusMessage as resultSummary/errorMessage for end-of-task display
           if (data.statusMessage) {
             if (data.status === 'completed') {
               taskInfo.value.resultSummary = data.statusMessage as string
@@ -197,46 +148,43 @@ export function useTaskViewer() {
     }
   }
 
-  /**
-   * Normalize REST API events into a consistent format for the viewer
-   */
   function normalizeRestEvents(rawEvents: TaskEventItem[]): TaskEventItem[] {
-    return rawEvents.map(evt => {
-      if (evt.type === 'tool_call') {
-        // Convert REST tool_call format to viewer format
+    return rawEvents.map((event) => {
+      if (event.type === 'tool_call') {
         return {
           type: 'tool_call_end' as const,
-          timestamp: evt.timestamp,
-          toolName: evt.toolName,
-          toolArgs: safeParseJson(evt.input),
-          toolResult: safeParseJson(evt.output),
-          toolIsError: evt.status === 'error',
-          durationMs: evt.durationMs,
+          timestamp: event.timestamp,
+          toolName: event.toolName,
+          toolArgs: safeParseJson(event.input),
+          toolResult: safeParseJson(event.output),
+          toolIsError: event.status === 'error',
+          durationMs: event.durationMs,
         }
       }
-      if (evt.type === 'message') {
-        const meta = evt.metadata as Record<string, unknown> | null
-        const thinking = meta?.thinking as string | undefined
+
+      if (event.type === 'message') {
+        const metadata = event.metadata as Record<string, unknown> | null
+        const thinking = metadata?.thinking as string | undefined
+
         return {
           type: 'text_delta' as const,
-          timestamp: evt.timestamp,
-          text: evt.content,
-          role: evt.role,
+          timestamp: event.timestamp,
+          text: event.content,
+          role: event.role,
           thinking,
         }
       }
-      return evt
+
+      return event
     })
   }
 
-  /**
-   * Disconnect WebSocket and clean up
-   */
   function disconnect() {
     if (ws) {
       ws.close()
       ws = null
     }
+
     isLive.value = false
     pendingToolCalls.clear()
   }
@@ -256,11 +204,12 @@ export function useTaskViewer() {
   }
 }
 
-function safeParseJson(str: string | undefined | null): unknown {
-  if (!str) return null
+function safeParseJson(rawValue: string | undefined | null): unknown {
+  if (!rawValue) return null
+
   try {
-    return JSON.parse(str)
+    return JSON.parse(rawValue)
   } catch {
-    return str
+    return rawValue
   }
 }
