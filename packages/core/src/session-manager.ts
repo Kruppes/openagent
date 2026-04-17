@@ -221,7 +221,7 @@ export class SessionManager {
     appendToDailyFile(formattedSummary, activityDate, this.memoryDir)
   }
 
-  private buildConversationHistory(
+  buildConversationHistory(
     sessionId: string,
     options?: { userId?: string; startedAt?: number; endAt?: number },
   ): string | null {

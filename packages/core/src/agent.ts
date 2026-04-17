@@ -200,11 +200,7 @@ export class AgentCore {
     // new session start or topic shift) and prepend to user message
     const factInjection = this.sessionManager.consumeFactInjection(userId)
     if (factInjection) {
-      // Inject facts as additional context in the system prompt
-      const currentPrompt = this.agent.state.systemPrompt
-      if (currentPrompt && !currentPrompt.includes('## Relevant Facts from Memory')) {
-        this.agent.setSystemPrompt(currentPrompt + factInjection)
-      }
+      text = `${factInjection}\n\n${text}`
     }
 
     // Build image content and file context from attachments
