@@ -28,6 +28,7 @@ import {
   listCronjobsTool,
   listTasksTool,
   loadConfig,
+  loadMultiPersonaSettings,
   loadProvidersDecrypted,
   logToolCall,
   parseProviderModelId,
@@ -43,7 +44,7 @@ import type {
   TaskRuntimeBoundary,
   TaskRuntimeTaskBoundary,
 } from '@openagent/core'
-import { createTelegramBot } from '@openagent/telegram'
+import { createTelegramBot, TelegramBotPool, createTelegramBotPool } from '@openagent/telegram'
 import type { TelegramBot, TelegramChatEvent } from '@openagent/telegram'
 import { ChatEventBus } from '../chat-event-bus.js'
 import { triggerFactExtractionForSessionEnd } from '../fact-extraction-session-end.js'
@@ -276,6 +277,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   let agentCore: AgentCore | null = null
   let providerManager: ProviderManager | null = null
   let telegramBot: TelegramBot | null = null
+  let telegramBotPool: TelegramBotPool | null = null
 
   const pendingTaskInjections: PendingTaskInjectionMeta[] = []
 
@@ -635,6 +637,18 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       return
     }
 
+    // Stop existing pool if any
+    if (telegramBotPool) {
+      try {
+        await telegramBotPool.stop()
+      } catch {
+        // ignore
+      }
+      telegramBotPool = null
+      telegramBot = null
+    }
+
+    // Stop existing single bot if any
     if (telegramBot) {
       try {
         await telegramBot.stop()
@@ -644,21 +658,52 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       telegramBot = null
     }
 
-    telegramBot = createTelegramBot(agentCore, db, onTelegramChatEvent, () => {
-      initOrUpdateAgentCore().catch((err) => {
-        logger.error('[openagent] Error initializing agent core after Telegram provider change:', err)
+    const multiPersonaSettings = loadMultiPersonaSettings()
+
+    if (multiPersonaSettings.enabled) {
+      // Multi-persona mode: use TelegramBotPool
+      telegramBotPool = createTelegramBotPool({
+        agentCore,
+        db,
+        onChatEvent: onTelegramChatEvent,
+        onActiveProviderChanged: () => {
+          initOrUpdateAgentCore().catch((err) => {
+            logger.error('[openagent] Error initializing agent core after Telegram provider change:', err)
+          })
+        },
       })
-    })
-    if (telegramBot) {
+
       try {
-        await telegramBot.start()
-        logger.log('[openagent] Telegram bot (re)started')
+        await telegramBotPool.start()
+        // Set telegramBot to primary bot for backward compatibility
+        telegramBot = telegramBotPool.getPrimaryBot()
+        if (telegramBotPool.hasRunningBots()) {
+          logger.log('[openagent] Telegram bot pool (re)started')
+        } else {
+          logger.log('[openagent] Telegram bot pool: no bots configured or all disabled')
+        }
       } catch (err) {
-        logger.error('[openagent] Failed to start Telegram bot:', err)
-        telegramBot = null
+        logger.error('[openagent] Failed to start Telegram bot pool:', err)
+        telegramBotPool = null
       }
     } else {
-      logger.log('[openagent] Telegram bot disabled or not configured')
+      // Legacy single-bot mode
+      telegramBot = createTelegramBot(agentCore, db, onTelegramChatEvent, () => {
+        initOrUpdateAgentCore().catch((err) => {
+          logger.error('[openagent] Error initializing agent core after Telegram provider change:', err)
+        })
+      })
+      if (telegramBot) {
+        try {
+          await telegramBot.start()
+          logger.log('[openagent] Telegram bot (re)started')
+        } catch (err) {
+          logger.error('[openagent] Failed to start Telegram bot:', err)
+          telegramBot = null
+        }
+      } else {
+        logger.log('[openagent] Telegram bot disabled or not configured')
+      }
     }
   }
 
@@ -784,6 +829,15 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       consolidationScheduler.stop()
       agentHeartbeatService.stop()
       taskRuntime.schedules.stop()
+
+      if (telegramBotPool) {
+        try {
+          await telegramBotPool.stop()
+        } catch {
+          // ignore
+        }
+        telegramBotPool = null
+      }
 
       if (telegramBot) {
         try {
