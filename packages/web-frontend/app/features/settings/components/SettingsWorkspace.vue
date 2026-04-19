@@ -201,6 +201,65 @@
                     </Button>
                   </div>
                 </div>
+
+                <Separator />
+
+                <!-- Multi-Persona -->
+                <div>
+                  <h3 class="text-base font-semibold tracking-tight text-foreground">
+                    {{ $t('settings.multiPersonaTitle') }}
+                  </h3>
+                  <p class="mt-1 text-sm text-muted-foreground">
+                    {{ $t('settings.multiPersonaDescription') }}
+                  </p>
+                </div>
+
+                <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
+                  <div class="flex flex-col gap-0.5 pr-4">
+                    <Label for="multi-persona-enabled" class="cursor-pointer">
+                      {{ $t('settings.multiPersonaEnabled') }}
+                    </Label>
+                    <p class="text-xs text-muted-foreground">
+                      {{ $t('settings.multiPersonaEnabledHint') }}
+                    </p>
+                  </div>
+                  <Switch
+                    id="multi-persona-enabled"
+                    v-model:checked="form.multiPersona.enabled"
+                  />
+                </div>
+
+                <template v-if="form.multiPersona.enabled">
+                  <div class="flex flex-col gap-2">
+                    <Label for="multi-persona-default-agent">{{ $t('settings.multiPersonaDefaultAgentId') }}</Label>
+                    <Input
+                      id="multi-persona-default-agent"
+                      :model-value="form.multiPersona.defaultAgentId"
+                      disabled
+                      class="font-mono"
+                    />
+                    <p class="text-xs text-muted-foreground">{{ $t('settings.multiPersonaDefaultAgentIdHint') }}</p>
+                  </div>
+
+                  <div class="rounded-xl border border-border bg-card px-4 py-4">
+                    <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-2">
+                          <AppIcon name="bot" size="sm" class="text-muted-foreground" />
+                          <h3 class="text-sm font-semibold text-foreground">
+                            {{ $t('settings.multiPersonaManageLink') }}
+                          </h3>
+                        </div>
+                      </div>
+                      <Button as-child variant="outline" class="shrink-0">
+                        <NuxtLink to="/personas">
+                          {{ $t('settings.multiPersonaManageLink') }}
+                          <AppIcon name="externalLink" size="sm" />
+                        </NuxtLink>
+                      </Button>
+                    </div>
+                  </div>
+                </template>
               </div>
             </div>
 
@@ -1953,6 +2012,11 @@ const thinkingLevelOptions = computed(() =>
 )
 
 /* ── Form state ── */
+interface MultiPersonaForm {
+  enabled: boolean
+  defaultAgentId: string
+}
+
 interface SettingsForm {
   sessionTimeoutMinutes: number
   sessionSummaryProviderId: string
@@ -1971,6 +2035,7 @@ interface SettingsForm {
   tasks: TasksSettings
   tts: TtsSettings
   stt: SttSettings
+  multiPersona: MultiPersonaForm
 }
 
 const form = ref<SettingsForm | null>(null)
@@ -2032,6 +2097,10 @@ function hydrateForm() {
         ...s.stt.rewrite,
         providerId: migrateProviderValue(s.stt.rewrite?.providerId ?? ''),
       },
+    },
+    multiPersona: {
+      enabled: s.multiPersona?.enabled ?? false,
+      defaultAgentId: s.multiPersona?.defaultAgentId ?? 'main',
     },
   }
 }

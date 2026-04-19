@@ -23,7 +23,7 @@ export function createPersonasController(): PersonasController {
     },
 
     get(req, res) {
-      const { id } = req.params
+      const id = req.params.id as string
       const err = validateAgentId(id)
       if (err) {
         res.status(400).json({ error: err })
@@ -39,7 +39,7 @@ export function createPersonasController(): PersonasController {
     },
 
     update(req, res) {
-      const { id } = req.params
+      const id = req.params.id as string
       const idErr = validateAgentId(id)
       if (idErr) {
         res.status(400).json({ error: idErr })
@@ -88,7 +88,7 @@ export function createPersonasController(): PersonasController {
     },
 
     remove(req, res) {
-      const { id } = req.params
+      const id = req.params.id as string
       const idErr = validateAgentId(id)
       if (idErr) {
         res.status(400).json({ error: idErr })

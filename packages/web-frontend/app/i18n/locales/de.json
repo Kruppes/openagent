@@ -16,7 +16,8 @@
     "skills": "Skills",
     "instructions": "Anweisungen",
     "tasks": "Aufgaben",
-    "cronjobs": "Cronjobs"
+    "cronjobs": "Cronjobs",
+    "personas": "Personas"
   },
   "roles": {
     "admin": "Admin",
@@ -33,7 +34,8 @@
     "saveFailed": "Änderungen konnten nicht gespeichert werden.",
     "deleteFailed": "Element konnte nicht gelöscht werden.",
     "language": "Sprache",
-    "back": "Zurück"
+    "back": "Zurück",
+    "loading": "Laden…"
   },
   "admin": {
     "title": "Admin-Zugriff erforderlich",
@@ -560,7 +562,14 @@
     "sttRewriteEnabledHint": "Ein LLM verwenden, um Füllwörter, Wiederholungen und Sprach-Artefakte aus dem Transkript zu entfernen.",
     "sttRewriteProvider": "Rewrite-Anbieter",
     "sttRewriteProviderHint": "Wähle, welcher LLM-Anbieter den transkribierten Text bereinigt.",
-    "sttRewriteProviderNone": "Kein Anbieter konfiguriert"
+    "sttRewriteProviderNone": "Kein Anbieter konfiguriert",
+    "multiPersonaTitle": "Multi-Persona",
+    "multiPersonaDescription": "Aktiviert Unterstützung für mehrere Telegram-Bots mit eigenen Personas. Jeder Bot bekommt eigene Persona-Files unter /data/agents/[id]/ und isolierte Sessions + Memory.",
+    "multiPersonaEnabled": "Multi-Persona-Modus aktivieren",
+    "multiPersonaEnabledHint": "Wenn aktiviert, kann jeder Telegram-Bot eine eigene Persona, Sessions und Memory haben.",
+    "multiPersonaDefaultAgentId": "Standard Agent-ID",
+    "multiPersonaDefaultAgentIdHint": "Die Standard-Agent-ID für den Haupt-Bot (normalerweise \"main\").",
+    "multiPersonaManageLink": "Personas verwalten"
   },
   "users": {
     "kicker": "Zugriffssteuerung",
@@ -898,5 +907,43 @@
     "thinking": "Überlegung",
     "resultSummary": "Task-Ergebnis",
     "noSummary": "Task ohne Zusammenfassung abgeschlossen."
+  },
+  "personas": {
+    "title": "Personas",
+    "subtitle": "Agent-Personas für den Multi-Persona-Modus verwalten",
+    "empty": "Keine Personas gefunden. Erstelle deine erste Persona um loszulegen.",
+    "createNew": "Neue Persona",
+    "createTitle": "Neue Persona erstellen",
+    "createDescription": "Erstelle eine neue Persona mit Vorlagen-Dateien. Die ID muss kleingeschrieben und alphanumerisch sein (Bindestriche erlaubt).",
+    "idLabel": "Persona-ID",
+    "idPlaceholder": "z.B. gekko, spider, analyst",
+    "idHint": "Kleinbuchstaben, Zahlen und Bindestriche. Muss mit einem Buchstaben beginnen.",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "deleteConfirm": "Bist du sicher, dass du die Persona \"{id}\" löschen möchtest? Dies entfernt alle Persona-Dateien und kann nicht rückgängig gemacht werden.",
+    "deleteSuccess": "Persona erfolgreich gelöscht",
+    "saveSuccess": "Persona erfolgreich gespeichert",
+    "mainBadge": "Standard",
+    "telegramBound": "Telegram",
+    "telegramNotBound": "Kein Telegram",
+    "filesCount": "{count} Dateien",
+    "editTitle": "Persona bearbeiten: {id}",
+    "editDescription": "Bearbeite die Persona-Dateien für diesen Agenten. Jede Datei steuert einen anderen Aspekt des Agenten-Verhaltens.",
+    "fileIdentity": "Identität",
+    "fileSoul": "Seele",
+    "fileUser": "Benutzerprofil",
+    "fileTools": "Tools",
+    "fileAgents": "Agenten-Regeln",
+    "fileHeartbeat": "Heartbeat",
+    "fileIdentityHint": "Name, Wesen, Vibe, Emoji",
+    "fileSoulHint": "Kernpersönlichkeit und Verhaltensregeln",
+    "fileUserHint": "Informationen über den primären Benutzer",
+    "fileToolsHint": "Tool-spezifische Hinweise und Anweisungen",
+    "fileAgentsHint": "Regeln für Agenten-Interaktion",
+    "fileHeartbeatHint": "Definitionen periodischer Aufgaben",
+    "back": "Zurück zu Personas",
+    "cannotDeleteMain": "Die Haupt-Persona kann nicht gelöscht werden",
+    "multiPersonaDisabled": "Der Multi-Persona-Modus ist deaktiviert. Aktiviere ihn in den Einstellungen, um mehrere Personas zu verwenden.",
+    "goToSettings": "Zu den Einstellungen"
   }
 }
