@@ -2,7 +2,7 @@ import type { AgentTool } from '@mariozechner/pi-agent-core'
 import type { Api, Model } from '@mariozechner/pi-ai'
 import { Type, completeSimple } from '@mariozechner/pi-ai'
 import { loadPersona, getPersonaDir } from './persona-loader.js'
-import { resolveBackgroundReasoning } from './thinking-level.js'
+// resolveBackgroundReasoning import removed — cross-persona calls explicitly disable reasoning
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -173,6 +173,10 @@ export function createAskAgentTool(options: AskAgentToolOptions): AgentTool {
         const model = getModel()
         const apiKey = getApiKey()
 
+        // Option A: Disable reasoning for cross-persona queries.
+        // These are short one-shot calls that don't benefit from extended thinking.
+        // Using undefined (= off) keeps the call fast and avoids the bug where
+        // reasoning models only fill thinking blocks but no text blocks.
         const response = await completeSimple(model, {
           systemPrompt,
           messages: [{
@@ -183,14 +187,30 @@ export function createAskAgentTool(options: AskAgentToolOptions): AgentTool {
         }, {
           apiKey,
           temperature: 0.7,
-          reasoning: resolveBackgroundReasoning(),
+          reasoning: undefined, // explicitly disabled — no extended thinking for cross-persona calls
         })
 
-        const responseText = response.content
+        let responseText = response.content
           .filter(item => item.type === 'text')
           .map(item => (item as { type: 'text'; text: string }).text)
           .join('')
           .trim()
+
+        // Option B (safety net): If text is empty but thinking blocks exist,
+        // fall back to the thinking content. This can happen if a reasoning model
+        // ignores the reasoning=undefined hint and produces only thinking blocks.
+        if (!responseText) {
+          const thinkingText = response.content
+            .filter(item => item.type === 'thinking')
+            .map(item => (item as { type: 'thinking'; thinking: string }).thinking)
+            .join('')
+            .trim()
+
+          if (thinkingText) {
+            console.warn(`[ask_agent] ${targetAgentId} returned empty text but has thinking content — using thinking as fallback`)
+            responseText = thinkingText
+          }
+        }
 
         if (!responseText) {
           return {

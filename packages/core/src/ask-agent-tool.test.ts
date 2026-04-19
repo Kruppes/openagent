@@ -252,6 +252,125 @@ describe('ask-agent-tool', () => {
         text: expect.stringContaining('question must be a non-empty string'),
       })
     })
+
+    it('disables reasoning for cross-persona calls (reasoning=undefined)', async () => {
+      const gekkoDir = path.join(agentsDir, 'gekko')
+      fs.mkdirSync(gekkoDir, { recursive: true })
+      fs.writeFileSync(path.join(gekkoDir, 'SOUL.md'), '# Gekko', 'utf-8')
+
+      const originalDataDir = process.env.DATA_DIR
+      process.env.DATA_DIR = tmpDir
+
+      try {
+        mockCompleteSimple.mockResolvedValueOnce(makeResponse('Test response'))
+
+        const tool = createAskAgentTool(createOptions())
+        await tool.execute('call-1', { agent_id: 'gekko', question: 'Test?' })
+
+        // Verify reasoning is explicitly set to undefined (disabled)
+        const [, , options] = mockCompleteSimple.mock.calls[0]
+        expect(options).toBeDefined()
+        expect(options!.reasoning).toBeUndefined()
+      } finally {
+        if (originalDataDir !== undefined) {
+          process.env.DATA_DIR = originalDataDir
+        } else {
+          delete process.env.DATA_DIR
+        }
+      }
+    })
+
+    it('falls back to thinking content when text blocks are empty', async () => {
+      const gekkoDir = path.join(agentsDir, 'gekko')
+      fs.mkdirSync(gekkoDir, { recursive: true })
+      fs.writeFileSync(path.join(gekkoDir, 'SOUL.md'), '# Gekko', 'utf-8')
+
+      const originalDataDir = process.env.DATA_DIR
+      process.env.DATA_DIR = tmpDir
+
+      try {
+        // Simulate a reasoning model that only returns thinking blocks, no text
+        mockCompleteSimple.mockResolvedValueOnce({
+          role: 'assistant' as const,
+          content: [
+            { type: 'thinking' as const, thinking: 'The user asks about NVDA. Based on my analysis, NVDA looks bullish.' },
+          ],
+          usage: {
+            input: 100,
+            output: 40,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 140,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          model: 'claude-opus-4',
+          api: 'anthropic' as const,
+          provider: 'anthropic',
+          stopReason: 'stop' as const,
+          timestamp: Date.now(),
+        })
+
+        const tool = createAskAgentTool(createOptions())
+        const result = await tool.execute('call-1', { agent_id: 'gekko', question: 'What about NVDA?' })
+
+        // Should use thinking content as fallback
+        expect(result.content[0]).toEqual({
+          type: 'text',
+          text: expect.stringContaining('NVDA looks bullish'),
+        })
+        expect(result.content[0]).toEqual({
+          type: 'text',
+          text: expect.stringContaining('[Response from gekko]'),
+        })
+      } finally {
+        if (originalDataDir !== undefined) {
+          process.env.DATA_DIR = originalDataDir
+        } else {
+          delete process.env.DATA_DIR
+        }
+      }
+    })
+
+    it('returns empty response when both text and thinking are empty', async () => {
+      const gekkoDir = path.join(agentsDir, 'gekko')
+      fs.mkdirSync(gekkoDir, { recursive: true })
+      fs.writeFileSync(path.join(gekkoDir, 'SOUL.md'), '# Gekko', 'utf-8')
+
+      const originalDataDir = process.env.DATA_DIR
+      process.env.DATA_DIR = tmpDir
+
+      try {
+        // Simulate completely empty response
+        mockCompleteSimple.mockResolvedValueOnce({
+          role: 'assistant' as const,
+          content: [],
+          usage: {
+            input: 100, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 100,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          model: 'gpt-4o-mini',
+          api: 'openai-completions' as const,
+          provider: 'openai',
+          stopReason: 'stop' as const,
+          timestamp: Date.now(),
+        })
+
+        const tool = createAskAgentTool(createOptions())
+        const result = await tool.execute('call-1', { agent_id: 'gekko', question: 'Hello?' })
+
+        expect(result.content[0]).toEqual({
+          type: 'text',
+          text: expect.stringContaining('returned an empty response'),
+        })
+        expect(result.details).toEqual({ targetAgentId: 'gekko', empty: true })
+      } finally {
+        if (originalDataDir !== undefined) {
+          process.env.DATA_DIR = originalDataDir
+        } else {
+          delete process.env.DATA_DIR
+        }
+      }
+    })
   })
 
   describe('listAvailableAgents', () => {
