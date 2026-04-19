@@ -173,6 +173,19 @@ export class SessionManager {
       durationMs: 0,
       status: 'success',
     })
+
+    if (this.onSessionEnd) {
+      this.onSessionEnd({
+        id: row.id,
+        userId,
+        source: row.source,
+        startedAt: this.parseSqliteTimestamp(row.started_at),
+        lastActivity,
+        messageCount: row.message_count,
+        summaryWritten,
+        restored: true,
+      }, summary)
+    }
   }
 
   private restoreSession(
