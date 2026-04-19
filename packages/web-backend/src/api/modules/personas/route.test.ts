@@ -16,10 +16,11 @@ vi.mock('@openagent/core', async (importOriginal) => {
     })),
     getConfigDir: vi.fn(() => '/tmp/config'),
     ensureConfigTemplates: vi.fn(),
+    invalidatePersonaCache: vi.fn(),
   }
 })
 
-import { validateAgentId, validatePersonaFiles } from './schema.js'
+import { parseAgentId, parsePersonaFiles, parseCreatePersonaPayload, parseUpdatePersonaPayload } from '@openagent/core/contracts'
 import * as service from './service.js'
 
 describe('personas API', () => {
@@ -44,35 +45,75 @@ describe('personas API', () => {
     }
   })
 
-  describe('validateAgentId', () => {
+  describe('parseAgentId', () => {
     it('accepts valid IDs', () => {
-      expect(validateAgentId('main')).toBeNull()
-      expect(validateAgentId('warren')).toBeNull()
-      expect(validateAgentId('my-agent')).toBeNull()
-      expect(validateAgentId('ab')).toBeNull()
+      expect(parseAgentId('main')).toEqual({ ok: true, value: 'main' })
+      expect(parseAgentId('warren')).toEqual({ ok: true, value: 'warren' })
+      expect(parseAgentId('my-agent')).toEqual({ ok: true, value: 'my-agent' })
+      expect(parseAgentId('ab')).toEqual({ ok: true, value: 'ab' })
     })
 
     it('rejects invalid IDs', () => {
-      expect(validateAgentId('')).not.toBeNull()
-      expect(validateAgentId(123)).not.toBeNull()
-      expect(validateAgentId(null)).not.toBeNull()
-      expect(validateAgentId('A')).not.toBeNull() // too short
-      expect(validateAgentId('UPPER')).not.toBeNull() // uppercase
-      expect(validateAgentId('-starts-with-hyphen')).not.toBeNull()
+      expect(parseAgentId('')).toMatchObject({ ok: false })
+      expect(parseAgentId(123)).toMatchObject({ ok: false })
+      expect(parseAgentId(null)).toMatchObject({ ok: false })
+      expect(parseAgentId('A')).toMatchObject({ ok: false }) // too short
+      expect(parseAgentId('UPPER')).toMatchObject({ ok: false }) // uppercase
+      expect(parseAgentId('-starts-with-hyphen')).toMatchObject({ ok: false })
     })
   })
 
-  describe('validatePersonaFiles', () => {
+  describe('parsePersonaFiles', () => {
     it('accepts valid files', () => {
-      expect(validatePersonaFiles({ soul: '# Test', identity: '# ID' })).toBeNull()
-      expect(validatePersonaFiles({})).toBeNull()
+      const result = parsePersonaFiles({ soul: '# Test', identity: '# ID' })
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.value).toEqual({ soul: '# Test', identity: '# ID' })
+      }
+    })
+
+    it('accepts empty object', () => {
+      const result = parsePersonaFiles({})
+      expect(result.ok).toBe(true)
     })
 
     it('rejects invalid files', () => {
-      expect(validatePersonaFiles(null)).not.toBeNull()
-      expect(validatePersonaFiles('string')).not.toBeNull()
-      expect(validatePersonaFiles({ unknownKey: 'test' })).not.toBeNull()
-      expect(validatePersonaFiles({ soul: 123 })).not.toBeNull()
+      expect(parsePersonaFiles(null)).toMatchObject({ ok: false })
+      expect(parsePersonaFiles('string')).toMatchObject({ ok: false })
+      expect(parsePersonaFiles({ unknownKey: 'test' })).toMatchObject({ ok: false })
+      expect(parsePersonaFiles({ soul: 123 })).toMatchObject({ ok: false })
+    })
+
+    it('rejects oversized files (3.4)', () => {
+      const oversized = 'x'.repeat(300_000) // > 256 KB
+      const result = parsePersonaFiles({ soul: oversized })
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('exceeds maximum size')
+      }
+    })
+  })
+
+  describe('parseCreatePersonaPayload', () => {
+    it('accepts valid create payload', () => {
+      const result = parseCreatePersonaPayload({ id: 'my-bot' })
+      expect(result).toEqual({ ok: true, value: { id: 'my-bot' } })
+    })
+
+    it('rejects missing id', () => {
+      expect(parseCreatePersonaPayload({})).toMatchObject({ ok: false })
+      expect(parseCreatePersonaPayload(null)).toMatchObject({ ok: false })
+    })
+  })
+
+  describe('parseUpdatePersonaPayload', () => {
+    it('accepts valid update payload', () => {
+      const result = parseUpdatePersonaPayload({ files: { soul: '# Test' } })
+      expect(result).toMatchObject({ ok: true, value: { files: { soul: '# Test' } } })
+    })
+
+    it('rejects missing files', () => {
+      expect(parseUpdatePersonaPayload({})).toMatchObject({ ok: false })
     })
   })
 
@@ -167,6 +208,79 @@ describe('personas API', () => {
 
     it('throws error for non-existent persona', () => {
       expect(() => service.deletePersona('nonexistent')).toThrow('not found')
+    })
+  })
+
+  /* ── Security tests ── */
+
+  describe('path traversal protection (3.3)', () => {
+    it('rejects path traversal in agent ID via getPersona', () => {
+      expect(() => service.getPersona('../etc/passwd')).toThrow('path traversal')
+    })
+
+    it('rejects path traversal in agent ID via createPersona', () => {
+      expect(() => service.createPersona('../../etc')).toThrow('path traversal')
+    })
+
+    it('rejects path traversal in agent ID via updatePersona', () => {
+      expect(() => service.updatePersona('../../../tmp', { soul: 'x' })).toThrow('path traversal')
+    })
+
+    it('rejects path traversal in agent ID via deletePersona', () => {
+      expect(() => service.deletePersona('../../../tmp')).toThrow('path traversal')
+    })
+
+    it('rejects dot-dot-slash variations', () => {
+      expect(() => service.getPersona('foo/../../../etc')).toThrow('path traversal')
+      expect(() => service.getPersona('..')).toThrow('path traversal')
+      expect(() => service.getPersona('../../')).toThrow('path traversal')
+    })
+  })
+
+  describe('concurrent write safety (3.5)', () => {
+    it('uses atomic writes (files are not corrupted)', () => {
+      service.createPersona('concurrent-test')
+
+      // Simulate rapid sequential writes
+      for (let i = 0; i < 10; i++) {
+        service.updatePersona('concurrent-test', { soul: `# Version ${i}` })
+      }
+
+      const persona = service.getPersona('concurrent-test')
+      expect(persona.files.soul).toBe('# Version 9')
+
+      // No .tmp files should remain
+      const files = fs.readdirSync(path.join(agentsDir, 'concurrent-test'))
+      const tmpFiles = files.filter(f => f.includes('.tmp.'))
+      expect(tmpFiles).toHaveLength(0)
+    })
+  })
+
+  describe('telegram binding guard on delete (3.7)', () => {
+    it('refuses deletion when persona has active telegram binding', async () => {
+      const { loadConfig } = await import('@openagent/core')
+      const mockLoadConfig = vi.mocked(loadConfig)
+
+      // Create persona
+      service.createPersona('bound-bot')
+
+      // Mock telegram config with binding
+      mockLoadConfig.mockReturnValueOnce({
+        enabled: true,
+        botToken: '',
+        accounts: {
+          'bound-bot': { agentId: 'bound-bot', botToken: '123:ABC', enabled: true },
+        },
+      })
+
+      expect(() => service.deletePersona('bound-bot')).toThrow('active Telegram binding')
+
+      // Restore mock
+      mockLoadConfig.mockReturnValue({
+        enabled: false,
+        botToken: '',
+        accounts: {},
+      })
     })
   })
 })

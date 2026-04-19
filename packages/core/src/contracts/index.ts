@@ -48,6 +48,27 @@ export {
   canonicalizeProviderModelRef,
 } from './providers.js'
 
+export {
+  PERSONA_FILE_NAMES,
+  PERSONA_FILE_KEYS,
+  PERSONA_FILE_MAX_BYTES,
+  parseAgentId,
+  parsePersonaFiles,
+  parseCreatePersonaPayload,
+  parseUpdatePersonaPayload,
+} from './personas.js'
+
+export type {
+  PersonaFileName,
+  PersonaFileKey,
+  PersonaFilesContract,
+  PersonaListItemContract,
+  PersonaDetailContract,
+  CreatePersonaPayloadContract,
+  UpdatePersonaPayloadContract,
+  ParseResult as PersonaParseResult,
+} from './personas.js'
+
 export type {
   ProviderStatusContract,
   ProviderAuthMethodContract,

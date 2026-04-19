@@ -15,7 +15,7 @@ export {
 export type { UploadDescriptor, SaveUploadInput, UploadSettings } from './uploads.js'
 export { loadConfig, getConfigDir, ensureConfigTemplates, loadMultiPersonaSettings } from './config.js'
 export type { MultiPersonaSettings } from './config.js'
-export { loadPersona, clearPersonaCache, seedPersonaFiles, getPersonaDir } from './persona-loader.js'
+export { loadPersona, clearPersonaCache, invalidatePersonaCache, seedPersonaFiles, getPersonaDir } from './persona-loader.js'
 export type { PersonaContext } from './persona-loader.js'
 export { createAskAgentTool, listAvailableAgents, buildAskAgentPromptHint } from './ask-agent-tool.js'
 export type { AskAgentToolOptions } from './ask-agent-tool.js'

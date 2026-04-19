@@ -223,6 +223,15 @@ export function clearPersonaCache(): void {
 }
 
 /**
+ * Invalidate the persona cache for a specific agentId.
+ * Call this after any write operation (create/update/delete) to ensure
+ * the next loadPersona() call re-reads from disk.
+ */
+export function invalidatePersonaCache(agentId: string): void {
+  cache.delete(agentId)
+}
+
+/**
  * Seed persona files from a source directory to the target agent directory.
  * Only copies files that don't already exist in the target (never overwrites).
  *
