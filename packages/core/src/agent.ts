@@ -135,7 +135,7 @@ export class AgentCore {
    * Send a message and get back an async iterable of response chunks.
    * All messages are queued and processed sequentially to prevent collisions.
    */
-  async *sendMessage(userId: string, text: string, source: string = 'web', attachments?: UploadDescriptor[]): AsyncIterable<ResponseChunk> {
+  async *sendMessage(userId: string, text: string, source: string = 'web', attachments?: UploadDescriptor[], agentId: string = 'main'): AsyncIterable<ResponseChunk> {
     const uploads = attachments
     const iterable = await this.messageQueue.enqueue<ResponseChunk>(
       'user_message',
@@ -143,7 +143,7 @@ export class AgentCore {
       text,
       source,
       (msg) => {
-        return this.processUserMessage(msg.payload.userId, msg.payload.text, msg.payload.source, uploads)
+        return this.processUserMessage(msg.payload.userId, msg.payload.text, msg.payload.source, uploads, agentId)
       },
     )
     yield* iterable
@@ -172,10 +172,10 @@ export class AgentCore {
   /**
    * Process a user message (called from the queue).
    */
-  private async *processUserMessage(userId: string, text: string, source: string, attachments?: UploadDescriptor[]): AsyncIterable<ResponseChunk> {
+  private async *processUserMessage(userId: string, text: string, source: string, attachments?: UploadDescriptor[], agentId: string = 'main'): AsyncIterable<ResponseChunk> {
     // Use resolveSession with messageText to enable topic-shift detection
     // and fact injection on new sessions / topic shifts
-    const session = this.sessionManager.resolveSession(userId, source, text)
+    const session = this.sessionManager.resolveSession(userId, source, text, agentId)
     const sessionId = session.id
 
     // Resolve username for user profile injection (skip for group chats)
@@ -193,12 +193,12 @@ export class AgentCore {
 
     // Pass channel as 'telegram' for both DM and group sources
     const channel = source.startsWith('telegram') ? 'telegram' : source
-    this.refreshSystemPrompt(channel, currentUser)
-    this.sessionManager.recordMessage(userId)
+    this.refreshSystemPrompt(channel, currentUser, agentId)
+    this.sessionManager.recordMessage(userId, agentId)
 
     // Consume any pending fact injection (set during resolveSession on
     // new session start or topic shift) and prepend to user message
-    const factInjection = this.sessionManager.consumeFactInjection(userId)
+    const factInjection = this.sessionManager.consumeFactInjection(userId, agentId)
     if (factInjection) {
       text = `${factInjection}\n\n${text}`
     }
@@ -234,7 +234,7 @@ export class AgentCore {
     }
 
     // Count the agent response as a message too
-    this.sessionManager.recordMessage(userId)
+    this.sessionManager.recordMessage(userId, agentId)
   }
 
   /**
@@ -404,8 +404,8 @@ Do NOT add this section if everything discussed was resolved or if there is noth
   /**
    * Refresh the system prompt from current memory state.
    */
-  refreshSystemPrompt(channel?: string, currentUser?: { username: string }): void {
-    this.runtime.refreshSystemPrompt(channel, currentUser)
+  refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void {
+    this.runtime.refreshSystemPrompt(channel, currentUser, agentId)
   }
 
   /**

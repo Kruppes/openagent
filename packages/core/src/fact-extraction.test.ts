@@ -164,4 +164,76 @@ describe('fact-extraction', () => {
       'test-key',
     )).rejects.toThrow('LLM unavailable')
   })
+
+  describe('agentId scoping', () => {
+    it('stores facts with the specified agentId', async () => {
+      mockCompleteSimple.mockResolvedValueOnce(makeResponse('- User prefers dark mode'))
+
+      await extractAndStoreFacts(db, 1, 'session-w', 'test', makeModel(), 'key', 'warren')
+
+      const rows = db.prepare(
+        "SELECT agent_id FROM memories WHERE content LIKE '%dark mode%'"
+      ).all() as Array<{ agent_id: string }>
+
+      expect(rows).toHaveLength(1)
+      expect(rows[0].agent_id).toBe('warren')
+    })
+
+    it('defaults agentId to main when not specified', async () => {
+      mockCompleteSimple.mockResolvedValueOnce(makeResponse('- PostgreSQL on port 5433'))
+
+      await extractAndStoreFacts(db, 1, 'session-m', 'test', makeModel(), 'key')
+
+      const rows = db.prepare(
+        "SELECT agent_id FROM memories WHERE content LIKE '%PostgreSQL%'"
+      ).all() as Array<{ agent_id: string }>
+
+      expect(rows).toHaveLength(1)
+      expect(rows[0].agent_id).toBe('main')
+    })
+
+    it('two agents can store identical facts without cross-deduplication', async () => {
+      mockCompleteSimple
+        .mockResolvedValueOnce(makeResponse('- User lives in Berlin'))
+        .mockResolvedValueOnce(makeResponse('- User lives in Berlin'))
+
+      const r1 = await extractAndStoreFacts(db, 1, 's1', 'test', makeModel(), 'key', 'main')
+      const r2 = await extractAndStoreFacts(db, 1, 's2', 'test', makeModel(), 'key', 'warren')
+
+      expect(r1.stored).toBe(1)
+      expect(r1.duplicates).toBe(0)
+      expect(r2.stored).toBe(1)
+      expect(r2.duplicates).toBe(0)
+
+      const rows = db.prepare(
+        "SELECT agent_id FROM memories WHERE content LIKE '%Berlin%' ORDER BY agent_id"
+      ).all() as Array<{ agent_id: string }>
+
+      expect(rows).toHaveLength(2)
+      expect(rows.map(r => r.agent_id)).toEqual(['main', 'warren'])
+    })
+
+    it('deduplicates within the same agentId bucket', async () => {
+      // First extraction
+      mockCompleteSimple.mockResolvedValueOnce(makeResponse('- User prefers dark mode in all applications'))
+      await extractAndStoreFacts(db, 1, 's1', 'test', makeModel(), 'key', 'warren')
+
+      // Second extraction with same agentId
+      mockCompleteSimple.mockResolvedValueOnce(makeResponse('- User prefers dark mode in all applications'))
+      const r2 = await extractAndStoreFacts(db, 1, 's2', 'test', makeModel(), 'key', 'warren')
+
+      expect(r2.stored).toBe(0)
+      expect(r2.duplicates).toBe(1)
+    })
+
+    it('isDuplicateFact respects agentId scoping', () => {
+      createMemory(db, 1, 'session-a', 'The project uses PostgreSQL on port 5433', 'extracted_fact', 'warren')
+
+      // Same fact, same agent → duplicate
+      expect(isDuplicateFact(db, 1, 'Project uses PostgreSQL at port 5433', 'warren')).toBe(true)
+
+      // Same fact, different agent → not a duplicate
+      expect(isDuplicateFact(db, 1, 'Project uses PostgreSQL at port 5433', 'main')).toBe(false)
+    })
+  })
 })

@@ -749,7 +749,7 @@ export class TelegramBot {
     const numericUserId = this.resolveNumericUserId(ctx)
     const caption = ctx.msg?.caption?.trim() ?? ''
     // Resolve session ID from SessionManager (aligns chat_messages with session tracking)
-    const smSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram')
+    const smSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram', this.agentId)
     const sessionId = smSession.id
 
     try {
@@ -984,7 +984,7 @@ export class TelegramBot {
     const username = isDM ? this.resolveUsername(ctx) : null
 
     // Resolve session ID from SessionManager (aligns chat_messages with session tracking)
-    const smSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram')
+    const smSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram', this.agentId)
     const sessionId = smSession.id
 
     // Save user message to chat_messages (if linked to a web user)
@@ -1028,7 +1028,7 @@ export class TelegramBot {
 
       try {
         const source = isDM ? 'telegram' : 'telegram-group'
-        for await (const chunk of this.agentCore.sendMessage(userId, messageForAgent, source, attachments)) {
+        for await (const chunk of this.agentCore.sendMessage(userId, messageForAgent, source, attachments, this.agentId)) {
           if (state.abortRequested) break
 
           if (chunk.type === 'text' && chunk.text) {
@@ -1323,7 +1323,7 @@ export class TelegramBot {
     if (!userId) return
 
     // Resolve session ID from SessionManager (aligns chat_messages with session tracking)
-    const smSession = this.agentCore.getSessionManager().getOrCreateSession(String(userId), 'telegram')
+    const smSession = this.agentCore.getSessionManager().getOrCreateSession(String(userId), 'telegram', this.agentId)
     const sessionId = smSession.id
 
     try {

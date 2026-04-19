@@ -349,11 +349,15 @@ export function getSessionMessages(db: Database, sessionId: string): SessionMess
 /**
  * Query the memories FTS5 table for relevant facts given topic keywords.
  * Returns the top N matching fact records.
+ *
+ * When agentId is specified, only facts for that agent and 'shared' are returned.
+ * When agentId is undefined/null, all facts are searched (legacy behavior).
  */
 export function queryMemoriesFts(
   db: Database,
   keywords: string[],
   limit: number = 5,
+  agentId?: string,
 ): Array<{ id: number; content: string; source: string; timestamp: string }> {
   if (keywords.length === 0) return []
 
@@ -366,14 +370,28 @@ export function queryMemoriesFts(
   if (!ftsQuery) return []
 
   try {
-    const rows = db.prepare(
-      `SELECT m.id, m.content, m.source, m.timestamp
+    let sql: string
+    let params: unknown[]
+
+    if (agentId) {
+      sql = `SELECT m.id, m.content, m.source, m.timestamp
+       FROM memories_fts fts
+       JOIN memories m ON m.rowid = fts.rowid
+       WHERE memories_fts MATCH ? AND m.agent_id IN (?, 'shared')
+       ORDER BY rank
+       LIMIT ?`
+      params = [ftsQuery, agentId, limit]
+    } else {
+      sql = `SELECT m.id, m.content, m.source, m.timestamp
        FROM memories_fts fts
        JOIN memories m ON m.rowid = fts.rowid
        WHERE memories_fts MATCH ?
        ORDER BY rank
        LIMIT ?`
-    ).all(ftsQuery, limit) as Array<{ id: number; content: string; source: string; timestamp: string }>
+      params = [ftsQuery, limit]
+    }
+
+    const rows = db.prepare(sql).all(...params) as Array<{ id: number; content: string; source: string; timestamp: string }>
 
     return rows
   } catch {

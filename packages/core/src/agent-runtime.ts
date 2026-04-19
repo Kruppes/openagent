@@ -45,7 +45,7 @@ export interface AgentRuntimeOptions {
 
 export interface AgentRuntimeBoundary {
   streamPrompt(text: string, sessionId: string, images?: ImageContent[]): AsyncIterable<ResponseChunk>
-  refreshSystemPrompt(channel?: string, currentUser?: { username: string }): void
+  refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void
   swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string): void
   getProviderManager(): ProviderManager | undefined
   clearMessages(): void
@@ -476,8 +476,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     return this.executePromptWithRetry(text, sessionId, false, images)
   }
 
-  refreshSystemPrompt(channel?: string, currentUser?: { username: string }): void {
-    this.agent.state.systemPrompt = this.buildSystemPrompt(channel, currentUser)
+  refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void {
+    this.agent.state.systemPrompt = this.buildSystemPrompt(channel, currentUser, agentId)
   }
 
   setThinkingLevel(level: SettingsThinkingLevel | string): void {
@@ -562,7 +562,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     return { language, timezone, builtinToolsConfig, sttEnabled, thinkingLevel }
   }
 
-  private buildSystemPrompt(channel?: string, currentUser?: { username: string }): string {
+  private buildSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): string {
     const { language, timezone, builtinToolsConfig, sttEnabled } = this.readRuntimeSettings()
 
     const activeSkills = getActiveSkillEntries()
@@ -586,6 +586,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       currentUser,
       builtinTools: builtinToolsPromptConfig,
       agentSkillsDir: getAgentSkillsDir(),
+      agentId,
     })
   }
 

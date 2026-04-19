@@ -47,6 +47,7 @@ interface TriggerFactExtractionOptions {
   agentCore: SessionHistoryProvider | null
   userId: string
   sessionId: string
+  agentId?: string
   deps?: Partial<FactExtractionDeps>
 }
 
@@ -132,6 +133,7 @@ export async function resolveFactExtractionExecutionContext(
 
 export function triggerFactExtractionForSessionEnd(options: TriggerFactExtractionOptions): boolean {
   const { db, agentCore, userId, sessionId } = options
+  let { agentId } = options
   const deps = { ...defaultDeps, ...(options.deps ?? {}) }
   const settings = getFactExtractionSettings(deps.loadSettings)
 
@@ -140,11 +142,16 @@ export function triggerFactExtractionForSessionEnd(options: TriggerFactExtractio
   }
 
   const sessionRow = db.prepare(
-    'SELECT user_id, session_user, started_at, ended_at, message_count FROM sessions WHERE id = ?'
-  ).get(sessionId) as SessionRow | undefined
+    'SELECT user_id, session_user, started_at, ended_at, message_count, agent_id FROM sessions WHERE id = ?'
+  ).get(sessionId) as (SessionRow & { agent_id?: string }) | undefined
 
   if (!sessionRow || sessionRow.message_count < settings.minSessionMessages) {
     return false
+  }
+
+  // Resolve agentId from session row if not explicitly provided
+  if (!agentId) {
+    agentId = sessionRow.agent_id ?? 'main'
   }
 
   const numericUserId = sessionRow.user_id
@@ -182,6 +189,7 @@ export function triggerFactExtractionForSessionEnd(options: TriggerFactExtractio
         conversationHistory,
         executionContext.model,
         executionContext.apiKey,
+        agentId,
       )
 
       deps.console.log(`[fact-extraction] Session ${sessionId}: ${result.stored} new facts`)

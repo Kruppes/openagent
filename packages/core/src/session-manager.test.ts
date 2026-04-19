@@ -857,4 +857,87 @@ describe('SessionManager', () => {
       expect(metadata!.summary_written).toBe(1)
     })
   })
+
+  describe('agentId scoping', () => {
+    it('creates separate sessions for same user with different agentIds', async () => {
+      const manager = new SessionManager({ db, memoryDir })
+      await manager.init()
+
+      const mainSession = manager.getOrCreateSession('user1', 'telegram', 'main')
+      const warrenSession = manager.getOrCreateSession('user1', 'telegram', 'warren')
+
+      expect(mainSession.id).not.toBe(warrenSession.id)
+      expect(mainSession.agentId).toBe('main')
+      expect(warrenSession.agentId).toBe('warren')
+    })
+
+    it('returns existing session when agentId matches', async () => {
+      const manager = new SessionManager({ db, memoryDir })
+      await manager.init()
+
+      const s1 = manager.getOrCreateSession('user1', 'telegram', 'warren')
+      const s2 = manager.getOrCreateSession('user1', 'telegram', 'warren')
+
+      expect(s1.id).toBe(s2.id)
+    })
+
+    it('records messages independently per agentId', async () => {
+      const manager = new SessionManager({ db, memoryDir })
+      await manager.init()
+
+      manager.getOrCreateSession('user1', 'telegram', 'main')
+      manager.getOrCreateSession('user1', 'telegram', 'warren')
+
+      manager.recordMessage('user1', 'main')
+      manager.recordMessage('user1', 'main')
+      manager.recordMessage('user1', 'warren')
+
+      expect(manager.getSession('user1', 'main')!.messageCount).toBe(2)
+      expect(manager.getSession('user1', 'warren')!.messageCount).toBe(1)
+    })
+
+    it('hasActiveSession checks the correct agentId', async () => {
+      const manager = new SessionManager({ db, memoryDir })
+      await manager.init()
+
+      manager.getOrCreateSession('user1', 'web', 'warren')
+
+      expect(manager.hasActiveSession('user1', 'warren')).toBe(true)
+      expect(manager.hasActiveSession('user1', 'main')).toBe(false)
+    })
+
+    it('handleNewCommand ends only the specified agent session', async () => {
+      const manager = new SessionManager({ db, memoryDir })
+      await manager.init()
+
+      manager.getOrCreateSession('user1', 'web', 'main')
+      manager.getOrCreateSession('user1', 'web', 'warren')
+
+      await manager.handleNewCommand('user1', 'main')
+
+      expect(manager.hasActiveSession('user1', 'main')).toBe(false)
+      expect(manager.hasActiveSession('user1', 'warren')).toBe(true)
+    })
+
+    it('writes agent_id to sessions table', async () => {
+      const manager = new SessionManager({ db, memoryDir })
+      await manager.init()
+
+      const session = manager.getOrCreateSession('user1', 'telegram', 'warren')
+
+      const row = db.prepare('SELECT agent_id FROM sessions WHERE id = ?').get(session.id) as { agent_id: string }
+      expect(row.agent_id).toBe('warren')
+    })
+
+    it('defaults agentId to main when not specified (legacy behavior)', async () => {
+      const manager = new SessionManager({ db, memoryDir })
+      await manager.init()
+
+      const session = manager.getOrCreateSession('user1', 'web')
+
+      expect(session.agentId).toBe('main')
+      const row = db.prepare('SELECT agent_id FROM sessions WHERE id = ?').get(session.id) as { agent_id: string }
+      expect(row.agent_id).toBe('main')
+    })
+  })
 })

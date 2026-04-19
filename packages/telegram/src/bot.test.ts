@@ -319,7 +319,8 @@ describe('TelegramBot', () => {
         'telegram-12345',
         'Hello\nworld',
         'telegram',
-        undefined
+        undefined,
+        'main'
       )
     })
 
@@ -582,7 +583,8 @@ describe('TelegramBot', () => {
         'telegram-12345',
         'Hello agent',
         'telegram',
-        undefined
+        undefined,
+        'main'
       )
       const botApi = (bot.getBot() as any).api
       expect(botApi.sendMessage).toHaveBeenCalledWith(67890, 'Hello human!', { parse_mode: 'HTML' })
@@ -641,7 +643,8 @@ describe('TelegramBot', () => {
         'telegram-12345',
         'Hello DM',
         'telegram',
-        undefined
+        undefined,
+        'main'
       )
     })
 
@@ -663,7 +666,8 @@ describe('TelegramBot', () => {
         'telegram-12345',
         'Hello group',
         'telegram-group',
-        undefined
+        undefined,
+        'main'
       )
     })
 
@@ -685,7 +689,8 @@ describe('TelegramBot', () => {
         'telegram-12345',
         'Hello supergroup',
         'telegram-group',
-        undefined
+        undefined,
+        'main'
       )
     })
   })
