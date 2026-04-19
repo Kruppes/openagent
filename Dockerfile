@@ -62,6 +62,7 @@ RUN mkdir -p /data/db /data/config /data/memory/daily /data/skills /data/skills_
 
 # Copy built-in agent skills into image (seeded to /data/skills_agent on first run via entrypoint)
 COPY data/skills_agent /app/skills_agent_defaults
+COPY agents-seed /app/agents-seed
 
 # Save baseline package snapshot for auto-tracking agent-installed packages
 # Uses apt-mark showmanual to only capture explicitly installed packages,

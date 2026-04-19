@@ -21,6 +21,33 @@ if [ -d /app/skills_agent_defaults ]; then
     done
 fi
 
+# ---------------------------------------------------------------------------
+# Seed persona files for multi-persona agents (only if not already present)
+# Persona seed files ship with the image under /app/agents-seed/<agentId>/
+# Target: /data/agents/<agentId>/
+# ---------------------------------------------------------------------------
+mkdir -p /data/agents
+if [ -d /app/agents-seed ]; then
+    for agent_dir in /app/agents-seed/*/; do
+        agent_id=$(basename "$agent_dir")
+        target="/data/agents/$agent_id"
+        if [ ! -d "$target" ]; then
+            cp -r "$agent_dir" "$target"
+            echo "[openagent] Seeded persona files: $agent_id"
+        else
+            # Copy only files that don't exist yet (never overwrite user edits)
+            for src_file in "$agent_dir"*; do
+                [ -f "$src_file" ] || continue
+                filename=$(basename "$src_file")
+                if [ ! -f "$target/$filename" ]; then
+                    cp "$src_file" "$target/$filename"
+                    echo "[openagent] Seeded persona file: $agent_id/$filename"
+                fi
+            done
+        fi
+    done
+fi
+
 # Fix ownership on first run or after migration from root user
 if [ "$(stat -c '%u' /workspace)" = "0" ]; then
     echo "[openagent] Migrating workspace ownership to agent user..."

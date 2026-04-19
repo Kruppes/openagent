@@ -15,6 +15,8 @@ export {
 export type { UploadDescriptor, SaveUploadInput, UploadSettings } from './uploads.js'
 export { loadConfig, getConfigDir, ensureConfigTemplates, loadMultiPersonaSettings } from './config.js'
 export type { MultiPersonaSettings } from './config.js'
+export { loadPersona, clearPersonaCache, seedPersonaFiles, getPersonaDir } from './persona-loader.js'
+export type { PersonaContext } from './persona-loader.js'
 export * from './contracts/index.js'
 export {
   normalizeThinkingLevel,
