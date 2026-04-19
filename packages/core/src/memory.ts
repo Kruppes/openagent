@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getWorkspaceDir } from './workspace.js'
 import { getConfigDir } from './config.js'
+import { loadPersona } from './persona-loader.js'
+import type { PersonaContext } from './persona-loader.js'
 
 const SOUL_TEMPLATE = `# Soul
 
@@ -621,6 +623,8 @@ export function assembleSystemPrompt(options?: {
   currentUser?: { username: string }
   builtinTools?: BuiltinToolsPromptConfig
   agentSkillsDir?: string
+  /** Agent ID for multi-persona support. When set and persona files exist, they override global files. */
+  agentId?: string
 }): string {
   const memoryDir = options?.memoryDir
   const recentDays = options?.recentDays ?? 3
@@ -628,24 +632,45 @@ export function assembleSystemPrompt(options?: {
   // Ensure structure exists
   ensureMemoryStructure(memoryDir)
 
+  // Load persona context if agentId is specified and multi-persona is enabled
+  let persona: PersonaContext | null = null
+  if (options?.agentId && options.agentId !== 'main') {
+    persona = loadPersona(options.agentId)
+  }
+
   const sections: string[] = []
 
-  // 1. Personality from SOUL.md (separate block)
-  const soul = readSoulFile(memoryDir)
+  // 1. Personality from SOUL.md (persona overrides global)
+  const soul = persona?.soul ?? readSoulFile(memoryDir)
   sections.push(`<personality>\n${soul.trim()}\n</personality>`)
+
+  // 1b. Identity from IDENTITY.md (persona-only, not in global)
+  if (persona?.identity) {
+    sections.push(`<identity>\n${persona.identity.trim()}\n</identity>`)
+  }
 
   // 2. Base technical instructions (if any)
   if (options?.baseInstructions) {
     sections.push(`<instructions>\n${options.baseInstructions.trim()}\n</instructions>`)
   }
 
-  // 3. Agent rules from AGENTS.md (in config directory)
-  const agentsRules = readAgentsRulesFile(options?.configDir)
+  // 2b. Tool hints from persona TOOLS.md (persona-only addition)
+  if (persona?.tools) {
+    sections.push(`<tool_hints>\n${persona.tools.trim()}\n</tool_hints>`)
+  }
+
+  // 3. Agent rules from AGENTS.md (persona overrides global)
+  const agentsRules = persona?.agents ?? readAgentsRulesFile(options?.configDir)
   sections.push(`<agent_rules>\n${agentsRules.trim()}\n</agent_rules>`)
 
-  // 4. Core memory from MEMORY.md
-  const agents = readMemoryFile(memoryDir)
-  sections.push(`<core_memory>\n${agents.trim()}\n</core_memory>`)
+  // 4. Core memory from MEMORY.md (persona memory is additional, not replacing)
+  const globalMemory = readMemoryFile(memoryDir)
+  sections.push(`<core_memory>\n${globalMemory.trim()}\n</core_memory>`)
+
+  // 4b. Agent-specific memory (from persona MEMORY.md, additive)
+  if (persona?.memory) {
+    sections.push(`<agent_memory>\n${persona.memory.trim()}\n</agent_memory>`)
+  }
 
   // 5. Recent daily context
   const dailyContext = readRecentDailyFiles(recentDays, memoryDir)
@@ -657,8 +682,10 @@ ${dailyContext}
 </recent_memory>`)
   }
 
-  // 6. User profile injection
-  if (options?.currentUser?.username) {
+  // 6. User profile injection (persona USER.md overrides global user profile)
+  if (persona?.user) {
+    sections.push(`<user_profile>\n${persona.user.trim()}\n</user_profile>`)
+  } else if (options?.currentUser?.username) {
     const profileContent = readUserProfile(options.currentUser.username, memoryDir)
     sections.push(`<user_profile>\n${profileContent.trim()}\n</user_profile>`)
   } else {

@@ -105,6 +105,27 @@ export function loadConfig<T = unknown>(filename: string): T {
   return JSON.parse(content) as T
 }
 
+export interface MultiPersonaSettings {
+  enabled: boolean
+  defaultAgentId: string
+}
+
+/**
+ * Load multi-persona settings from settings.json.
+ * Returns safe defaults (disabled) if not configured.
+ */
+export function loadMultiPersonaSettings(): MultiPersonaSettings {
+  try {
+    const settings = loadConfig<{ multiPersona?: Partial<MultiPersonaSettings> }>('settings.json')
+    return {
+      enabled: settings.multiPersona?.enabled ?? false,
+      defaultAgentId: settings.multiPersona?.defaultAgentId ?? 'main',
+    }
+  } catch {
+    return { enabled: false, defaultAgentId: 'main' }
+  }
+}
+
 export function ensureConfigTemplates(configDir?: string): void {
   const dir = configDir ?? getConfigDir()
 

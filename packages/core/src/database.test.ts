@@ -438,6 +438,50 @@ describe('database', () => {
     })
   })
 
+  it('adds agent_id columns to sessions, memories, and chat_messages', () => {
+    const db = initDatabase(tmpDbPath())
+
+    // Verify agent_id exists on all three tables with default 'main'
+    const sessionCols = db.prepare('PRAGMA table_info(sessions)').all() as { name: string; dflt_value: string | null }[]
+    const sessionAgentCol = sessionCols.find(c => c.name === 'agent_id')
+    expect(sessionAgentCol).toBeDefined()
+    expect(sessionAgentCol!.dflt_value).toBe("'main'")
+
+    const memoryCols = db.prepare('PRAGMA table_info(memories)').all() as { name: string; dflt_value: string | null }[]
+    const memoryAgentCol = memoryCols.find(c => c.name === 'agent_id')
+    expect(memoryAgentCol).toBeDefined()
+    expect(memoryAgentCol!.dflt_value).toBe("'main'")
+
+    const chatCols = db.prepare('PRAGMA table_info(chat_messages)').all() as { name: string; dflt_value: string | null }[]
+    const chatAgentCol = chatCols.find(c => c.name === 'agent_id')
+    expect(chatAgentCol).toBeDefined()
+    expect(chatAgentCol!.dflt_value).toBe("'main'")
+
+    // Verify default values are applied on insert
+    db.prepare('INSERT INTO sessions (id, source) VALUES (?, ?)').run('test-session', 'web')
+    const session = db.prepare('SELECT agent_id FROM sessions WHERE id = ?').get('test-session') as { agent_id: string }
+    expect(session.agent_id).toBe('main')
+
+    db.prepare('INSERT INTO memories (content, source) VALUES (?, ?)').run('test fact', 'test')
+    const memory = db.prepare('SELECT agent_id FROM memories WHERE content = ?').get('test fact') as { agent_id: string }
+    expect(memory.agent_id).toBe('main')
+
+    db.prepare("INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)").run('test-session', 'user', 'hello')
+    const chatMsg = db.prepare('SELECT agent_id FROM chat_messages WHERE content = ?').get('hello') as { agent_id: string }
+    expect(chatMsg.agent_id).toBe('main')
+
+    // Verify indexes exist
+    const indexes = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE '%agent_id%'"
+    ).all() as { name: string }[]
+    const indexNames = indexes.map(i => i.name)
+    expect(indexNames).toContain('idx_sessions_agent_id')
+    expect(indexNames).toContain('idx_memories_agent_id')
+    expect(indexNames).toContain('idx_chat_messages_agent_id')
+
+    db.close()
+  })
+
   it('enforces foreign key on sessions', () => {
     const db = initDatabase(tmpDbPath())
 

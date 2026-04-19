@@ -13,6 +13,8 @@ import type { ProviderManager } from './provider-manager.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
 import { normalizeThinkingLevel } from './thinking-level.js'
 import { assembleSystemPrompt, ensureMemoryStructure, ensureConfigStructure, getMemoryDir } from './memory.js'
+import { loadMultiPersonaSettings } from './config.js'
+import { createAskAgentTool, buildAskAgentPromptHint } from './ask-agent-tool.js'
 import type { SkillPromptEntry } from './memory.js'
 import { getWorkspaceDir } from './workspace.js'
 import { loadConfig, ensureConfigTemplates } from './config.js'
@@ -45,7 +47,7 @@ export interface AgentRuntimeOptions {
 
 export interface AgentRuntimeBoundary {
   streamPrompt(text: string, sessionId: string, images?: ImageContent[]): AsyncIterable<ResponseChunk>
-  refreshSystemPrompt(channel?: string, currentUser?: { username: string }): void
+  refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void
   swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string): void
   getProviderManager(): ProviderManager | undefined
   clearMessages(): void
@@ -434,6 +436,16 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt()
 
+    // Conditionally add ask_agent tool when multi-persona is enabled
+    const multiPersonaSettings = loadMultiPersonaSettings()
+    const askAgentTools: AgentTool[] = multiPersonaSettings.enabled
+      ? [createAskAgentTool({
+          getCurrentAgentId: () => 'main', // Will be updated per-message via refreshSystemPrompt
+          getModel: () => this.model,
+          getApiKey: () => this.apiKey,
+        })]
+      : []
+
     const tools: AgentTool[] = [
       ...(options.tools ?? []),
       createSearchMemoriesTool({
@@ -443,6 +455,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       ...createBuiltinWebTools(builtinToolsConfig),
       ...(sttEnabled ? [createTranscribeAudioTool()] : []),
       ...createAgentSkillTools(),
+      ...askAgentTools,
       ...createYoloTools(),
     ]
 
@@ -476,8 +489,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     return this.executePromptWithRetry(text, sessionId, false, images)
   }
 
-  refreshSystemPrompt(channel?: string, currentUser?: { username: string }): void {
-    this.agent.state.systemPrompt = this.buildSystemPrompt(channel, currentUser)
+  refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void {
+    this.agent.state.systemPrompt = this.buildSystemPrompt(channel, currentUser, agentId)
   }
 
   setThinkingLevel(level: SettingsThinkingLevel | string): void {
@@ -562,7 +575,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     return { language, timezone, builtinToolsConfig, sttEnabled, thinkingLevel }
   }
 
-  private buildSystemPrompt(channel?: string, currentUser?: { username: string }): string {
+  private buildSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): string {
     const { language, timezone, builtinToolsConfig, sttEnabled } = this.readRuntimeSettings()
 
     const activeSkills = getActiveSkillEntries()
@@ -575,7 +588,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       stt: { enabled: sttEnabled },
     }
 
-    return assembleSystemPrompt({
+    let prompt = assembleSystemPrompt({
       memoryDir: this.memoryDir,
       baseInstructions: this.baseInstructions,
       language,
@@ -586,7 +599,19 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       currentUser,
       builtinTools: builtinToolsPromptConfig,
       agentSkillsDir: getAgentSkillsDir(),
+      agentId,
     })
+
+    // Append cross-persona hint when ask_agent is available
+    const multiPersona = loadMultiPersonaSettings()
+    if (multiPersona.enabled) {
+      const hint = buildAskAgentPromptHint(agentId ?? 'main')
+      if (hint) {
+        prompt += hint
+      }
+    }
+
+    return prompt
   }
 
   /**

@@ -59,6 +59,7 @@ vi.mock('./config.js', () => ({
     timezone: 'Europe/Berlin',
     builtinTools: { webSearch: { enabled: true } },
   })),
+  loadMultiPersonaSettings: vi.fn(() => ({ enabled: false, defaultAgentId: 'main' })),
 }))
 
 vi.mock('./skill-config.js', () => ({

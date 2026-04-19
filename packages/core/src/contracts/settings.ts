@@ -123,6 +123,11 @@ export interface SttSettingsContract {
   rewrite: SttRewriteSettingsContract
 }
 
+export interface MultiPersonaSettingsContract {
+  enabled: boolean
+  defaultAgentId: string
+}
+
 export interface SettingsContract {
   sessionTimeoutMinutes: number
   sessionSummaryProviderId: string
@@ -145,6 +150,7 @@ export interface SettingsContract {
   tasks: TasksSettingsContract
   tts: TtsSettingsContract
   stt: SttSettingsContract
+  multiPersona: MultiPersonaSettingsContract
 }
 
 export type SettingsUpdateContract = DeepPartial<SettingsContract>
@@ -165,6 +171,7 @@ export interface SettingsStorageContract {
   tasks?: Partial<TasksSettingsContract>
   tts?: Partial<TtsSettingsContract>
   stt?: Partial<SttSettingsContract>
+  multiPersona?: Partial<MultiPersonaSettingsContract>
 }
 
 export interface TelegramSettingsStorageContract {
@@ -266,6 +273,10 @@ export const DEFAULT_SETTINGS_CONTRACT: SettingsContract = {
       enabled: false,
       providerId: '',
     },
+  },
+  multiPersona: {
+    enabled: false,
+    defaultAgentId: 'main',
   },
 }
 
@@ -389,6 +400,10 @@ export function normalizeSettingsContract(input: DeepPartial<SettingsContract> |
         enabled: source.stt?.rewrite?.enabled ?? DEFAULT_SETTINGS_CONTRACT.stt.rewrite.enabled,
         providerId: source.stt?.rewrite?.providerId ?? DEFAULT_SETTINGS_CONTRACT.stt.rewrite.providerId,
       },
+    },
+    multiPersona: {
+      enabled: source.multiPersona?.enabled ?? DEFAULT_SETTINGS_CONTRACT.multiPersona.enabled,
+      defaultAgentId: source.multiPersona?.defaultAgentId ?? DEFAULT_SETTINGS_CONTRACT.multiPersona.defaultAgentId,
     },
   }
 }

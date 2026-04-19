@@ -28,6 +28,7 @@ export interface SettingsRouterOptions {
   onConsolidationSettingsChanged?: () => void
   onAgentHeartbeatSettingsChanged?: () => void
   onTelegramSettingsChanged?: () => void
+  onMultiPersonaSettingsChanged?: () => void
 }
 
 export interface SettingsUpdateEffects {
@@ -35,4 +36,5 @@ export interface SettingsUpdateEffects {
   consolidationChanged: boolean
   agentHeartbeatChanged: boolean
   telegramChanged: boolean
+  multiPersonaChanged: boolean
 }

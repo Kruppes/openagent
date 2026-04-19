@@ -201,10 +201,11 @@ export function createMemory(
   sessionId: string | null,
   content: string,
   source: string = 'session',
+  agentId: string = 'main',
 ): number {
   const result = db.prepare(
-    'INSERT INTO memories (user_id, session_id, content, source) VALUES (?, ?, ?, ?)'
-  ).run(userId, sessionId, content, source)
+    'INSERT INTO memories (user_id, session_id, content, source, agent_id) VALUES (?, ?, ?, ?, ?)'
+  ).run(userId, sessionId, content, source, agentId)
 
   return Number(result.lastInsertRowid)
 }

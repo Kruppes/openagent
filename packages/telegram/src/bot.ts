@@ -27,6 +27,8 @@ export interface TelegramChatEvent {
   userId: number | null
   /** Session ID used for chat_messages */
   sessionId: string
+  /** Agent ID for multi-persona routing (default: 'main') */
+  agentId?: string
   /** Text content */
   text?: string
   /** Streamed thinking/reasoning delta (for `type: 'thinking'`) */
@@ -49,6 +51,8 @@ export interface TelegramBotOptions {
   agentCore: AgentCore
   db?: Database
   config?: TelegramConfig
+  /** Agent ID this bot instance represents (default: 'main') */
+  agentId?: string
   onQueueDepthChanged?: (queueDepth: number) => void
   /** Called for every chat event (user message, response chunks, etc.) for cross-channel sync */
   onChatEvent?: (event: TelegramChatEvent) => void
@@ -262,6 +266,7 @@ export class TelegramBot {
   private config: TelegramConfig
   private running = false
   private chatStates = new Map<string, ChatState>()
+  private agentId: string
   private onQueueDepthChanged?: (queueDepth: number) => void
   private onChatEvent?: (event: TelegramChatEvent) => void
   private onActiveProviderChanged?: () => void
@@ -270,6 +275,7 @@ export class TelegramBot {
     this.agentCore = options.agentCore
     this.db = options.db ?? null
     this.config = options.config ?? loadTelegramRuntimeConfig()
+    this.agentId = options.agentId ?? 'main'
     this.onQueueDepthChanged = options.onQueueDepthChanged
     this.onChatEvent = options.onChatEvent
     this.onActiveProviderChanged = options.onActiveProviderChanged
@@ -743,7 +749,7 @@ export class TelegramBot {
     const numericUserId = this.resolveNumericUserId(ctx)
     const caption = ctx.msg?.caption?.trim() ?? ''
     // Resolve session ID from SessionManager (aligns chat_messages with session tracking)
-    const smSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram')
+    const smSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram', this.agentId)
     const sessionId = smSession.id
 
     try {
@@ -780,7 +786,7 @@ export class TelegramBot {
           .run(sessionId, numericUserId, 'user', messageText, serializeUploadsMetadata([upload]))
       }
 
-      this.onChatEvent?.({ type: 'user_message', userId: numericUserId, sessionId, text: messageText, senderName: this.getSenderName(ctx) })
+      this.onChatEvent?.({ type: 'user_message', userId: numericUserId, sessionId, text: messageText, senderName: this.getSenderName(ctx), agentId: this.agentId })
 
       // Route to agent for processing (same path as text messages)
       const chatKey = getChatKey(ctx)
@@ -978,7 +984,7 @@ export class TelegramBot {
     const username = isDM ? this.resolveUsername(ctx) : null
 
     // Resolve session ID from SessionManager (aligns chat_messages with session tracking)
-    const smSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram')
+    const smSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram', this.agentId)
     const sessionId = smSession.id
 
     // Save user message to chat_messages (if linked to a web user)
@@ -997,6 +1003,7 @@ export class TelegramBot {
         sessionId,
         text,
         senderName,
+        agentId: this.agentId,
       })
     }
 
@@ -1021,7 +1028,7 @@ export class TelegramBot {
 
       try {
         const source = isDM ? 'telegram' : 'telegram-group'
-        for await (const chunk of this.agentCore.sendMessage(userId, messageForAgent, source, attachments)) {
+        for await (const chunk of this.agentCore.sendMessage(userId, messageForAgent, source, attachments, this.agentId)) {
           if (state.abortRequested) break
 
           if (chunk.type === 'text' && chunk.text) {
@@ -1065,6 +1072,7 @@ export class TelegramBot {
             toolArgs: chunk.toolArgs,
             toolResult: chunk.toolResult,
             toolIsError: chunk.toolIsError,
+            agentId: this.agentId,
           })
         }
       } finally {
@@ -1296,6 +1304,13 @@ export class TelegramBot {
     return this.running
   }
 
+  /**
+   * Get the agent ID this bot instance represents.
+   */
+  getAgentId(): string {
+    return this.agentId
+  }
+
   private syncOutgoingMessageToWeb(chatId: string | number, text: string): void {
     if (!this.db) return
 
@@ -1308,7 +1323,7 @@ export class TelegramBot {
     if (!userId) return
 
     // Resolve session ID from SessionManager (aligns chat_messages with session tracking)
-    const smSession = this.agentCore.getSessionManager().getOrCreateSession(String(userId), 'telegram')
+    const smSession = this.agentCore.getSessionManager().getOrCreateSession(String(userId), 'telegram', this.agentId)
     const sessionId = smSession.id
 
     try {
@@ -1324,11 +1339,13 @@ export class TelegramBot {
       userId,
       sessionId,
       text,
+      agentId: this.agentId,
     })
     this.onChatEvent?.({
       type: 'done',
       userId,
       sessionId,
+      agentId: this.agentId,
     })
   }
 

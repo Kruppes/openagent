@@ -354,6 +354,37 @@ export function mergeTts(
   return { error: null }
 }
 
+export function mergeMultiPersona(
+  body: Record<string, unknown>,
+  settingsRaw: Record<string, unknown>,
+): MergeGroupResult {
+  const multiPersona = body.multiPersona as Record<string, unknown> | undefined
+  if (!multiPersona) return { error: null, changed: false }
+
+  const existing = (settingsRaw.multiPersona ?? {}) as Record<string, unknown>
+  let changed = false
+
+  if (multiPersona.enabled !== undefined) {
+    existing.enabled = !!multiPersona.enabled
+    changed = true
+  }
+
+  if (multiPersona.defaultAgentId !== undefined) {
+    if (typeof multiPersona.defaultAgentId !== 'string' || !multiPersona.defaultAgentId.trim()) {
+      return { error: 'multiPersona.defaultAgentId must be a non-empty string', changed: false }
+    }
+    // Validate: only lowercase alphanumeric and hyphens
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(multiPersona.defaultAgentId as string)) {
+      return { error: 'multiPersona.defaultAgentId must be lowercase alphanumeric (hyphens allowed, must start with letter/digit)', changed: false }
+    }
+    existing.defaultAgentId = (multiPersona.defaultAgentId as string).trim()
+    changed = true
+  }
+
+  settingsRaw.multiPersona = existing
+  return { error: null, changed }
+}
+
 export function mergeStt(
   body: Record<string, unknown>,
   settingsRaw: Record<string, unknown>,
