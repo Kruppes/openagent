@@ -151,6 +151,7 @@ vi.mock('./provider-config.js', () => ({
 
 import { AgentCore } from './agent.js'
 import { initDatabase } from './database.js'
+import type { ProviderConfig } from './provider-config.js'
 
 describe('AgentCore Multi-Runtime Isolation', () => {
   let db: ReturnType<typeof initDatabase>
@@ -334,7 +335,16 @@ describe('AgentCore Multi-Runtime Isolation', () => {
       const warrenAgent = mockAgentInstances.agents[1]
 
       // Swap provider
-      const newProvider = { id: 'new-provider', name: 'New Provider', defaultModel: 'new-model', authMethod: 'api_key' as const }
+      const newProvider: ProviderConfig = {
+        id: 'new-provider',
+        name: 'New Provider',
+        type: 'openai-completions',
+        providerType: 'openai',
+        provider: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'new-key',
+        defaultModel: 'new-model',
+      }
       core.swapProvider(newProvider, 'new-key', 'new-model-id')
 
       // Both agents should have the new model
