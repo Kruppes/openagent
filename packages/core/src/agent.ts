@@ -42,6 +42,9 @@ export { getWorkspaceDir } from './workspace.js'
 /**
  * Agent Core - manages message queue/session lifecycle and delegates runtime internals
  * (tool wiring, prompt assembly, execution orchestration) to AgentRuntimeBoundary.
+ *
+ * When multi-persona is enabled, maintains a separate AgentRuntime per agentId.
+ * Each runtime has its own PiAgent with independent systemPrompt and message history.
  */
 export class AgentCore {
   private db: Database
@@ -52,26 +55,18 @@ export class AgentCore {
   private onTaskInjectionChunkCallback?: (chunk: ResponseChunk) => void
   private messageQueue: MessageQueue
   private currentToolUserId?: number
-  private runtime: AgentRuntimeBoundary
+  private runtimes: Map<string, AgentRuntimeBoundary> = new Map()
+  private runtimeOptions: AgentCoreOptions
 
   constructor(options: AgentCoreOptions) {
     this.db = options.db
     this.memoryDir = options.memoryDir
     this.baseInstructions = options.baseInstructions
     this.onSessionEndCallback = options.onSessionEnd
+    this.runtimeOptions = options
 
-    this.runtime = createAgentRuntime({
-      model: options.model,
-      apiKey: options.apiKey,
-      db: options.db,
-      systemPrompt: options.systemPrompt,
-      tools: options.tools,
-      memoryDir: options.memoryDir,
-      baseInstructions: options.baseInstructions,
-      providerConfig: options.providerConfig,
-      providerManager: options.providerManager,
-      getCurrentToolUserId: () => this.currentToolUserId,
-    })
+    // Create the default 'main' runtime
+    this.runtimes.set('main', this.createRuntimeForAgent('main', options.systemPrompt))
 
     // Initialize message queue for sequential processing
     this.messageQueue = new MessageQueue()
@@ -90,8 +85,13 @@ export class AgentCore {
         // and clearing messages here would wipe the user's conversation history
         // before their session has a chance to generate a summary.
         if (session.userId !== 'system') {
-          this.runtime.clearMessages()
-          this.refreshSystemPrompt()
+          // Clear messages on the runtime for the session's agentId
+          const sessionAgentId = session.agentId ?? 'main'
+          const runtime = this.runtimes.get(sessionAgentId)
+          if (runtime) {
+            runtime.clearMessages()
+            this.refreshSystemPrompt(undefined, undefined, sessionAgentId)
+          }
         }
 
         // Notify external listener (e.g. ws-chat)
@@ -100,6 +100,37 @@ export class AgentCore {
         }
       },
     })
+  }
+
+  /**
+   * Create an AgentRuntime for a specific agentId.
+   */
+  private createRuntimeForAgent(agentId: string, systemPrompt?: string): AgentRuntimeBoundary {
+    return createAgentRuntime({
+      model: this.runtimeOptions.model,
+      apiKey: this.runtimeOptions.apiKey,
+      db: this.runtimeOptions.db,
+      systemPrompt,
+      tools: this.runtimeOptions.tools,
+      memoryDir: this.runtimeOptions.memoryDir,
+      baseInstructions: this.runtimeOptions.baseInstructions,
+      providerConfig: this.runtimeOptions.providerConfig,
+      providerManager: this.runtimeOptions.providerManager,
+      getCurrentToolUserId: () => this.currentToolUserId,
+      agentId,
+    })
+  }
+
+  /**
+   * Get or lazily create the AgentRuntime for a given agentId.
+   */
+  private getOrCreateRuntime(agentId: string): AgentRuntimeBoundary {
+    let runtime = this.runtimes.get(agentId)
+    if (!runtime) {
+      runtime = this.createRuntimeForAgent(agentId)
+      this.runtimes.set(agentId, runtime)
+    }
+    return runtime
   }
 
   /**
@@ -119,16 +150,27 @@ export class AgentCore {
 
   /**
    * Hot-swap the provider at runtime while preserving conversation context.
+   * Updates ALL runtimes so every persona uses the new provider.
    */
   swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string): void {
-    this.runtime.swapProvider(provider, apiKey, modelId)
+    // Update stored options so future lazy-created runtimes use the new provider
+    this.runtimeOptions = {
+      ...this.runtimeOptions,
+      providerConfig: provider,
+    }
+    // Swap on all existing runtimes
+    for (const runtime of this.runtimes.values()) {
+      runtime.swapProvider(provider, apiKey, modelId)
+    }
   }
 
   /**
    * Get the ProviderManager reference (if configured).
+   * Uses the 'main' runtime as the canonical source.
    */
   getProviderManager(): ProviderManager | undefined {
-    return this.runtime.getProviderManager()
+    const mainRuntime = this.runtimes.get('main')
+    return mainRuntime?.getProviderManager()
   }
 
   /**
@@ -227,8 +269,11 @@ export class AgentCore {
     const parsedUserId = Number.parseInt(userId, 10)
     this.currentToolUserId = Number.isFinite(parsedUserId) ? parsedUserId : undefined
 
+    // Route to the correct runtime for this agentId
+    const runtime = this.getOrCreateRuntime(agentId)
+
     try {
-      yield* this.runtime.streamPrompt(enrichedText, sessionId, images.length > 0 ? images : undefined)
+      yield* runtime.streamPrompt(enrichedText, sessionId, images.length > 0 ? images : undefined)
     } finally {
       this.currentToolUserId = undefined
     }
@@ -247,8 +292,11 @@ export class AgentCore {
     this.sessionManager.recordMessage('system')
     this.currentToolUserId = undefined
 
+    // Task injections go to the 'main' runtime
+    const runtime = this.getOrCreateRuntime('main')
+
     try {
-      yield* this.runtime.streamPrompt(injection, sessionId)
+      yield* runtime.streamPrompt(injection, sessionId)
     } finally {
       this.currentToolUserId = undefined
     }
@@ -282,8 +330,10 @@ export class AgentCore {
     console.log(`[session-summary] Generating summary for ${conversationHistory.length} chars of history`)
 
     // Resolve model + apiKey: use dedicated summary provider if configured, else current model
-    let summaryModel = this.runtime.getCurrentModel()
-    let summaryApiKey = this.runtime.getCurrentApiKey()
+    // Use the 'main' runtime as canonical source for model/apiKey
+    const mainRuntime = this.runtimes.get('main')!
+    let summaryModel = mainRuntime.getCurrentModel()
+    let summaryApiKey = mainRuntime.getCurrentApiKey()
     try {
       const summarySettings = loadConfig<{ sessionSummaryProviderId?: string }>('settings.json')
       const summaryProviderId = summarySettings.sessionSummaryProviderId
@@ -380,10 +430,12 @@ Do NOT add this section if everything discussed was resolved or if there is noth
   }
 
   /**
-   * Abort the current agent task.
+   * Abort the current agent task on all runtimes.
    */
   abort(): void {
-    this.runtime.abort()
+    for (const runtime of this.runtimes.values()) {
+      runtime.abort()
+    }
   }
 
   /**
@@ -403,17 +455,31 @@ Do NOT add this section if everything discussed was resolved or if there is noth
 
   /**
    * Refresh the system prompt from current memory state.
+   * When agentId is specified, only refreshes that runtime.
+   * When agentId is omitted, refreshes ALL runtimes.
    */
   refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void {
-    this.runtime.refreshSystemPrompt(channel, currentUser, agentId)
+    if (agentId) {
+      // Get or create the runtime for this agentId, then refresh
+      const runtime = this.getOrCreateRuntime(agentId)
+      runtime.refreshSystemPrompt(channel, currentUser, agentId)
+    } else {
+      // Refresh all existing runtimes
+      for (const [id, runtime] of this.runtimes) {
+        runtime.refreshSystemPrompt(channel, currentUser, id)
+      }
+    }
   }
 
   /**
    * Update the thinking/reasoning level used for future agent turns.
    * Accepts any string; invalid values are ignored by the runtime.
+   * Updates ALL runtimes.
    */
   setThinkingLevel(level: string): void {
-    this.runtime.setThinkingLevel(level)
+    for (const runtime of this.runtimes.values()) {
+      runtime.setThinkingLevel(level)
+    }
   }
 
   /**
@@ -425,9 +491,14 @@ Do NOT add this section if everything discussed was resolved or if there is noth
 
   /**
    * Get a stable runtime snapshot for diagnostics/testing.
+   * Returns the snapshot from the 'main' runtime by default.
    */
-  getRuntimeStateSnapshot(): AgentRuntimeStateSnapshot {
-    return this.runtime.getStateSnapshot()
+  getRuntimeStateSnapshot(agentId: string = 'main'): AgentRuntimeStateSnapshot {
+    const runtime = this.runtimes.get(agentId)
+    if (!runtime) {
+      return { modelId: '', toolNames: [], messageCount: 0 }
+    }
+    return runtime.getStateSnapshot()
   }
 
   /**
@@ -441,8 +512,9 @@ Do NOT add this section if everything discussed was resolved or if there is noth
    * Get the underlying pi-mono agent (for advanced usage).
    * @deprecated Prefer boundary methods like sendMessage()/abort()/getRuntimeStateSnapshot().
    */
-  getAgent(): PiAgent {
-    const runtimeWithAgent = this.runtime as Partial<AgentRuntimePiAgentAccess>
+  getAgent(agentId: string = 'main'): PiAgent {
+    const runtime = this.getOrCreateRuntime(agentId)
+    const runtimeWithAgent = runtime as Partial<AgentRuntimePiAgentAccess>
     if (typeof runtimeWithAgent.getAgent !== 'function') {
       throw new Error('Direct agent access is not available on this runtime implementation.')
     }
@@ -455,5 +527,6 @@ Do NOT add this section if everything discussed was resolved or if there is noth
    */
   async dispose(): Promise<void> {
     await this.sessionManager.dispose()
+    this.runtimes.clear()
   }
 }
