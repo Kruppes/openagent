@@ -467,6 +467,30 @@ export function initDatabase(dbPath?: string): Database {
     db.exec("ALTER TABLE sessions ADD COLUMN completion_tokens INTEGER NOT NULL DEFAULT 0")
   }
 
+  // Migration: add agent_id column to sessions table
+  if (!sessionCols.find(c => c.name === 'agent_id')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'")
+  }
+
+  // Migration: add agent_id column to memories table
+  const memoryCols = db.prepare("PRAGMA table_info(memories)").all() as { name: string }[]
+  if (!memoryCols.find(c => c.name === 'agent_id')) {
+    db.exec("ALTER TABLE memories ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'")
+  }
+
+  // Migration: add agent_id column to chat_messages table
+  const chatMsgCols = db.prepare("PRAGMA table_info(chat_messages)").all() as { name: string }[]
+  if (!chatMsgCols.find(c => c.name === 'agent_id')) {
+    db.exec("ALTER TABLE chat_messages ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'")
+  }
+
+  // Create indexes for agent_id columns
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_agent_id ON memories(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_agent_id ON chat_messages(agent_id);
+  `)
+
   // Backfill token counts from token_usage only when the columns are first added
   if (needsTokenBackfill) {
     db.exec(`

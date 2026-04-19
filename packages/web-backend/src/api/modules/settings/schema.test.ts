@@ -4,6 +4,7 @@ import {
   mergeConsolidation,
   mergeFactExtraction,
   mergeHealthMonitor,
+  mergeMultiPersona,
   mergeStt,
   mergeTasks,
   mergeTts,
@@ -123,5 +124,35 @@ describe('settings schema', () => {
       error: null,
     })
     expect((settingsRaw.tasks as Record<string, unknown>).backgroundThinkingLevel).toBe('medium')
+  })
+
+  it('merges multiPersona settings with validation', () => {
+    const settingsRaw: Record<string, unknown> = {}
+
+    // No input → no change
+    expect(mergeMultiPersona({}, settingsRaw)).toEqual({ error: null, changed: false })
+
+    // Enable
+    expect(mergeMultiPersona({ multiPersona: { enabled: true } }, settingsRaw)).toEqual({ error: null, changed: true })
+    expect((settingsRaw.multiPersona as Record<string, unknown>).enabled).toBe(true)
+
+    // Valid defaultAgentId
+    expect(mergeMultiPersona({ multiPersona: { defaultAgentId: 'warren' } }, settingsRaw)).toEqual({ error: null, changed: true })
+    expect((settingsRaw.multiPersona as Record<string, unknown>).defaultAgentId).toBe('warren')
+
+    // Invalid defaultAgentId (empty)
+    expect(mergeMultiPersona({ multiPersona: { defaultAgentId: '' } }, settingsRaw)).toEqual({
+      error: 'multiPersona.defaultAgentId must be a non-empty string',
+      changed: false,
+    })
+
+    // Invalid defaultAgentId (uppercase)
+    expect(mergeMultiPersona({ multiPersona: { defaultAgentId: 'Warren' } }, settingsRaw)).toEqual({
+      error: 'multiPersona.defaultAgentId must be lowercase alphanumeric (hyphens allowed, must start with letter/digit)',
+      changed: false,
+    })
+
+    // Valid with hyphen
+    expect(mergeMultiPersona({ multiPersona: { defaultAgentId: 'my-agent-1' } }, settingsRaw)).toEqual({ error: null, changed: true })
   })
 })

@@ -13,7 +13,8 @@ export {
   getImageDimensions,
 } from './uploads.js'
 export type { UploadDescriptor, SaveUploadInput, UploadSettings } from './uploads.js'
-export { loadConfig, getConfigDir, ensureConfigTemplates } from './config.js'
+export { loadConfig, getConfigDir, ensureConfigTemplates, loadMultiPersonaSettings } from './config.js'
+export type { MultiPersonaSettings } from './config.js'
 export * from './contracts/index.js'
 export {
   normalizeThinkingLevel,

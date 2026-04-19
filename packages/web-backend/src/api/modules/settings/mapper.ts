@@ -93,6 +93,14 @@ function buildTtsResponse(settingsRaw: Record<string, unknown>) {
   }
 }
 
+function buildMultiPersonaResponse(settingsRaw: Record<string, unknown>) {
+  const multiPersona = (settingsRaw.multiPersona ?? {}) as Record<string, unknown>
+  return {
+    enabled: multiPersona.enabled ?? false,
+    defaultAgentId: multiPersona.defaultAgentId ?? 'main',
+  }
+}
+
 function buildSttResponse(settingsRaw: Record<string, unknown>) {
   const stt = (settingsRaw.stt ?? {}) as Record<string, unknown>
   const rewrite = (stt.rewrite ?? {}) as Record<string, unknown>
@@ -134,6 +142,7 @@ export function mapSettingsResponse(context: SettingsResponseContext) {
     tasks: buildTasksResponse(settingsRaw),
     tts: buildTtsResponse(settingsRaw),
     stt: buildSttResponse(settingsRaw),
+    multiPersona: buildMultiPersonaResponse(settingsRaw),
   }
 }
 

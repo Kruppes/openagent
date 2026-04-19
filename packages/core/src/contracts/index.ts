@@ -39,6 +39,7 @@ export type {
   SettingsUpdateContract,
   SettingsStorageContract,
   TelegramSettingsStorageContract,
+  MultiPersonaSettingsContract,
   HealthMonitorSettingsUpdateContract,
   LegacyCompatibleSettingsUpdateContract,
 } from './settings.js'

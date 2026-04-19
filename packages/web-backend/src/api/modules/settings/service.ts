@@ -7,6 +7,7 @@ import {
   mergeConsolidation,
   mergeFactExtraction,
   mergeHealthMonitor,
+  mergeMultiPersona,
   mergeStt,
   mergeTasks,
   mergeTts,
@@ -136,6 +137,9 @@ export function createSettingsService(options: SettingsRouterOptions = {}): Sett
     const sttMerge = mergeStt(body, settingsRaw)
     if (sttMerge.error) throw new SettingsValidationError(sttMerge.error)
 
+    const multiPersonaMerge = mergeMultiPersona(body, settingsRaw)
+    if (multiPersonaMerge.error) throw new SettingsValidationError(multiPersonaMerge.error)
+
     if (body.telegramEnabled !== undefined) {
       telegram.enabled = !!body.telegramEnabled
     }
@@ -181,6 +185,10 @@ export function createSettingsService(options: SettingsRouterOptions = {}): Sett
 
     if (telegram.enabled !== previousTelegramEnabled || telegram.botToken !== previousTelegramBotToken) {
       options.onTelegramSettingsChanged?.()
+    }
+
+    if (multiPersonaMerge.changed) {
+      options.onMultiPersonaSettingsChanged?.()
     }
 
     return mapSettingsUpdateResponse({
