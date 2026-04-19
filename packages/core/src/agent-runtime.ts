@@ -43,6 +43,12 @@ export interface AgentRuntimeOptions {
    * stored in `settings.json` (`thinkingLevel`), or `off` if not configured.
    */
   thinkingLevel?: SettingsThinkingLevel
+  /**
+   * Agent ID for multi-persona support. Determines which persona files to load
+   * and which agent identity to use for cross-persona tools like ask_agent.
+   * Defaults to 'main'.
+   */
+  agentId?: string
 }
 
 export interface AgentRuntimeBoundary {
@@ -416,6 +422,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
   private providerConfig?: ProviderConfig
   private providerManager?: ProviderManager
   private getCurrentToolUserId: () => number | undefined
+  private agentId: string
 
   constructor(options: AgentRuntimeOptions) {
     this.model = options.model
@@ -434,13 +441,15 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     const { builtinToolsConfig, sttEnabled, thinkingLevel: storedThinkingLevel } = this.readRuntimeSettings()
     const effectiveThinkingLevel = normalizeThinkingLevel(options.thinkingLevel) ?? storedThinkingLevel ?? 'off'
 
-    const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt()
+    this.agentId = options.agentId ?? 'main'
+    const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt(undefined, undefined, this.agentId)
 
     // Conditionally add ask_agent tool when multi-persona is enabled
     const multiPersonaSettings = loadMultiPersonaSettings()
+    const runtimeAgentId = this.agentId
     const askAgentTools: AgentTool[] = multiPersonaSettings.enabled
       ? [createAskAgentTool({
-          getCurrentAgentId: () => 'main', // Will be updated per-message via refreshSystemPrompt
+          getCurrentAgentId: () => runtimeAgentId,
           getModel: () => this.model,
           getApiKey: () => this.apiKey,
         })]
