@@ -24,6 +24,7 @@ vi.mock('./config.js', () => ({
   ensureConfigTemplates: vi.fn(),
   loadConfig: vi.fn(() => ({})),
   getConfigDir: vi.fn(() => '/tmp/test-config'),
+  loadMultiPersonaSettings: vi.fn(() => ({ enabled: false, defaultAgentId: 'main' })),
 }))
 
 vi.mock('./provider-config.js', async (importOriginal) => {

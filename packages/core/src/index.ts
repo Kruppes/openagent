@@ -17,6 +17,8 @@ export { loadConfig, getConfigDir, ensureConfigTemplates, loadMultiPersonaSettin
 export type { MultiPersonaSettings } from './config.js'
 export { loadPersona, clearPersonaCache, seedPersonaFiles, getPersonaDir } from './persona-loader.js'
 export type { PersonaContext } from './persona-loader.js'
+export { createAskAgentTool, listAvailableAgents, buildAskAgentPromptHint } from './ask-agent-tool.js'
+export type { AskAgentToolOptions } from './ask-agent-tool.js'
 export * from './contracts/index.js'
 export {
   normalizeThinkingLevel,

@@ -13,6 +13,8 @@ import type { ProviderManager } from './provider-manager.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
 import { normalizeThinkingLevel } from './thinking-level.js'
 import { assembleSystemPrompt, ensureMemoryStructure, ensureConfigStructure, getMemoryDir } from './memory.js'
+import { loadMultiPersonaSettings } from './config.js'
+import { createAskAgentTool, buildAskAgentPromptHint } from './ask-agent-tool.js'
 import type { SkillPromptEntry } from './memory.js'
 import { getWorkspaceDir } from './workspace.js'
 import { loadConfig, ensureConfigTemplates } from './config.js'
@@ -434,6 +436,16 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt()
 
+    // Conditionally add ask_agent tool when multi-persona is enabled
+    const multiPersonaSettings = loadMultiPersonaSettings()
+    const askAgentTools: AgentTool[] = multiPersonaSettings.enabled
+      ? [createAskAgentTool({
+          getCurrentAgentId: () => 'main', // Will be updated per-message via refreshSystemPrompt
+          getModel: () => this.model,
+          getApiKey: () => this.apiKey,
+        })]
+      : []
+
     const tools: AgentTool[] = [
       ...(options.tools ?? []),
       createSearchMemoriesTool({
@@ -443,6 +455,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       ...createBuiltinWebTools(builtinToolsConfig),
       ...(sttEnabled ? [createTranscribeAudioTool()] : []),
       ...createAgentSkillTools(),
+      ...askAgentTools,
       ...createYoloTools(),
     ]
 
@@ -575,7 +588,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       stt: { enabled: sttEnabled },
     }
 
-    return assembleSystemPrompt({
+    let prompt = assembleSystemPrompt({
       memoryDir: this.memoryDir,
       baseInstructions: this.baseInstructions,
       language,
@@ -588,6 +601,17 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       agentSkillsDir: getAgentSkillsDir(),
       agentId,
     })
+
+    // Append cross-persona hint when ask_agent is available
+    const multiPersona = loadMultiPersonaSettings()
+    if (multiPersona.enabled) {
+      const hint = buildAskAgentPromptHint(agentId ?? 'main')
+      if (hint) {
+        prompt += hint
+      }
+    }
+
+    return prompt
   }
 
   /**
