@@ -14,8 +14,15 @@ export interface AskAgentToolOptions {
   getCurrentAgentId: () => string
   /** Provides the LLM model for the nested call */
   getModel: () => Model<Api>
-  /** Provides the API key for the nested call */
-  getApiKey: () => string
+  /**
+   * Provides the API key for the nested call.
+   *
+   * MUST be async-capable: for OAuth-authenticated providers (e.g. Claude Pro)
+   * the token must be freshly resolved on every call to handle refresh flows.
+   * Returning a stale/empty key produces silent auth failures that surface as
+   * empty responses, which is very hard to diagnose.
+   */
+  getApiKey: () => string | Promise<string>
   /** Current call chain for recursion detection */
   callChain?: string[]
 }
@@ -171,12 +178,16 @@ export function createAskAgentTool(options: AskAgentToolOptions): AgentTool {
 
       try {
         const model = getModel()
-        const apiKey = getApiKey()
+        const apiKey = await getApiKey()
 
         // Option A: Disable reasoning for cross-persona queries.
         // These are short one-shot calls that don't benefit from extended thinking.
         // Using undefined (= off) keeps the call fast and avoids the bug where
         // reasoning models only fill thinking blocks but no text blocks.
+        // Don't pass temperature: some reasoning models (e.g. Claude Opus 4.7) reject it outright.
+        // Letting the SDK pick the default keeps us compatible across temperature-sensitive and
+        // temperature-rejecting models. For cross-persona calls a slightly deterministic reply
+        // is fine — the target persona's SOUL/IDENTITY provides the voice.
         const response = await completeSimple(model, {
           systemPrompt,
           messages: [{
@@ -186,9 +197,20 @@ export function createAskAgentTool(options: AskAgentToolOptions): AgentTool {
           }],
         }, {
           apiKey,
-          temperature: 0.7,
           reasoning: undefined, // explicitly disabled — no extended thinking for cross-persona calls
         })
+
+        // Surface provider errors directly instead of silently returning "empty response".
+        // Without this, auth failures / 400s / rate limits were being masked as empty responses,
+        // which made debugging very hard (took a full live-debug session to find an OAuth bug).
+        if (response.stopReason === 'error') {
+          const errMsg = response.errorMessage || 'unknown provider error'
+          console.error(`[ask_agent] provider error for ${targetAgentId}: ${errMsg}`)
+          return {
+            content: [{ type: 'text' as const, text: `Error querying agent '${targetAgentId}': ${errMsg}` }],
+            details: { error: true, targetAgentId, reason: 'provider_error', errorMessage: errMsg },
+          }
+        }
 
         let responseText = response.content
           .filter(item => item.type === 'text')

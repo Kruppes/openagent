@@ -444,14 +444,35 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     this.agentId = options.agentId ?? 'main'
     const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt(undefined, undefined, this.agentId)
 
-    // Conditionally add ask_agent tool when multi-persona is enabled
+    // Conditionally add ask_agent tool when multi-persona is enabled.
+    //
+    // getApiKey must mirror the main PiAgent's OAuth-aware resolver: for OAuth-authenticated
+    // providers (e.g. Claude Pro) `this.apiKey` is an empty string and the real token has to
+    // be resolved fresh from the provider config on every call. Without this, cross-persona
+    // calls hit the provider with an empty key and fail silently with stopReason='error'
+    // and contentLength=0, which the caller then masked as "empty response".
     const multiPersonaSettings = loadMultiPersonaSettings()
     const runtimeAgentId = this.agentId
+    const providerConfigRef = this.providerConfig
     const askAgentTools: AgentTool[] = multiPersonaSettings.enabled
       ? [createAskAgentTool({
           getCurrentAgentId: () => runtimeAgentId,
           getModel: () => this.model,
-          getApiKey: () => this.apiKey,
+          getApiKey: providerConfigRef?.authMethod === 'oauth'
+            ? async () => {
+                try {
+                  const { loadProvidersDecrypted } = await import('./provider-config.js')
+                  const file = loadProvidersDecrypted()
+                  const freshProvider = file.providers.find(p => p.id === providerConfigRef.id)
+                  if (freshProvider) {
+                    return await getApiKeyForProvider(freshProvider)
+                  }
+                } catch (err) {
+                  console.error('[ask_agent] OAuth token refresh failed:', err)
+                }
+                return this.apiKey
+              }
+            : () => this.apiKey,
         })]
       : []
 
