@@ -4,6 +4,7 @@ import path from 'node:path'
 export default defineConfig({
   resolve: {
     alias: {
+      '@openagent/core/contracts': path.resolve(__dirname, 'packages/core/src/contracts/index.ts'),
       '@openagent/core': path.resolve(__dirname, 'packages/core/src/index.ts'),
       '@openagent/telegram': path.resolve(__dirname, 'packages/telegram/src/index.ts'),
       '@openagent/web-backend': path.resolve(__dirname, 'packages/web-backend/src/index.ts'),

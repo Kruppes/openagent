@@ -22,6 +22,7 @@ import { createSecretsRouter } from './routes/secrets.js'
 import { createTtsRouter } from './routes/tts.js'
 import { createSttRouter } from './routes/stt.js'
 import { createAdminRouter } from './routes/admin.js'
+import { createPersonasRouter } from './api/modules/personas/route.js'
 import type { TaskRuntimeBoundary, TaskEventBus, AgentHeartbeatService } from '@openagent/core'
 import { ensureAdminUser } from './auth.js'
 import type { HealthMonitorService } from './health-monitor.js'
@@ -137,6 +138,7 @@ export function createApp(options?: AppOptions): express.Express {
     app.use('/api/tts', createTtsRouter())
     app.use('/api/stt', createSttRouter())
     app.use('/api/admin', createAdminRouter(options.db))
+    app.use('/api/personas', createPersonasRouter())
 
     if (options.healthMonitorService && options.runtimeMetrics) {
       app.use('/api/health', createHealthRouter({

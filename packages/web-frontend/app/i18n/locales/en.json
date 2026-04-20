@@ -16,7 +16,8 @@
     "skills": "Skills",
     "instructions": "Instructions",
     "tasks": "Tasks",
-    "cronjobs": "Cronjobs"
+    "cronjobs": "Cronjobs",
+    "personas": "Personas"
   },
   "roles": {
     "admin": "Admin",
@@ -33,7 +34,8 @@
     "saveFailed": "Could not save changes.",
     "deleteFailed": "Could not delete item.",
     "language": "Language",
-    "back": "Back"
+    "back": "Back",
+    "loading": "Loading…"
   },
   "admin": {
     "title": "Admin access required",
@@ -560,7 +562,14 @@
     "sttRewriteEnabledHint": "Use an LLM to remove filler words, repetitions, and spoken artifacts from the transcript.",
     "sttRewriteProvider": "Rewrite provider",
     "sttRewriteProviderHint": "Choose which LLM provider cleans up the transcribed text.",
-    "sttRewriteProviderNone": "No provider configured"
+    "sttRewriteProviderNone": "No provider configured",
+    "multiPersonaTitle": "Multi-Persona",
+    "multiPersonaDescription": "Enable support for multiple Telegram bots with their own personas. Each bot gets its own persona files under /data/agents/[id]/ and isolated sessions + memory.",
+    "multiPersonaEnabled": "Enable Multi-Persona Mode",
+    "multiPersonaEnabledHint": "When enabled, each Telegram bot can have its own persona, sessions, and memory.",
+    "multiPersonaDefaultAgentId": "Default Agent ID",
+    "multiPersonaDefaultAgentIdHint": "The default agent ID for the main bot (usually \"main\").",
+    "multiPersonaManageLink": "Manage Personas"
   },
   "users": {
     "kicker": "Access control",
@@ -898,5 +907,43 @@
     "thinking": "Thinking",
     "resultSummary": "Task Result",
     "noSummary": "Task completed without summary."
+  },
+  "personas": {
+    "title": "Personas",
+    "subtitle": "Manage agent personas for multi-persona mode",
+    "empty": "No personas found. Create your first persona to get started.",
+    "createNew": "New Persona",
+    "createTitle": "Create New Persona",
+    "createDescription": "Create a new persona with template files. The ID must be lowercase alphanumeric (hyphens allowed).",
+    "idLabel": "Persona ID",
+    "idPlaceholder": "e.g. gekko, spider, analyst",
+    "idHint": "Lowercase letters, numbers, and hyphens. Must start with a letter.",
+    "edit": "Edit",
+    "delete": "Delete",
+    "deleteConfirm": "Are you sure you want to delete persona \"{id}\"? This will remove all persona files and cannot be undone.",
+    "deleteSuccess": "Persona deleted successfully",
+    "saveSuccess": "Persona saved successfully",
+    "mainBadge": "Default",
+    "telegramBound": "Telegram",
+    "telegramNotBound": "No Telegram",
+    "filesCount": "{count} files",
+    "editTitle": "Edit Persona: {id}",
+    "editDescription": "Edit the persona files for this agent. Each file controls a different aspect of the agent's behavior.",
+    "fileIdentity": "Identity",
+    "fileSoul": "Soul",
+    "fileUser": "User Profile",
+    "fileTools": "Tools",
+    "fileAgents": "Agent Rules",
+    "fileHeartbeat": "Heartbeat",
+    "fileIdentityHint": "Name, creature type, vibe, emoji",
+    "fileSoulHint": "Core personality and behavior rules",
+    "fileUserHint": "Information about the primary user",
+    "fileToolsHint": "Tool-specific hints and instructions",
+    "fileAgentsHint": "Agent interaction rules",
+    "fileHeartbeatHint": "Periodic task definitions",
+    "back": "Back to Personas",
+    "cannotDeleteMain": "The main persona cannot be deleted",
+    "multiPersonaDisabled": "Multi-Persona mode is disabled. Enable it in Settings to use multiple personas.",
+    "goToSettings": "Go to Settings"
   }
 }
