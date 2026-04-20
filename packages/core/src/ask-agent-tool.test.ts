@@ -253,7 +253,11 @@ describe('ask-agent-tool', () => {
       })
     })
 
-    it('disables reasoning for cross-persona calls (reasoning=undefined)', async () => {
+    it('disables reasoning and omits temperature for cross-persona calls', async () => {
+      // Two important guarantees for the nested call:
+      //   1. reasoning is explicitly disabled (Option A fix for empty-text bug)
+      //   2. temperature is NOT passed — some reasoning models (e.g. Claude Opus 4.7)
+      //      return 400 invalid_request_error when temperature is set.
       const gekkoDir = path.join(agentsDir, 'gekko')
       fs.mkdirSync(gekkoDir, { recursive: true })
       fs.writeFileSync(path.join(gekkoDir, 'SOUL.md'), '# Gekko', 'utf-8')
@@ -267,10 +271,11 @@ describe('ask-agent-tool', () => {
         const tool = createAskAgentTool(createOptions())
         await tool.execute('call-1', { agent_id: 'gekko', question: 'Test?' })
 
-        // Verify reasoning is explicitly set to undefined (disabled)
         const [, , options] = mockCompleteSimple.mock.calls[0]
         expect(options).toBeDefined()
         expect(options!.reasoning).toBeUndefined()
+        // temperature must NOT be passed — Opus 4.7 rejects it
+        expect((options as Record<string, unknown>).temperature).toBeUndefined()
       } finally {
         if (originalDataDir !== undefined) {
           process.env.DATA_DIR = originalDataDir
@@ -322,6 +327,100 @@ describe('ask-agent-tool', () => {
           type: 'text',
           text: expect.stringContaining('[Response from gekko]'),
         })
+      } finally {
+        if (originalDataDir !== undefined) {
+          process.env.DATA_DIR = originalDataDir
+        } else {
+          delete process.env.DATA_DIR
+        }
+      }
+    })
+
+    it('surfaces provider errors instead of masking them as empty response', async () => {
+      // Regression test for the OAuth silent-failure bug: when the provider
+      // returns stopReason='error' (e.g. auth failure, rate limit, bad request),
+      // the tool must surface the actual errorMessage instead of saying
+      // "Agent X returned an empty response." Masking real errors as "empty
+      // response" took a full live-debug session to track down.
+      const gekkoDir = path.join(agentsDir, 'gekko')
+      fs.mkdirSync(gekkoDir, { recursive: true })
+      fs.writeFileSync(path.join(gekkoDir, 'SOUL.md'), '# Gekko', 'utf-8')
+
+      const originalDataDir = process.env.DATA_DIR
+      process.env.DATA_DIR = tmpDir
+
+      try {
+        mockCompleteSimple.mockResolvedValueOnce({
+          role: 'assistant' as const,
+          content: [],
+          usage: {
+            input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          model: 'claude-opus-4-7',
+          api: 'anthropic-messages' as const,
+          provider: 'anthropic',
+          stopReason: 'error' as const,
+          errorMessage: 'No API key for provider: anthropic',
+          timestamp: Date.now(),
+        } as any)
+
+        const tool = createAskAgentTool(createOptions())
+        const result = await tool.execute('call-1', { agent_id: 'gekko', question: 'Test?' })
+
+        expect(result.content[0]).toEqual({
+          type: 'text',
+          text: expect.stringContaining('No API key for provider: anthropic'),
+        })
+        expect(result.details).toMatchObject({
+          error: true,
+          targetAgentId: 'gekko',
+          reason: 'provider_error',
+        })
+      } finally {
+        if (originalDataDir !== undefined) {
+          process.env.DATA_DIR = originalDataDir
+        } else {
+          delete process.env.DATA_DIR
+        }
+      }
+    })
+
+    it('awaits async getApiKey resolvers (OAuth token refresh)', async () => {
+      // Regression test: for OAuth providers getApiKey is async because the
+      // token must be refreshed on every call. createAskAgentTool used to call
+      // getApiKey synchronously, which broke OAuth providers silently
+      // (empty string reached the provider, which then returned stopReason=error).
+      const gekkoDir = path.join(agentsDir, 'gekko')
+      fs.mkdirSync(gekkoDir, { recursive: true })
+      fs.writeFileSync(path.join(gekkoDir, 'SOUL.md'), '# Gekko', 'utf-8')
+
+      const originalDataDir = process.env.DATA_DIR
+      process.env.DATA_DIR = tmpDir
+
+      try {
+        mockCompleteSimple.mockResolvedValueOnce(makeResponse('hello'))
+
+        let resolveCount = 0
+        const asyncGetApiKey = async () => {
+          resolveCount++
+          // Simulate a real OAuth refresh with a short delay
+          await new Promise(resolve => setTimeout(resolve, 1))
+          return 'fresh-oauth-token'
+        }
+
+        const tool = createAskAgentTool(createOptions({ getApiKey: asyncGetApiKey }))
+        const result = await tool.execute('call-1', { agent_id: 'gekko', question: 'Test?' })
+
+        expect(resolveCount).toBe(1)
+        expect(result.content[0]).toEqual({
+          type: 'text',
+          text: expect.stringContaining('hello'),
+        })
+
+        // Verify the resolved token (not the Promise!) was forwarded
+        const [, , options] = mockCompleteSimple.mock.calls[0]
+        expect(options!.apiKey).toBe('fresh-oauth-token')
       } finally {
         if (originalDataDir !== undefined) {
           process.env.DATA_DIR = originalDataDir
