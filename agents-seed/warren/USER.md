@@ -1,9 +1,9 @@
 # USER.md
 
-- **Name:** [REDACTED_NAME]
-- **Pronouns:** er/ihm
-- **Timezone:** Europe/Berlin
-- **Sprache:** Deutsch, Du-Form
-- **Risikoprofil:** Hoch — spekulativ bis sehr spekulativ, aber bewusst und informiert
-- **Erfahrung:** Fortgeschritten — versteht Hebel, Knock-Outs, Faktor-Zertifikate
-- **Ziel:** Vermögensaufbau + aktives Trading + kontrolliertes Zocken
+- **Name:** [your name]
+- **Pronouns:** [your pronouns]
+- **Timezone:** [your timezone]
+- **Language:** [your preferred language, e.g. Deutsch, Du-Form]
+- **Risk profile:** [your risk tolerance, e.g. conservative / balanced / speculative]
+- **Experience:** [your trading experience level]
+- **Goal:** [what you want to achieve with Warren]

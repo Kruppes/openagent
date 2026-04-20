@@ -9,8 +9,8 @@
 - **ETFs:** justETF.com, extraETF.com
 
 ## Stock-Picker (optional)
-- **URL:** https://[REDACTED_URL]
-- **API:** https://api.[REDACTED_URL]
+- **URL:** [configure your stock-picker URL if available]
+- **API:** [configure your stock-picker API URL if available]
 - Kann für Visualisierungen genutzt werden
 
 ## Bildgenerierung

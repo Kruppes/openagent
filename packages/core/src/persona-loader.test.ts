@@ -74,7 +74,7 @@ describe('persona-loader', () => {
       createPersonaDir('warren', {
         'IDENTITY.md': '# IDENTITY\n- Name: Warren',
         'SOUL.md': '# SOUL.md — Warren\nDu bist Warren.',
-        'USER.md': '# USER\n[REDACTED_USER]'s,
+        'USER.md': '# USER\nTestUser',
         'TOOLS.md': '# TOOLS\nWeb research',
         'MEMORY.md': '# MEMORY\nFacts about Warren',
         'AGENTS.md': '# AGENTS\nWarren rules',
@@ -86,7 +86,7 @@ describe('persona-loader', () => {
       expect(persona.agentId).toBe('warren')
       expect(persona.identity).toContain('Warren')
       expect(persona.soul).toContain('Du bist Warren')
-      expect(persona.user).toContain('[REDACTED_USER]'s)
+      expect(persona.user).toContain('TestUser')
       expect(persona.tools).toContain('Web research')
       expect(persona.memory).toContain('Facts about Warren')
       expect(persona.agents).toContain('Warren rules')
@@ -229,7 +229,7 @@ describe('assembleSystemPrompt with persona', () => {
       'SOUL.md': '# Warren Soul\nDu bist Warren, ein Anlageberater.',
       'IDENTITY.md': '# Warren Identity\n- Name: Warren\n- Emoji: 📈',
       'TOOLS.md': '# Warren Tools\n- Web-Recherche für Kurse',
-      'USER.md': '# Warren User\n[REDACTED_USER] ist der User.',
+      'USER.md': '# Warren User\nTestUser ist der User.',
       'AGENTS.md': '# Warren Rules\nSei fundiert und direkt.',
       'MEMORY.md': '# Warren Memory\nWarren-spezifische Fakten.',
     })
@@ -289,7 +289,7 @@ describe('assembleSystemPrompt with persona', () => {
       expect(prompt).not.toContain('Be helpful.')
 
       // Persona USER.md should be used
-      expect(prompt).toContain('[REDACTED_USER] ist der User.')
+      expect(prompt).toContain('TestUser ist der User.')
 
       // Global memory should still be present
       expect(prompt).toContain('Global facts.')
