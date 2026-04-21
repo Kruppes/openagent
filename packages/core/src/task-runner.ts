@@ -41,9 +41,9 @@ export interface TaskRunnerOptions {
   /** Memory directory reference for task agent system prompt */
   memoryDir?: string
   /** Callback when a task completes/fails — delivers the injection message */
-  onTaskComplete: (taskId: string, injection: string) => void
+  onTaskComplete: (taskId: string, injection: string, agentId: string | null) => void
   /** Callback when a task pauses with a question — delivers the injection message */
-  onTaskPaused?: (taskId: string, injection: string) => void
+  onTaskPaused?: (taskId: string, injection: string, agentId: string | null) => void
   /** Callback for periodic status updates */
   onStatusUpdate?: (taskId: string, statusMessage: string) => void
   /** Loop detection configuration */
@@ -395,7 +395,7 @@ export class TaskRunner {
         const startedAt = task.startedAt ? new Date(task.startedAt).getTime() : Date.now()
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskPaused(taskId, injection, summary)
+        this.notifyTaskPaused(taskId, injection, summary, task.agentId)
         unsubscribe()
         return
       }
@@ -433,7 +433,7 @@ export class TaskRunner {
         const startedAt = task.startedAt ? new Date(task.startedAt).getTime() : Date.now()
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskComplete(taskId, injection, task.status, task.resultSummary ?? undefined)
+        this.notifyTaskComplete(taskId, injection, task.status, task.resultSummary ?? undefined, task.agentId)
       }
     } catch (err) {
       // Task failed
@@ -460,7 +460,7 @@ export class TaskRunner {
         const startedAt = task.startedAt ? new Date(task.startedAt).getTime() : Date.now()
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskComplete(taskId, injection, "failed", errorMessage)
+        this.notifyTaskComplete(taskId, injection, "failed", errorMessage, task.agentId)
       }
     }
   }
@@ -750,7 +750,7 @@ export class TaskRunner {
 ${reason}
 Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
 </task_injection>`
-      this.notifyTaskComplete(taskId, injection, "failed", reason)
+      this.notifyTaskComplete(taskId, injection, "failed", reason, task.agentId)
     }
   }
 
@@ -789,19 +789,23 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
   }
 
   /**
-   * Notify completion/failure and emit status change
+   * Notify completion/failure and emit status change.
+   * Passes the task's agentId so the caller can route the notification
+   * to the correct persona runtime and Telegram bot.
    */
-  private notifyTaskComplete(taskId: string, injection: string, status: string, message?: string): void {
+  private notifyTaskComplete(taskId: string, injection: string, status: string, message?: string, agentId?: string | null): void {
     this.emitStatusChange(taskId, status, message)
-    this.options.onTaskComplete(taskId, injection)
+    this.options.onTaskComplete(taskId, injection, agentId ?? null)
   }
 
   /**
-   * Notify task paused and emit status change
+   * Notify task paused and emit status change.
+   * Passes the task's agentId so the caller can route the notification
+   * to the correct persona runtime and Telegram bot.
    */
-  private notifyTaskPaused(taskId: string, injection: string, message?: string): void {
+  private notifyTaskPaused(taskId: string, injection: string, message?: string, agentId?: string | null): void {
     this.emitStatusChange(taskId, 'paused', message)
-    this.options.onTaskPaused?.(taskId, injection)
+    this.options.onTaskPaused?.(taskId, injection, agentId ?? null)
   }
 
   /**
@@ -833,7 +837,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
       const startedAt = task.startedAt ? new Date(task.startedAt).getTime() : Date.now()
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
       const injection = formatTaskInjection(task, durationMinutes)
-      this.notifyTaskComplete(taskId, injection, "failed", reason)
+      this.notifyTaskComplete(taskId, injection, "failed", reason, task.agentId)
     }
   }
 
@@ -1008,7 +1012,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
         const startedAt = task.startedAt ? new Date(task.startedAt).getTime() : Date.now()
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskPaused(taskId, injection, summary)
+        this.notifyTaskPaused(taskId, injection, summary, task.agentId)
         return
       }
 
@@ -1043,7 +1047,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
       const startedAt = task.startedAt ? new Date(task.startedAt).getTime() : Date.now()
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
       const injection = formatTaskInjection(task, durationMinutes)
-      this.notifyTaskComplete(taskId, injection, task.status, task.resultSummary ?? undefined)
+      this.notifyTaskComplete(taskId, injection, task.status, task.resultSummary ?? undefined, task.agentId)
     } catch (err) {
       unsubscribe()
       this.cleanupRunningTask(taskId)
@@ -1067,7 +1071,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
       const startedAt = task.startedAt ? new Date(task.startedAt).getTime() : Date.now()
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
       const injection = formatTaskInjection(task, durationMinutes)
-      this.notifyTaskComplete(taskId, injection, "failed", errorMessage)
+      this.notifyTaskComplete(taskId, injection, "failed", errorMessage, task.agentId)
     }
   }
 
@@ -1104,7 +1108,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
           const startedAt = task.startedAt ? new Date(task.startedAt).getTime() : Date.now()
           const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
           const injection = formatTaskInjection(task, durationMinutes)
-          this.notifyTaskComplete(taskId, injection, "failed", "timeout — no response received")
+          this.notifyTaskComplete(taskId, injection, "failed", "timeout — no response received", task.agentId)
         }
 
         cleanedCount++

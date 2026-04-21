@@ -289,6 +289,7 @@ describe('TaskStore', () => {
       expect(colNames).toContain('started_at')
       expect(colNames).toContain('completed_at')
       expect(colNames).toContain('session_id')
+      expect(colNames).toContain('agent_id')
     })
   })
 })

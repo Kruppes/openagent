@@ -26,6 +26,7 @@ export interface Task {
   startedAt: string | null
   completedAt: string | null
   sessionId: string | null
+  agentId: string | null
 }
 
 export interface CreateTaskInput {
@@ -37,6 +38,7 @@ export interface CreateTaskInput {
   model?: string
   maxDurationMinutes?: number
   sessionId?: string
+  agentId?: string
 }
 
 export interface UpdateTaskInput {
@@ -84,6 +86,7 @@ interface TaskRow {
   started_at: string | null
   completed_at: string | null
   session_id: string | null
+  agent_id: string | null
 }
 
 function rowToTask(row: TaskRow): Task {
@@ -108,6 +111,7 @@ function rowToTask(row: TaskRow): Task {
     startedAt: row.started_at,
     completedAt: row.completed_at,
     sessionId: row.session_id,
+    agentId: row.agent_id,
   }
 }
 
@@ -144,6 +148,14 @@ export function initTasksTable(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
     CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
   `)
+
+  // Additive migration: add agent_id column for multi-persona task routing
+  try {
+    db.exec(`ALTER TABLE tasks ADD COLUMN agent_id TEXT DEFAULT NULL`)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON tasks(agent_id)`)
+  } catch {
+    // Column already exists — idempotent
+  }
 }
 
 /**
@@ -160,8 +172,8 @@ export class TaskStore {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
     this.db.prepare(`
-      INSERT INTO tasks (id, name, prompt, status, trigger_type, trigger_source_id, provider, model, max_duration_minutes, session_id, created_at)
-      VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, name, prompt, status, trigger_type, trigger_source_id, provider, model, max_duration_minutes, session_id, agent_id, created_at)
+      VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.name,
@@ -172,6 +184,7 @@ export class TaskStore {
       input.model ?? null,
       input.maxDurationMinutes ?? null,
       input.sessionId ?? null,
+      input.agentId ?? null,
       now,
     )
 

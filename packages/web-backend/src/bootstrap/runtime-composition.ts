@@ -281,7 +281,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
   const pendingTaskInjections: PendingTaskInjectionMeta[] = []
 
-  function handleTaskNotification(taskId: string, injection: string, taskRuntime: TaskRuntimeTaskBoundary): void {
+  function handleTaskNotification(taskId: string, injection: string, taskRuntime: TaskRuntimeTaskBoundary, agentIdFromTask: string | null): void {
     const task = taskRuntime.getById(taskId)
     if (!task) return
 
@@ -289,15 +289,27 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     const endMs = task.completedAt ? new Date(task.completedAt.replace(' ', 'T') + 'Z').getTime() : Date.now()
     const durationMinutes = Math.round((endMs - startMs) / 60000)
 
+    // Use the task's agentId for routing: inject into the correct persona runtime
+    const effectiveAgentId = agentIdFromTask ?? task.agentId ?? undefined
     const userId = 1
     if (agentCore) {
       pendingTaskInjections.push({ taskId: task.id, userId })
-      agentCore.injectTaskResult(injection).catch(err => {
+      agentCore.injectTaskResult(injection, effectiveAgentId).catch(err => {
         logger.error(`[openagent] Failed to inject task result for ${taskId}:`, err)
         const idx = pendingTaskInjections.findIndex(p => p.taskId === task.id)
         if (idx >= 0) pendingTaskInjections.splice(idx, 1)
       })
     }
+
+    // Resolve the correct Telegram bot for this task's persona.
+    // If the task has an agentId and a TelegramBotPool is running,
+    // use the bot bound to that agentId. Otherwise fall back to the primary bot.
+    const resolvedTelegramBot = (() => {
+      if (effectiveAgentId && telegramBotPool) {
+        return telegramBotPool.getBot(effectiveAgentId) ?? telegramBot
+      }
+      return telegramBot
+    })()
 
     deliverTaskNotification({
       db,
@@ -306,6 +318,11 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       durationMinutes,
       telegramDeliveryMode: (taskSettings.telegramDelivery as 'auto' | 'always') ?? 'auto',
       hasActiveWebSocket: (uid: number) => wsChatPresenceChecker?.(uid) ?? false,
+      sendTelegram: resolvedTelegramBot ? async (message: string) => {
+        const chatId = resolvedTelegramBot.getTelegramChatIdForUser(userId)
+        if (!chatId) return false
+        return resolvedTelegramBot.sendTaskNotification(chatId, message)
+      } : undefined,
       broadcastEvent: (event) => {
         chatEventBus.broadcast({
           type: event.type,
@@ -335,11 +352,11 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         createReadChatHistoryTool({ db }),
         createSearchMemoriesTool({ db }),
       ],
-      onTaskComplete: (taskId: string, injection: string) => {
-        handleTaskNotification(taskId, injection, taskRuntime.tasks)
+      onTaskComplete: (taskId: string, injection: string, agentId: string | null) => {
+        handleTaskNotification(taskId, injection, taskRuntime.tasks, agentId)
       },
-      onTaskPaused: (taskId: string, injection: string) => {
-        handleTaskNotification(taskId, injection, taskRuntime.tasks)
+      onTaskPaused: (taskId: string, injection: string, agentId: string | null) => {
+        handleTaskNotification(taskId, injection, taskRuntime.tasks, agentId)
       },
       loopDetection: taskSettings.loopDetection.enabled
         ? {
@@ -476,6 +493,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     resolveProvider,
     defaultMaxDurationMinutes: taskSettings.maxDurationMinutes,
     maxDurationMinutesCap: taskSettings.maxDurationMinutes * 2,
+    getCurrentAgentId: () => agentCore?.getCurrentToolAgentId(),
   }
 
   const cronjobToolsOptions = {

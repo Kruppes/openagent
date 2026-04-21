@@ -270,6 +270,13 @@ export function initDatabase(dbPath?: string): Database {
     CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id);
   `)
 
+  // Migration: add agent_id column to tasks table for multi-persona task routing
+  const taskCols = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[]
+  if (!taskCols.some(c => c.name === 'agent_id')) {
+    db.exec(`ALTER TABLE tasks ADD COLUMN agent_id TEXT DEFAULT NULL`)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON tasks(agent_id)`)
+  }
+
   // Create scheduled_tasks table
   db.exec(`
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
