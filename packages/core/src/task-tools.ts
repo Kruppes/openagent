@@ -14,6 +14,8 @@ export interface TaskToolsOptions {
   defaultMaxDurationMinutes: number
   /** Hard cap on max duration from settings */
   maxDurationMinutesCap: number
+  /** Get the current agent ID (for multi-persona task routing) */
+  getCurrentAgentId?: () => string | undefined
 }
 
 /**
@@ -165,6 +167,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           model: provider.defaultModel,
           maxDurationMinutes: maxDuration,
           sessionId: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          agentId: options.getCurrentAgentId?.() ?? undefined,
         })
 
         // Start the task

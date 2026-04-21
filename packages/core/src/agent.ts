@@ -55,6 +55,7 @@ export class AgentCore {
   private onTaskInjectionChunkCallback?: (chunk: ResponseChunk) => void
   private messageQueue: MessageQueue
   private currentToolUserId?: number
+  private currentToolAgentId?: string
   private runtimes: Map<string, AgentRuntimeBoundary> = new Map()
   private runtimeOptions: AgentCoreOptions
 
@@ -149,6 +150,14 @@ export class AgentCore {
   }
 
   /**
+   * Get the agentId of the currently executing runtime (set during tool execution).
+   * Returns undefined when no runtime is actively processing.
+   */
+  getCurrentToolAgentId(): string | undefined {
+    return this.currentToolAgentId
+  }
+
+  /**
    * Hot-swap the provider at runtime while preserving conversation context.
    * Updates ALL runtimes so every persona uses the new provider.
    */
@@ -192,17 +201,20 @@ export class AgentCore {
   }
 
   /**
-   * Inject a task result into the main agent via the message queue.
-   * The injection is queued and processed sequentially like any other message.
+   * Inject a task result into the agent via the message queue.
+   * When agentId is provided, the injection is routed to that persona's runtime
+   * instead of defaulting to 'main'. This enables multi-persona task routing:
+   * a task started by Warren routes its completion back to Warren's runtime.
    */
-  async injectTaskResult(injection: string): Promise<void> {
+  async injectTaskResult(injection: string, agentId?: string): Promise<void> {
+    const targetAgentId = agentId ?? 'main'
     const iterable = await this.messageQueue.enqueue<ResponseChunk>(
       'task_injection',
       'system',
       injection,
       'task',
       (msg) => {
-        return this.processTaskInjection(msg.payload.text)
+        return this.processTaskInjection(msg.payload.text, targetAgentId)
       },
     )
     // Stream response chunks via callback (if set), otherwise drain silently
@@ -268,6 +280,7 @@ export class AgentCore {
     const enrichedText = fileHints.length > 0 ? `${text}\n\n${fileHints.join('\n')}` : text
     const parsedUserId = Number.parseInt(userId, 10)
     this.currentToolUserId = Number.isFinite(parsedUserId) ? parsedUserId : undefined
+    this.currentToolAgentId = agentId
 
     // Route to the correct runtime for this agentId
     const runtime = this.getOrCreateRuntime(agentId)
@@ -276,6 +289,7 @@ export class AgentCore {
       yield* runtime.streamPrompt(enrichedText, sessionId, images.length > 0 ? images : undefined)
     } finally {
       this.currentToolUserId = undefined
+      this.currentToolAgentId = undefined
     }
 
     // Count the agent response as a message too
@@ -284,21 +298,24 @@ export class AgentCore {
 
   /**
    * Process a task injection by sending it through the runtime boundary.
+   * Routes to the correct persona runtime based on agentId.
    */
-  private async *processTaskInjection(injection: string): AsyncIterable<ResponseChunk> {
+  private async *processTaskInjection(injection: string, agentId: string = 'main'): AsyncIterable<ResponseChunk> {
     const session = this.sessionManager.getOrCreateSession('system', 'task')
     const sessionId = session.id
 
     this.sessionManager.recordMessage('system')
     this.currentToolUserId = undefined
+    this.currentToolAgentId = agentId
 
-    // Task injections go to the 'main' runtime
-    const runtime = this.getOrCreateRuntime('main')
+    // Route task injection to the originating persona's runtime
+    const runtime = this.getOrCreateRuntime(agentId)
 
     try {
       yield* runtime.streamPrompt(injection, sessionId)
     } finally {
       this.currentToolUserId = undefined
+      this.currentToolAgentId = undefined
     }
 
     // Count the agent response as a message too
