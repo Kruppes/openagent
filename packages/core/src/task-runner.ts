@@ -535,9 +535,10 @@ export class TaskRunner {
               model: assistantMsg.model,
             })
             try {
+              const taskAgentId = this.store.getById(runningTask.taskId)?.agentId ?? 'main'
               this.db.prepare(
-                'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-              ).run(sessionId, null, 'assistant', content, metadata)
+                'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+              ).run(sessionId, null, 'assistant', content, metadata, taskAgentId)
             } catch {
               // Ignore persistence errors — non-critical
             }

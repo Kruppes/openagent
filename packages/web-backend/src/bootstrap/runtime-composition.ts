@@ -55,6 +55,7 @@ import { RuntimeMetrics } from '../runtime-metrics.js'
 interface PendingTaskInjectionMeta {
   taskId: string
   userId: number
+  agentId: string
 }
 
 interface TaskSettings {
@@ -293,7 +294,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     const effectiveAgentId = agentIdFromTask ?? task.agentId ?? undefined
     const userId = 1
     if (agentCore) {
-      pendingTaskInjections.push({ taskId: task.id, userId })
+      pendingTaskInjections.push({ taskId: task.id, userId, agentId: effectiveAgentId ?? 'main' })
       agentCore.injectTaskResult(injection, effectiveAgentId).catch(err => {
         logger.error(`[openagent] Failed to inject task result for ${taskId}:`, err)
         const idx = pendingTaskInjections.findIndex(p => p.taskId === task.id)
@@ -565,13 +566,13 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   function wireAgentCoreEvents(): void {
     if (!agentCore) return
 
-    agentCore.setOnSessionEnd((userId: string, sessionId: string, summary: string | null) => {
+    agentCore.setOnSessionEnd((userId: string, sessionId: string, summary: string | null, agentId: string) => {
       const numericUserId = parseNumericUserId(userId)
 
       const dividerMetadata = JSON.stringify({ type: 'session_divider', summary: summary ?? null })
       db.prepare(
-        'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-      ).run(sessionId, numericUserId, 'system', summary ?? '', dividerMetadata)
+        'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(sessionId, numericUserId, 'system', summary ?? '', dividerMetadata, agentId)
 
       if (numericUserId !== null) {
         chatEventBus.broadcast({
@@ -604,16 +605,26 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         lastTelegramDelivered = false
 
         const pendingMeta = pendingTaskInjections.shift()
-        if (pendingMeta && telegramBot && responseText) {
+
+        // Resolve the correct Telegram bot for this task's persona.
+        // Deterministic routing: agentId is data passed through pendingTaskInjections, never LLM-inferred.
+        const resolvedBot = (() => {
+          if (pendingMeta?.agentId && telegramBotPool) {
+            return telegramBotPool.getBot(pendingMeta.agentId) ?? telegramBot
+          }
+          return telegramBot
+        })()
+
+        if (pendingMeta && resolvedBot && responseText) {
           const shouldSend =
             taskSettings.telegramDelivery === 'always' ||
             (taskSettings.telegramDelivery === 'auto' && !(wsChatPresenceChecker?.(pendingMeta.userId) ?? false))
 
           if (shouldSend) {
-            const chatId = telegramBot.getTelegramChatIdForUser(pendingMeta.userId)
+            const chatId = resolvedBot.getTelegramChatIdForUser(pendingMeta.userId)
             if (chatId) {
               lastTelegramDelivered = true
-              telegramBot.sendFormattedMessage(chatId, responseText).catch(err => {
+              resolvedBot.sendFormattedMessage(chatId, responseText).catch(err => {
                 logger.error(`[openagent] Failed to send Telegram for task ${pendingMeta.taskId}:`, err)
               })
             }
@@ -622,10 +633,16 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
         if (responseText) {
           try {
+            // Use the real session for this user+agent pair instead of a pseudo task-injection-<ts> ID.
+            // agentId is deterministically sourced from the task's persona.
+            const taskAgentId = pendingMeta?.agentId ?? 'main'
+            const taskSession = agentCore!.getSessionManager().getOrCreateSession(
+              String(pendingMeta?.userId ?? 1), 'task', taskAgentId
+            )
             const metadata = JSON.stringify({ type: 'task_injection_response', telegramDelivered: lastTelegramDelivered })
             db.prepare(
-              'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-            ).run(`task-injection-${Date.now()}`, 1, 'assistant', responseText, metadata)
+              'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+            ).run(taskSession.id, pendingMeta?.userId ?? 1, 'assistant', responseText, metadata, taskAgentId)
           } catch (err) {
             logger.error('[openagent] Failed to persist task injection response:', err)
           }

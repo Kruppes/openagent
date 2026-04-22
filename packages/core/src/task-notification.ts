@@ -96,8 +96,8 @@ export function persistTaskResultMessage(
   const sessionId = `task-result-${task.id}`
 
   db.prepare(
-    'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-  ).run(sessionId, userId, 'system', content, metadata)
+    'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(sessionId, userId, 'system', content, metadata, task.agentId ?? 'main')
 }
 
 export type TelegramDeliveryMode = 'auto' | 'always'

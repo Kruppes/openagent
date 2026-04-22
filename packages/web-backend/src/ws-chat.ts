@@ -65,10 +65,12 @@ function saveChatMessage(
   role: 'user' | 'assistant' | 'tool' | 'system',
   content: string,
   metadata?: string,
+  // TODO: multi-persona web UI (Phase 7) — pass actual agentId when web supports persona switching
+  agentId: string = 'main',
 ): void {
   db.prepare(
-    'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-  ).run(sessionId, userId, role, content, metadata ?? null)
+    'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(sessionId, userId, role, content, metadata ?? null, agentId)
 }
 
 export interface WebSocketChatResult {
