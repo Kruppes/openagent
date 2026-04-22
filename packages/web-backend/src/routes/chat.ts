@@ -31,9 +31,11 @@ export function createChatRouter(db: Database): Router {
     }))
 
     const metadata = uploads.length > 0 ? serializeUploadsMetadata(uploads) : null
+    // TODO: multi-persona web UI (Phase 7) — pass actual agentId when web supports persona switching
+    const agentId = 'main'
     db.prepare(
-      'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-    ).run(sessionId, userId, 'user', text, metadata)
+      'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(sessionId, userId, 'user', text, metadata, agentId)
 
     res.status(201).json({
       message: {

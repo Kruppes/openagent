@@ -782,8 +782,8 @@ export class TelegramBot {
       const messageText = caption || upload.originalName
 
       if (this.db && numericUserId) {
-        this.db.prepare('INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)')
-          .run(sessionId, numericUserId, 'user', messageText, serializeUploadsMetadata([upload]))
+        this.db.prepare('INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(sessionId, numericUserId, 'user', messageText, serializeUploadsMetadata([upload]), this.agentId)
       }
 
       this.onChatEvent?.({ type: 'user_message', userId: numericUserId, sessionId, text: messageText, senderName: this.getSenderName(ctx), agentId: this.agentId })
@@ -991,8 +991,8 @@ export class TelegramBot {
     // Skip if this came from handleIncomingAttachment (already saved)
     if (this.db && numericUserId && !attachments?.length) {
       this.db.prepare(
-        'INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, ?, ?, ?)'
-      ).run(sessionId, numericUserId, 'user', text)
+        'INSERT INTO chat_messages (session_id, user_id, role, content, agent_id) VALUES (?, ?, ?, ?, ?)'
+      ).run(sessionId, numericUserId, 'user', text, this.agentId)
     }
 
     // Broadcast user message event (skip if already broadcast by attachment handler)
@@ -1055,8 +1055,8 @@ export class TelegramBot {
               toolIsError: chunk.toolIsError ?? false,
             })
             this.db.prepare(
-              'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-            ).run(sessionId, numericUserId, 'tool', `Tool: ${toolName}`, metadata)
+              'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+            ).run(sessionId, numericUserId, 'tool', `Tool: ${toolName}`, metadata, this.agentId)
             pendingToolCalls.delete(chunk.toolCallId)
           }
 
@@ -1100,8 +1100,8 @@ export class TelegramBot {
       // Save assistant response to chat_messages (if linked to a web user)
       if (this.db && numericUserId && fullResponse.trim()) {
         this.db.prepare(
-          'INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, ?, ?, ?)'
-        ).run(sessionId, numericUserId, 'assistant', fullResponse.trim())
+          'INSERT INTO chat_messages (session_id, user_id, role, content, agent_id) VALUES (?, ?, ?, ?, ?)'
+        ).run(sessionId, numericUserId, 'assistant', fullResponse.trim(), this.agentId)
       }
     } catch (err) {
       if (state.abortRequested) {
@@ -1328,8 +1328,8 @@ export class TelegramBot {
 
     try {
       this.db.prepare(
-        'INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, ?, ?, ?)'
-      ).run(sessionId, userId, 'assistant', text)
+        'INSERT INTO chat_messages (session_id, user_id, role, content, agent_id) VALUES (?, ?, ?, ?, ?)'
+      ).run(sessionId, userId, 'assistant', text, this.agentId)
     } catch (err) {
       console.error(`[telegram] Failed to persist outbound Telegram message for user ${userId}:`, err)
     }
