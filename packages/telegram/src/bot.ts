@@ -3,8 +3,10 @@ import path from 'node:path'
 import { Bot, GrammyError, HttpError, InputFile } from 'grammy'
 import type { Context } from 'grammy'
 import type { AgentCore, Database } from '@openagent/core'
-import { loadConfig, saveUpload, serializeUploadsMetadata, parseUploadsMetadata, loadSttSettings, transcribeAudio, loadProviders, setActiveProvider, updateProvider, setActiveModel, getActiveModelId } from '@openagent/core'
+import { loadConfig, saveUpload, serializeUploadsMetadata, parseUploadsMetadata, loadSttSettings, transcribeAudio, loadProviders, setActiveProvider, updateProvider, setActiveModel, getActiveModelId, stripMarkdownForTts, splitTextForTts, loadVoiceTelegramSettings } from '@openagent/core'
 import type { UploadDescriptor } from '@openagent/core'
+import { VoiceModeManager } from './voice-mode.js'
+import { TtsClient } from './tts-client.js'
 
 /**
  * Telegram config stored in /data/config/telegram.json
@@ -230,7 +232,7 @@ function getChatKey(ctx: Context): string {
 }
 
 function isHandledCommand(text: string): boolean {
-  return /^\/(start|new|stop|kill)(?:@[\w_]+)?\b/i.test(text.trim())
+  return /^\/(start|new|stop|kill|voice|voice_on|voice_off|voice_status|model)(?:@[\w_]+)?\b/i.test(text.trim())
 }
 
 function normalizeCommand(text: string): string {
@@ -270,6 +272,8 @@ export class TelegramBot {
   private onQueueDepthChanged?: (queueDepth: number) => void
   private onChatEvent?: (event: TelegramChatEvent) => void
   private onActiveProviderChanged?: () => void
+  private voiceModeManager = new VoiceModeManager()
+  private ttsClient: TtsClient | null = null
 
   constructor(options: TelegramBotOptions) {
     this.agentCore = options.agentCore
@@ -287,6 +291,20 @@ export class TelegramBot {
     }
 
     this.bot = new Bot(this.config.botToken)
+
+    // Initialize TTS client for voice messages
+    try {
+      const voiceSettings = loadVoiceTelegramSettings(loadConfig)
+      if (voiceSettings.enabled) {
+        this.ttsClient = new TtsClient({
+          baseUrl: voiceSettings.ttsUrl,
+          timeoutMs: voiceSettings.timeoutMs,
+        })
+      }
+    } catch {
+      // Voice settings not configured — voice features disabled
+    }
+
     this.setupHandlers()
     this.setupErrorHandler()
   }
@@ -394,6 +412,8 @@ export class TelegramBot {
         '`/new` — Start a fresh conversation (summarizes & resets current session)',
         '`/start` — Show this welcome message',
         '`/stop` — Abort the current task and clear queued work',
+        '`/voice` — Nächste Antwort als Sprachnachricht',
+        '`/voice_on` / `/voice_off` — Sprach-Modus dauerhaft an/aus',
         '',
         'Just send me a message to get started!',
       ].join('\n')
@@ -451,6 +471,54 @@ export class TelegramBot {
         console.error('[telegram] Error handling /model command:', err)
         await ctx.reply('⚠️ Error loading providers.')
       }
+    })
+
+    // /voice command - send next response as voice
+    this.bot.command('voice', async (ctx) => {
+      if (!await this.checkAuthorized(ctx)) return
+      if (!this.ttsClient) {
+        await this.safeSendMessage(ctx, '\u{1F507} Voice-Modus ist nicht konfiguriert.')
+        return
+      }
+      const telegramUserId = String(ctx.from?.id ?? '')
+      this.voiceModeManager.setNextAsVoice(telegramUserId)
+      await this.safeSendMessage(ctx, '\u{1F3A4} N\u00e4chste Antwort kommt als Sprachnachricht.')
+    })
+
+    // /voice_on command - enable persistent voice mode
+    this.bot.command('voice_on', async (ctx) => {
+      if (!await this.checkAuthorized(ctx)) return
+      if (!this.ttsClient) {
+        await this.safeSendMessage(ctx, '\u{1F507} Voice-Modus ist nicht konfiguriert.')
+        return
+      }
+      const telegramUserId = String(ctx.from?.id ?? '')
+      this.voiceModeManager.enableToggle(telegramUserId)
+      await this.safeSendMessage(ctx, '\u{1F50A} Voice-Modus aktiviert. Alle Antworten kommen als Sprachnachrichten.\nDeaktivieren mit /voice_off')
+    })
+
+    // /voice_off command - disable persistent voice mode
+    this.bot.command('voice_off', async (ctx) => {
+      if (!await this.checkAuthorized(ctx)) return
+      const telegramUserId = String(ctx.from?.id ?? '')
+      this.voiceModeManager.disableToggle(telegramUserId)
+      await this.safeSendMessage(ctx, '\u{1F507} Voice-Modus deaktiviert. Antworten kommen wieder als Text.')
+    })
+
+    // /voice_status command - show current voice mode
+    this.bot.command('voice_status', async (ctx) => {
+      if (!await this.checkAuthorized(ctx)) return
+      const telegramUserId = String(ctx.from?.id ?? '')
+      const status = this.voiceModeManager.getStatus(telegramUserId)
+      const ttsAvailable = this.ttsClient !== null
+
+      const lines = [
+        `\u{1F3A4} **Voice-Status:**`,
+        `TTS-Service: ${ttsAvailable ? '\u2705 konfiguriert' : '\u274C nicht konfiguriert'}`,
+        `Dauer-Modus: ${status.toggleActive ? '\u{1F50A} aktiv' : '\u{1F507} aus'}`,
+        `N\u00e4chste als Voice: ${status.nextAsVoice ? '\u2705 ja' : '\u274C nein'}`,
+      ]
+      await this.safeSendMessage(ctx, lines.join('\n'))
     })
 
     // Callback: model:back — go back to provider list
@@ -718,6 +786,10 @@ export class TelegramBot {
 
     if (!await this.checkAuthorized(ctx)) return
 
+    // Track that this is a text message (not voice) for context-auto
+    const telegramUserId = String(ctx.from?.id ?? '')
+    this.voiceModeManager.setLastMessageWasVoice(telegramUserId, false)
+
     // Embed reply context so the agent knows what the user is responding to
     let messageText = text
     const replyMsg = ctx.message?.reply_to_message
@@ -831,6 +903,10 @@ export class TelegramBot {
         return
       }
 
+      // Track that last incoming message was voice (for context-auto)
+      const telegramUserId = String(ctx.from?.id ?? '')
+      this.voiceModeManager.setLastMessageWasVoice(telegramUserId, true)
+
       // Prefix with voice indicator and process as normal message
       const text = `🎤 Voice: ${transcript.trim()}`
       this.bufferMessage(ctx, text)
@@ -912,6 +988,64 @@ export class TelegramBot {
       await this.bot.api.sendPhoto(chatId, inputFile)
     } else {
       await this.bot.api.sendDocument(chatId, inputFile)
+    }
+  }
+
+  /**
+   * Try to send a response as voice message(s).
+   * Returns true if voice was sent, false if caller should send as text.
+   */
+  private async trySendAsVoice(ctx: Context, responseText: string): Promise<boolean> {
+    if (!this.ttsClient || !responseText) return false
+
+    const telegramUserId = String(ctx.from?.id ?? '')
+
+    // Load current voice settings
+    let voiceSettings
+    try {
+      voiceSettings = loadVoiceTelegramSettings(loadConfig)
+    } catch {
+      return false
+    }
+
+    if (!voiceSettings.enabled) return false
+
+    const contextAutoEnabled = voiceSettings.triggers.contextAuto
+    const shouldVoice = this.voiceModeManager.shouldSendAsVoice(telegramUserId, responseText.length, contextAutoEnabled)
+
+    if (!shouldVoice) return false
+
+    // Strip markdown and prepare text for TTS
+    const cleanText = stripMarkdownForTts(responseText)
+    if (!cleanText) return false
+
+    try {
+      // Split into chunks if needed
+      const chunks = splitTextForTts(cleanText, voiceSettings.maxChunkLength)
+
+      for (const chunk of chunks) {
+        const result = await this.ttsClient.synthesize(chunk)
+        await this.bot.api.sendVoice(ctx.chat!.id, new InputFile(result.audio, 'response.ogg'))
+
+        if (result.totalTime) {
+          console.log(`[telegram] Voice sent: ${chunk.length} chars, ${result.audioDuration?.toFixed(1)}s audio, ${result.totalTime.toFixed(1)}s total`)
+        }
+      }
+
+      // Consume one-shot flag after successful send
+      this.voiceModeManager.consumeNextAsVoice(telegramUserId)
+      return true
+    } catch (err) {
+      console.error('[telegram] Voice generation failed:', err)
+
+      // Show warning (rate-limited)
+      if (this.voiceModeManager.shouldShowServiceWarning(telegramUserId)) {
+        await this.safeSendMessage(ctx, '\u{1F507} Voice-Service nicht erreichbar \u2014 Antwort kommt als Text.')
+      }
+
+      // Consume one-shot flag even on failure (don't leave it dangling)
+      this.voiceModeManager.consumeNextAsVoice(telegramUserId)
+      return false
     }
   }
 
@@ -1094,7 +1228,21 @@ export class TelegramBot {
       }
 
       if (!state.abortRequested && (fullResponse.trim() || assistantUploads.length > 0)) {
-        await this.sendAssistantResponseToTelegram(ctx.chat!.id, fullResponse, assistantUploads)
+        // Check if this response should be sent as voice
+        const voiceSent = await this.trySendAsVoice(ctx, fullResponse.trim())
+
+        if (!voiceSent) {
+          await this.sendAssistantResponseToTelegram(ctx.chat!.id, fullResponse, assistantUploads)
+        } else if (assistantUploads.length > 0) {
+          // Voice was sent, but also send any file attachments
+          for (const file of assistantUploads) {
+            try {
+              await this.sendUploadToTelegram(ctx.chat!.id, file)
+            } catch (err) {
+              console.error(`[telegram] Failed to send assistant upload to ${ctx.chat!.id}:`, err)
+            }
+          }
+        }
       }
 
       // Save assistant response to chat_messages (if linked to a web user)
@@ -1258,8 +1406,12 @@ export class TelegramBot {
           { command: 'stop', description: 'Stop current task' },
           { command: 'kill', description: 'Force kill current task' },
           { command: 'model', description: 'Switch model / provider' },
+          { command: 'voice', description: 'N\u00e4chste Antwort als Sprachnachricht' },
+          { command: 'voice_on', description: 'Sprach-Modus dauerhaft an' },
+          { command: 'voice_off', description: 'Sprach-Modus aus' },
+          { command: 'voice_status', description: 'Voice-Status anzeigen' },
         ])
-        console.log('✅ Telegram command menu registered (5 commands)')
+        console.log('✅ Telegram command menu registered (9 commands)')
       } catch (err) {
         console.warn('[telegram] Failed to register command menu (non-fatal):', (err as Error).message)
       }

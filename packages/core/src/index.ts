@@ -289,4 +289,6 @@ export type {
 export { createTranscribeAudioTool } from './stt-tool.js'
 export { createSendFileTool } from './send-file-tool.js'
 export type { SendFileToolOptions, FileSenderCallback } from './send-file-tool.js'
+export { stripMarkdownForTts, splitTextForTts, loadVoiceTelegramSettings } from './tts-utils.js'
+export type { VoiceTelegramSettings } from './tts-utils.js'
 
