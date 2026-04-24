@@ -303,6 +303,13 @@ export function initDatabase(dbPath?: string): Database {
     db.exec("ALTER TABLE scheduled_tasks ADD COLUMN action_type TEXT NOT NULL DEFAULT 'task'")
   }
 
+  // Migration: add agent_id column to scheduled_tasks for multi-persona cronjob scoping
+  const scheduledCols2 = db.prepare("PRAGMA table_info(scheduled_tasks)").all() as { name: string }[]
+  if (!scheduledCols2.some(c => c.name === 'agent_id')) {
+    db.exec(`ALTER TABLE scheduled_tasks ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'`)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_agent_id ON scheduled_tasks(agent_id)`)
+  }
+
   // Migration: add 'paused' to tasks status CHECK constraint
   // Test by inserting a paused row — if CHECK fails, recreate the table
   try {

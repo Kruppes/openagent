@@ -349,7 +349,9 @@ export class TaskScheduler {
       provider = this.options.getDefaultProvider()
     }
 
-    // Create task in the task store
+    // Create task in the task store.
+    // Pass agentId so the task routes to the correct persona runtime and Telegram bot.
+    // Pattern: deterministic agent_id from DB, never LLM-inferred (see 501d79d).
     const task = this.taskStore.create({
       name: scheduledTask.name,
       prompt: scheduledTask.prompt,
@@ -358,6 +360,7 @@ export class TaskScheduler {
       provider: provider.name,
       model: provider.defaultModel,
       sessionId: `cronjob-${scheduledTask.id}-${Date.now()}`,
+      agentId: scheduledTask.agentId,
     })
 
     // Update last_run_at on the scheduled task

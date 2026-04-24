@@ -44,13 +44,14 @@ export function createCronjobsRouter(options: CronjobsRouterOptions): Router {
    */
   router.post('/', (req: AuthenticatedRequest, res) => {
     try {
-      const { name, prompt, schedule, actionType, provider, enabled } = req.body as {
+      const { name, prompt, schedule, actionType, provider, enabled, agentId } = req.body as {
         name?: string
         prompt?: string
         schedule?: string
         actionType?: string
         provider?: string
         enabled?: boolean
+        agentId?: string
       }
 
       if (!name || !prompt || !schedule) {
@@ -74,6 +75,7 @@ export function createCronjobsRouter(options: CronjobsRouterOptions): Router {
             actionType: actionType === 'injection' ? 'injection' : 'task',
             provider: provider || undefined,
             enabled: enabled !== undefined ? enabled : true,
+            agentId: agentId || undefined,
           })
         : store.create({
             name,
@@ -82,6 +84,7 @@ export function createCronjobsRouter(options: CronjobsRouterOptions): Router {
             actionType: actionType === 'injection' ? 'injection' : 'task',
             provider: provider || undefined,
             enabled: enabled !== undefined ? enabled : true,
+            agentId: agentId || undefined,
           })
 
       // Register with scheduler boundary when available
@@ -114,7 +117,7 @@ export function createCronjobsRouter(options: CronjobsRouterOptions): Router {
         return
       }
 
-      const { name, prompt, schedule, actionType, provider, enabled, toolsOverride, skillsOverride, systemPromptOverride } = req.body as {
+      const { name, prompt, schedule, actionType, provider, enabled, toolsOverride, skillsOverride, systemPromptOverride, agentId } = req.body as {
         name?: string
         prompt?: string
         schedule?: string
@@ -124,6 +127,7 @@ export function createCronjobsRouter(options: CronjobsRouterOptions): Router {
         toolsOverride?: string | null
         skillsOverride?: string | null
         systemPromptOverride?: string | null
+        agentId?: string
       }
 
       // Validate cron expression if provided
@@ -178,6 +182,7 @@ export function createCronjobsRouter(options: CronjobsRouterOptions): Router {
             toolsOverride: toolsOverride !== undefined ? toolsOverride : undefined,
             skillsOverride: skillsOverride !== undefined ? skillsOverride : undefined,
             systemPromptOverride: systemPromptOverride !== undefined ? systemPromptOverride : undefined,
+            agentId,
           })
         : store.update(id, {
             name,
@@ -189,6 +194,7 @@ export function createCronjobsRouter(options: CronjobsRouterOptions): Router {
             toolsOverride: toolsOverride !== undefined ? toolsOverride : undefined,
             skillsOverride: skillsOverride !== undefined ? skillsOverride : undefined,
             systemPromptOverride: systemPromptOverride !== undefined ? systemPromptOverride : undefined,
+            agentId,
           })
 
       if (!updated) {
