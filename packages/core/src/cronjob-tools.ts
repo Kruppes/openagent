@@ -6,6 +6,8 @@ import { validateCronExpression, cronToHumanReadable, parseCronExpression, getNe
 
 export interface CronjobToolsOptions {
   taskRuntime: TaskRuntimeScheduleBoundary
+  /** Returns the agentId of the currently executing persona runtime */
+  getCurrentAgentId?: () => string | undefined
 }
 
 function looksLikeDynamicTaskRequest(name: string, message: string): boolean {
@@ -57,14 +59,20 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
           description: 'Provider to use for this cronjob. Only specify if the user explicitly requests a specific provider. Only relevant for action_type "task".',
         })
       ),
+      agent_id: Type.Optional(
+        Type.String({
+          description: 'Persona agent ID this cronjob belongs to (e.g. "warren"). Defaults to the current persona. Only specify to override.',
+        })
+      ),
     }),
     execute: async (_toolCallId, params) => {
-      const { prompt, name, schedule, action_type, provider } = params as {
+      const { prompt, name, schedule, action_type, provider, agent_id } = params as {
         prompt: string
         name: string
         schedule: string
         action_type?: string
         provider?: string
+        agent_id?: string
       }
 
       try {
@@ -80,6 +88,9 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
         // Validate action_type
         const actionType: ScheduledTaskActionType = action_type === 'injection' ? 'injection' : 'task'
 
+        // Resolve agentId: explicit param > current persona > 'main'
+        const resolvedAgentId = agent_id ?? options.getCurrentAgentId?.() ?? 'main'
+
         // Create in DB
         const scheduledTask = options.taskRuntime.create({
           name,
@@ -88,6 +99,7 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
           actionType,
           provider: provider ?? undefined,
           enabled: true,
+          agentId: resolvedAgentId,
         })
 
         // Register with scheduler
@@ -100,7 +112,7 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
         return {
           content: [{
             type: 'text' as const,
-            text: `Cronjob created successfully.\n\nID: ${scheduledTask.id}\nName: ${name}\nSchedule: ${humanSchedule} (${schedule})\nAction: ${actionLabel}\n${provider ? `Provider: ${provider}\n` : ''}Status: Enabled\n\nThe cronjob is now active and will run on the specified schedule.`,
+            text: `Cronjob created successfully.\n\nID: ${scheduledTask.id}\nName: ${name}\nSchedule: ${humanSchedule} (${schedule})\nAction: ${actionLabel}\nAgent: ${resolvedAgentId}\n${provider ? `Provider: ${provider}\n` : ''}Status: Enabled\n\nThe cronjob is now active and will run on the specified schedule.`,
           }],
           details: {
             cronjobId: scheduledTask.id,
@@ -108,6 +120,7 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
             schedule,
             humanSchedule,
             actionType,
+            agentId: resolvedAgentId,
             provider: provider ?? null,
           },
         }
@@ -166,9 +179,14 @@ export function editCronjobTool(options: CronjobToolsOptions): AgentTool {
           description: 'Enable or disable the cronjob.',
         })
       ),
+      agent_id: Type.Optional(
+        Type.String({
+          description: 'Change the persona agent ID this cronjob belongs to.',
+        })
+      ),
     }),
     execute: async (_toolCallId, params) => {
-      const { id, prompt, name, schedule, action_type, provider, enabled } = params as {
+      const { id, prompt, name, schedule, action_type, provider, enabled, agent_id } = params as {
         id: string
         prompt?: string
         name?: string
@@ -176,6 +194,7 @@ export function editCronjobTool(options: CronjobToolsOptions): AgentTool {
         action_type?: string
         provider?: string
         enabled?: boolean
+        agent_id?: string
       }
 
       try {
@@ -212,6 +231,7 @@ export function editCronjobTool(options: CronjobToolsOptions): AgentTool {
           actionType,
           provider,
           enabled,
+          agentId: agent_id,
         })
 
         if (!updated) {
@@ -231,7 +251,7 @@ export function editCronjobTool(options: CronjobToolsOptions): AgentTool {
         return {
           content: [{
             type: 'text' as const,
-            text: `Cronjob updated successfully.\n\nID: ${updated.id}\nName: ${updated.name}\nSchedule: ${humanSchedule} (${updated.schedule})\nAction: ${actionLabel}\nProvider: ${updated.provider ?? 'default'}\nStatus: ${updated.enabled ? 'Enabled' : 'Disabled'}`,
+            text: `Cronjob updated successfully.\n\nID: ${updated.id}\nName: ${updated.name}\nSchedule: ${humanSchedule} (${updated.schedule})\nAction: ${actionLabel}\nAgent: ${updated.agentId}\nProvider: ${updated.provider ?? 'default'}\nStatus: ${updated.enabled ? 'Enabled' : 'Disabled'}`,
           }],
           details: {
             cronjobId: updated.id,
@@ -239,6 +259,7 @@ export function editCronjobTool(options: CronjobToolsOptions): AgentTool {
             schedule: updated.schedule,
             humanSchedule,
             actionType: updated.actionType,
+            agentId: updated.agentId,
             provider: updated.provider,
             enabled: updated.enabled,
           },
@@ -393,7 +414,7 @@ export function listCronjobsTool(options: CronjobToolsOptions): AgentTool {
 
           const actionLabel = cj.actionType === 'injection' ? 'injection' : 'task'
 
-          return `\u2022 [${status}] ${cj.name}\n  ID: ${cj.id}\n  Schedule: ${humanSchedule} (${cj.schedule})\n  Action: ${actionLabel}\n  Provider: ${cj.provider ?? 'default'}\n  Last run: ${lastRun}${nextRunsStr}`
+          return `\u2022 [${status}] ${cj.name}\n  ID: ${cj.id}\n  Schedule: ${humanSchedule} (${cj.schedule})\n  Action: ${actionLabel}\n  Agent: ${cj.agentId}\n  Provider: ${cj.provider ?? 'default'}\n  Last run: ${lastRun}${nextRunsStr}`
         })
 
         return {
@@ -450,6 +471,7 @@ export function getCronjobTool(options: CronjobToolsOptions): AgentTool {
           `ID: ${cj.id}`,
           `Schedule: ${humanSchedule} (${cj.schedule})`,
           `Action: ${actionLabel}`,
+          `Agent: ${cj.agentId}`,
           `Provider: ${cj.provider ?? 'default'}`,
           `Last run: ${lastRun}`,
           ``,
@@ -521,6 +543,9 @@ export function createReminderTool(options: CronjobToolsOptions): AgentTool {
           }
         }
 
+        // Resolve agentId: current persona > 'main'
+        const resolvedAgentId = options.getCurrentAgentId?.() ?? 'main'
+
         // Create injection-type scheduled task
         const scheduledTask = options.taskRuntime.create({
           name,
@@ -528,6 +553,7 @@ export function createReminderTool(options: CronjobToolsOptions): AgentTool {
           schedule,
           actionType: 'injection',
           enabled: true,
+          agentId: resolvedAgentId,
         })
 
         // Register with scheduler

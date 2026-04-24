@@ -165,6 +165,42 @@ describe('TaskScheduler', () => {
     })
   })
 
+  describe('agentId routing', () => {
+    it('creates task with agentId from scheduled task', async () => {
+      scheduler.start()
+      const scheduledTask = scheduledTaskStore.create({
+        name: 'Warren Scan',
+        prompt: 'Do portfolio scan',
+        schedule: '0 8 * * *',
+        agentId: 'warren',
+      })
+
+      const taskId = await scheduler.triggerNow(scheduledTask.id)
+      expect(taskId).toBeTruthy()
+
+      // Verify the task record has the correct agentId
+      const task = taskStore.getById(taskId!)
+      expect(task).not.toBeNull()
+      expect(task!.agentId).toBe('warren')
+    })
+
+    it('creates task with default agentId main when not specified', async () => {
+      scheduler.start()
+      const scheduledTask = scheduledTaskStore.create({
+        name: 'Main Scan',
+        prompt: 'Do main scan',
+        schedule: '0 8 * * *',
+      })
+
+      const taskId = await scheduler.triggerNow(scheduledTask.id)
+      expect(taskId).toBeTruthy()
+
+      const task = taskStore.getById(taskId!)
+      expect(task).not.toBeNull()
+      expect(task!.agentId).toBe('main')
+    })
+  })
+
   describe('injection mode', () => {
     let injectionCallback: ReturnType<typeof vi.fn>
     let injectionScheduler: TaskScheduler
@@ -257,6 +293,23 @@ describe('TaskScheduler', () => {
       expect(passedTask.name).toBe('XML Check')
       expect(passedTask.prompt).toBe('Check this!')
       expect(passedTask.actionType).toBe('injection')
+    })
+
+    it('fires injection with correct agentId on the scheduledTask', async () => {
+      injectionScheduler.start()
+      const scheduledTask = scheduledTaskStore.create({
+        name: 'Warren Reminder',
+        prompt: 'Check portfolio!',
+        schedule: '0 9 * * *',
+        actionType: 'injection',
+        agentId: 'warren',
+      })
+
+      await injectionScheduler.triggerNow(scheduledTask.id)
+
+      expect(injectionCallback).toHaveBeenCalledTimes(1)
+      const passedTask = injectionCallback.mock.calls[0][0]
+      expect(passedTask.agentId).toBe('warren')
     })
 
     it('deduplication: does not re-fire if lastRunAt is very recent', async () => {

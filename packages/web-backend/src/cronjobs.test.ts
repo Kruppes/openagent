@@ -279,6 +279,69 @@ describe('Cronjobs REST API', () => {
     })
   })
 
+  describe('agentId support', () => {
+    let agentCronjobId: string
+
+    it('creates a cronjob with agentId', async () => {
+      const res = await apiFetch('/api/cronjobs', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'Warren Portfolio Scan',
+          prompt: 'Scan portfolio',
+          schedule: '0 8 * * 1-5',
+          agentId: 'warren',
+        }),
+      })
+
+      expect(res.status).toBe(201)
+      const body = await res.json() as { cronjob: { id: string; agentId: string } }
+      expect(body.cronjob.agentId).toBe('warren')
+      agentCronjobId = body.cronjob.id
+    })
+
+    it('defaults agentId to main when not provided', async () => {
+      const res = await apiFetch('/api/cronjobs', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'Main Job',
+          prompt: 'Do main things',
+          schedule: '0 9 * * *',
+        }),
+      })
+
+      expect(res.status).toBe(201)
+      const body = await res.json() as { cronjob: { agentId: string } }
+      expect(body.cronjob.agentId).toBe('main')
+    })
+
+    it('lists cronjobs with agentId', async () => {
+      const res = await apiFetch('/api/cronjobs')
+      expect(res.status).toBe(200)
+      const body = await res.json() as { cronjobs: { id: string; agentId: string }[] }
+      const warrenJob = body.cronjobs.find(c => c.id === agentCronjobId)
+      expect(warrenJob).toBeTruthy()
+      expect(warrenJob!.agentId).toBe('warren')
+    })
+
+    it('updates agentId via PUT', async () => {
+      const res = await apiFetch(`/api/cronjobs/${agentCronjobId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ agentId: 'main' }),
+      })
+
+      expect(res.status).toBe(200)
+      const body = await res.json() as { cronjob: { agentId: string } }
+      expect(body.cronjob.agentId).toBe('main')
+    })
+
+    it('cleans up agentId test cronjob', async () => {
+      const res = await apiFetch(`/api/cronjobs/${agentCronjobId}`, {
+        method: 'DELETE',
+      })
+      expect(res.status).toBe(200)
+    })
+  })
+
   describe('JWT protection', () => {
     it('rejects requests without auth', async () => {
       const res = await fetch(`${baseUrl}/api/cronjobs`)

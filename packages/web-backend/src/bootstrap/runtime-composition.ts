@@ -499,6 +499,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
   const cronjobToolsOptions = {
     taskRuntime: taskRuntime.schedules,
+    getCurrentAgentId: () => agentCore?.getCurrentToolAgentId(),
   }
 
   const agentTools = [

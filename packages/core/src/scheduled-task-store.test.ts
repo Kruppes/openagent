@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { initDatabase } from './database.js'
-import { ScheduledTaskStore } from './scheduled-task-store.js'
+import { ScheduledTaskStore, initScheduledTasksTable } from './scheduled-task-store.js'
 import type { Database } from './database.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -201,6 +201,74 @@ describe('ScheduledTaskStore', () => {
     })
   })
 
+  describe('agentId', () => {
+    it('defaults to main when not specified', () => {
+      const task = store.create({
+        name: 'Default Agent',
+        prompt: 'test',
+        schedule: '0 9 * * *',
+      })
+      expect(task.agentId).toBe('main')
+    })
+
+    it('creates with explicit agentId', () => {
+      const task = store.create({
+        name: 'Warren Job',
+        prompt: 'portfolio scan',
+        schedule: '0 8 * * *',
+        agentId: 'warren',
+      })
+      expect(task.agentId).toBe('warren')
+    })
+
+    it('persists agentId through getById', () => {
+      const created = store.create({
+        name: 'Persist Test',
+        prompt: 'test',
+        schedule: '0 9 * * *',
+        agentId: 'warren',
+      })
+      const found = store.getById(created.id)
+      expect(found).not.toBeNull()
+      expect(found!.agentId).toBe('warren')
+    })
+
+    it('updates agentId', () => {
+      const task = store.create({
+        name: 'Update Agent',
+        prompt: 'test',
+        schedule: '0 9 * * *',
+        agentId: 'main',
+      })
+      const updated = store.update(task.id, { agentId: 'warren' })
+      expect(updated!.agentId).toBe('warren')
+    })
+
+    it('lists tasks with correct agentId', () => {
+      store.create({ name: 'Main Job', prompt: 'test', schedule: '0 9 * * *' })
+      store.create({ name: 'Warren Job', prompt: 'test', schedule: '0 10 * * *', agentId: 'warren' })
+
+      const tasks = store.list()
+      const mainJobs = tasks.filter(t => t.agentId === 'main')
+      const warrenJobs = tasks.filter(t => t.agentId === 'warren')
+      expect(mainJobs.length).toBeGreaterThanOrEqual(1)
+      expect(warrenJobs).toHaveLength(1)
+      expect(warrenJobs[0].name).toBe('Warren Job')
+    })
+
+    it('preserves agentId when updating other fields', () => {
+      const task = store.create({
+        name: 'Preserve Agent',
+        prompt: 'test',
+        schedule: '0 9 * * *',
+        agentId: 'warren',
+      })
+      const updated = store.update(task.id, { name: 'New Name' })
+      expect(updated!.name).toBe('New Name')
+      expect(updated!.agentId).toBe('warren')
+    })
+  })
+
   describe('schema', () => {
     it('has all required columns', () => {
       const cols = db.prepare("PRAGMA table_info(scheduled_tasks)").all() as { name: string }[]
@@ -216,11 +284,22 @@ describe('ScheduledTaskStore', () => {
       expect(colNames).toContain('tools_override')
       expect(colNames).toContain('skills_override')
       expect(colNames).toContain('system_prompt_override')
+      expect(colNames).toContain('agent_id')
       expect(colNames).toContain('last_run_at')
       expect(colNames).toContain('last_run_task_id')
       expect(colNames).toContain('last_run_status')
       expect(colNames).toContain('created_at')
       expect(colNames).toContain('updated_at')
+    })
+
+    it('migration is idempotent — calling initScheduledTasksTable twice does not error', () => {
+      // initDatabase already called initScheduledTasksTable once.
+      // Call it again to verify idempotency.
+      expect(() => initScheduledTasksTable(db)).not.toThrow()
+
+      // Verify schema still intact
+      const cols = db.prepare("PRAGMA table_info(scheduled_tasks)").all() as { name: string }[]
+      expect(cols.map(c => c.name)).toContain('agent_id')
     })
   })
 })
