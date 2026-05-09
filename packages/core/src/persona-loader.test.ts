@@ -25,7 +25,7 @@ const configMock = await import('./config.js') as unknown as {
 let tempDir: string
 
 beforeEach(() => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openagent-persona-test-'))
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'axiom-persona-test-'))
   clearPersonaCache()
   configMock._setMultiPersonaEnabled(false)
 })

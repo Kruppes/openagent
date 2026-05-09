@@ -19,15 +19,15 @@ process.env.HOST ||= '0.0.0.0'
 process.env.NUXT_PUBLIC_API_BASE ||= 'http://localhost:3000'
 process.env.ADMIN_USERNAME ||= 'admin'
 process.env.ADMIN_PASSWORD ||= 'admin'
-process.env.JWT_SECRET ||= 'openagent-dev-secret-change-me'
+process.env.JWT_SECRET ||= 'axiom-dev-secret-change-me'
 
 fs.mkdirSync(resolvedDataDir, { recursive: true })
 
-console.log('[openagent] Starting local dev environment...')
-console.log(`[openagent] DATA_DIR=${process.env.DATA_DIR}`)
-console.log(`[openagent] Backend:  http://localhost:${process.env.PORT}`)
-console.log('[openagent] Frontend: http://localhost:3001')
-console.log('[openagent] Core:     watching for changes (tsc --watch)')
+console.log('[axiom] Starting local dev environment...')
+console.log(`[axiom] DATA_DIR=${process.env.DATA_DIR}`)
+console.log(`[axiom] Backend:  http://localhost:${process.env.PORT}`)
+console.log('[axiom] Frontend: http://localhost:3001')
+console.log('[axiom] Core:     watching for changes (tsc --watch)')
 
 const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 const baseOpts = {
@@ -65,7 +65,7 @@ let exitCode = 0
 function shutdown(signal = 'SIGTERM') {
   if (shuttingDown) return
   shuttingDown = true
-  console.log(`\n[openagent] Shutting down dev environment...`)
+  console.log(`\n[axiom] Shutting down dev environment...`)
 
   // Send signal to each process group
   for (const child of children) {

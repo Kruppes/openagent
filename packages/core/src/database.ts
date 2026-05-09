@@ -126,13 +126,30 @@ export function initDatabase(dbPath?: string): Database {
   const resolvedPath = dbPath ?? path.join(
     process.env.DATA_DIR ?? '/data',
     'db',
-    'openagent.db'
+    'axiom.db'
   )
 
   // Ensure directory exists
   const dir = path.dirname(resolvedPath)
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
+  }
+
+  // Migration: rename legacy openagent.db → axiom.db if present.
+  // Older installs created /data/db/openagent.db; the default path is now
+  // axiom.db. Without this, upgraded containers would silently start with
+  // an empty database even though the /data volume was preserved.
+  if (!fs.existsSync(resolvedPath)) {
+    const legacyPath = path.join(dir, 'openagent.db')
+    if (fs.existsSync(legacyPath)) {
+      fs.renameSync(legacyPath, resolvedPath)
+      for (const suffix of ['-wal', '-shm']) {
+        if (fs.existsSync(legacyPath + suffix)) {
+          fs.renameSync(legacyPath + suffix, resolvedPath + suffix)
+        }
+      }
+      console.log(`[db] Migrated legacy database: openagent.db → ${path.basename(resolvedPath)}`)
+    }
   }
 
   db = new BetterSqlite3(resolvedPath)

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-function-type, @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import type { AgentCore, ResponseChunk } from '@openagent/core'
+import type { AgentCore, ResponseChunk } from '@axiom/core'
 
 // Mock grammy before importing the module under test
 vi.mock('grammy', () => {
@@ -63,8 +63,8 @@ vi.mock('grammy', () => {
   }
 })
 
-// Mock @openagent/core
-vi.mock('@openagent/core', () => ({
+// Mock @axiom/core
+vi.mock('@axiom/core', () => ({
   loadConfig: vi.fn((filename: string) => {
     if (filename === 'settings.json') {
       return { batchingDelayMs: 2500 }
@@ -91,7 +91,7 @@ vi.mock('@openagent/core', () => ({
 
 import { TelegramBot, createTelegramBot } from './bot.js'
 import type { TelegramConfig } from './bot.js'
-import { loadConfig } from '@openagent/core'
+import { loadConfig } from '@axiom/core'
 
 function createMockAgentCore(): AgentCore {
   const mockSessionManager = {

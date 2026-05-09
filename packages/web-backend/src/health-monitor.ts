@@ -1,4 +1,4 @@
-import type { Database, ProviderConfig, ProviderHealthCheckResult, ProviderHealthStatus, OperatingMode } from '@openagent/core'
+import type { Database, ProviderConfig, ProviderHealthCheckResult, ProviderHealthStatus, OperatingMode } from '@axiom/core'
 import {
   getActiveProvider,
   performProviderHealthCheck,
@@ -7,7 +7,7 @@ import {
   ensureConfigTemplates,
   loadConfig,
   ProviderManager,
-} from '@openagent/core'
+} from '@axiom/core'
 
 interface TelegramConfig {
   enabled: boolean
@@ -539,10 +539,10 @@ export class HealthMonitorService {
 
         if (!response.ok) {
           const body = await response.text().catch(() => '')
-          console.error(`[openagent] Failed to send Telegram health alert to ${chatId}: ${response.status} ${body}`)
+          console.error(`[axiom] Failed to send Telegram health alert to ${chatId}: ${response.status} ${body}`)
         }
       } catch (err) {
-        console.error(`[openagent] Failed to send Telegram health alert to ${chatId}:`, err)
+        console.error(`[axiom] Failed to send Telegram health alert to ${chatId}:`, err)
       }
     }))
   }

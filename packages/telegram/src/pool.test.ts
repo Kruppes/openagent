@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { AgentCore } from '@openagent/core'
+import type { AgentCore } from '@axiom/core'
 
 // Mock grammy before importing the module under test
 vi.mock('grammy', () => {
@@ -42,8 +42,8 @@ vi.mock('grammy', () => {
   }
 })
 
-// Mock @openagent/core
-vi.mock('@openagent/core', async () => {
+// Mock @axiom/core
+vi.mock('@axiom/core', async () => {
   let mockMultiPersonaEnabled = false
   let mockTelegramConfig: Record<string, unknown> = {
     enabled: false,
@@ -86,10 +86,10 @@ vi.mock('@openagent/core', async () => {
 })
 
 import { normalizeToPoolConfig, TelegramBotPool } from './pool.js'
-import { loadConfig, loadMultiPersonaSettings } from '@openagent/core'
+import { loadConfig, loadMultiPersonaSettings } from '@axiom/core'
 
 // Access mock helpers
-const coreMock = await import('@openagent/core') as unknown as {
+const coreMock = await import('@axiom/core') as unknown as {
   _setMultiPersonaEnabled: (enabled: boolean) => void
   _setTelegramConfig: (config: Record<string, unknown>) => void
 }

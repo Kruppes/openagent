@@ -1,8 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import express, { type Router } from 'express'
-import type { Database } from '@openagent/core'
-import type { TelegramBot } from '@openagent/telegram'
+import type { Database } from '@axiom/core'
+import type { TelegramBot } from '@axiom/telegram'
 import { jwtMiddleware, verifyToken } from '../auth.js'
 import type { AuthenticatedRequest } from '../auth.js'
 

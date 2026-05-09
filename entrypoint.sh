@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "[openagent] Starting entrypoint..."
+echo "[axiom] Starting entrypoint..."
 
 # Ensure data directories exist
 mkdir -p /data/db /data/config /data/memory/daily /data/skills /data/skills_agent /data/npm-global /workspace
@@ -16,7 +16,7 @@ if [ -d /app/skills_agent_defaults ]; then
         target="/data/skills_agent/$skill_name"
         if [ ! -d "$target" ]; then
             cp -r "$skill_dir" "$target"
-            echo "[openagent] Seeded agent skill: $skill_name"
+            echo "[axiom] Seeded agent skill: $skill_name"
         fi
     done
 fi
@@ -33,7 +33,7 @@ if [ -d /app/agents-seed ]; then
         target="/data/agents/$agent_id"
         if [ ! -d "$target" ]; then
             cp -r "$agent_dir" "$target"
-            echo "[openagent] Seeded persona files: $agent_id"
+            echo "[axiom] Seeded persona files: $agent_id"
         else
             # Copy only files that don't exist yet (never overwrite user edits)
             for src_file in "$agent_dir"*; do
@@ -41,7 +41,7 @@ if [ -d /app/agents-seed ]; then
                 filename=$(basename "$src_file")
                 if [ ! -f "$target/$filename" ]; then
                     cp "$src_file" "$target/$filename"
-                    echo "[openagent] Seeded persona file: $agent_id/$filename"
+                    echo "[axiom] Seeded persona file: $agent_id/$filename"
                 fi
             done
         fi
@@ -50,12 +50,12 @@ fi
 
 # Fix ownership on first run or after migration from root user
 if [ "$(stat -c '%u' /workspace)" = "0" ]; then
-    echo "[openagent] Migrating workspace ownership to agent user..."
+    echo "[axiom] Migrating workspace ownership to agent user..."
     chown -R agent:agent /workspace
 fi
 
 if [ "$(stat -c '%u' /data)" = "0" ]; then
-    echo "[openagent] Migrating data ownership to agent user..."
+    echo "[axiom] Migrating data ownership to agent user..."
     chown -R agent:agent /data
 fi
 
@@ -78,7 +78,7 @@ fi
 # ---------------------------------------------------------------------------
 AGENT_PACKAGES="/data/agent-packages.txt"
 if [ -f "$AGENT_PACKAGES" ] && [ -s "$AGENT_PACKAGES" ]; then
-    echo "[openagent] Found tracked agent packages, checking for restoration..."
+    echo "[axiom] Found tracked agent packages, checking for restoration..."
     apt-get update -qq 2>/dev/null
 
     available=()
@@ -104,12 +104,12 @@ if [ -f "$AGENT_PACKAGES" ] && [ -s "$AGENT_PACKAGES" ]; then
     done < "$AGENT_PACKAGES"
 
     if [ ${#already_installed[@]} -gt 0 ]; then
-        echo "[openagent] ${#already_installed[@]} package(s) already in base image, skipping."
+        echo "[axiom] ${#already_installed[@]} package(s) already in base image, skipping."
     fi
 
     if [ ${#unavailable[@]} -gt 0 ]; then
-        echo "[openagent] ⚠ ${#unavailable[@]} package(s) no longer available (skipped):"
-        printf "[openagent]   - %s\n" "${unavailable[@]}"
+        echo "[axiom] ⚠ ${#unavailable[@]} package(s) no longer available (skipped):"
+        printf "[axiom]   - %s\n" "${unavailable[@]}"
         # Append to log for historical reference
         {
             echo "--- $(date '+%Y-%m-%d %H:%M:%S') --- Image: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"') ---"
@@ -118,25 +118,25 @@ if [ -f "$AGENT_PACKAGES" ] && [ -s "$AGENT_PACKAGES" ]; then
     fi
 
     if [ ${#available[@]} -gt 0 ]; then
-        echo "[openagent] Restoring ${#available[@]} agent-installed package(s)..."
+        echo "[axiom] Restoring ${#available[@]} agent-installed package(s)..."
         failed=()
         idx=0
         for pkg in "${available[@]}"; do
             idx=$((idx + 1))
-            echo "[openagent]   [$idx/${#available[@]}] Installing $pkg..."
+            echo "[axiom]   [$idx/${#available[@]}] Installing $pkg..."
             if ! apt-get install -y "$pkg" > /dev/null 2>&1; then
                 failed+=("$pkg")
-                echo "[openagent]   ✗ Failed: $pkg"
+                echo "[axiom]   ✗ Failed: $pkg"
             fi
         done
         succeeded=$(( ${#available[@]} - ${#failed[@]} ))
         if [ ${#failed[@]} -eq 0 ]; then
-            echo "[openagent] ✓ All ${#available[@]} packages restored successfully."
+            echo "[axiom] ✓ All ${#available[@]} packages restored successfully."
         else
-            echo "[openagent] ✓ Restored $succeeded/${#available[@]} packages (${#failed[@]} failed)."
+            echo "[axiom] ✓ Restored $succeeded/${#available[@]} packages (${#failed[@]} failed)."
         fi
     else
-        echo "[openagent] No packages need restoration."
+        echo "[axiom] No packages need restoration."
     fi
 
     rm -f /tmp/apt-restore.log
@@ -147,7 +147,7 @@ fi
 # ---------------------------------------------------------------------------
 PACKAGES_FILE="/data/packages.txt"
 if [ -f "$PACKAGES_FILE" ] && [ -s "$PACKAGES_FILE" ]; then
-    echo "[openagent] Found $PACKAGES_FILE, checking for packages to install..."
+    echo "[axiom] Found $PACKAGES_FILE, checking for packages to install..."
     apt-get update -qq 2>/dev/null
 
     while IFS= read -r package || [ -n "$package" ]; do
@@ -164,18 +164,18 @@ if [ -f "$PACKAGES_FILE" ] && [ -s "$PACKAGES_FILE" ]; then
 
         # Check availability
         if ! apt-cache show "$package" > /dev/null 2>&1; then
-            echo "[openagent] ⚠ Package '$package' not available, skipping."
+            echo "[axiom] ⚠ Package '$package' not available, skipping."
             continue
         fi
 
-        echo "[openagent] Installing package: $package"
+        echo "[axiom] Installing package: $package"
         apt-get install -y "$package" 2>/dev/null || {
-            echo "[openagent] ⚠ Failed to install package '$package'"
+            echo "[axiom] ⚠ Failed to install package '$package'"
         }
     done < "$PACKAGES_FILE"
-    echo "[openagent] User-defined package installation complete."
+    echo "[axiom] User-defined package installation complete."
 else
-    echo "[openagent] No $PACKAGES_FILE found, skipping."
+    echo "[axiom] No $PACKAGES_FILE found, skipping."
 fi
 
 # Clean up apt cache to save space
@@ -183,6 +183,6 @@ apt-get clean 2>/dev/null || true
 rm -rf /var/lib/apt/lists/*
 
 # Start the application as agent user
-echo "[openagent] Starting server as agent user..."
+echo "[axiom] Starting server as agent user..."
 cd /app
 exec gosu agent npm run start --workspace=packages/web-backend

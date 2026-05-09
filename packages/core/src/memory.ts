@@ -7,7 +7,7 @@ import type { PersonaContext } from './persona-loader.js'
 
 const SOUL_TEMPLATE = `# Soul
 
-You are openagent, a helpful AI assistant.
+You are axiom, a helpful AI assistant.
 
 ## Personality
 - Friendly and professional
@@ -246,7 +246,7 @@ export function ensureMemoryStructure(memoryDir?: string): void {
   // Migrate projects/ → wiki/ if projects/ exists and wiki/ does not
   if (fs.existsSync(legacyProjectsDir) && !fs.existsSync(wikiDir)) {
     fs.renameSync(legacyProjectsDir, wikiDir)
-    console.log('[openagent] Migrated memory/projects/ to memory/wiki/')
+    console.log('[axiom] Migrated memory/projects/ to memory/wiki/')
   } else if (!fs.existsSync(wikiDir)) {
     fs.mkdirSync(wikiDir, { recursive: true })
   }
@@ -322,7 +322,7 @@ export function ensureWikiDir(memoryDir?: string): string {
   // Migrate projects/ → wiki/ if projects/ exists and wiki/ does not
   if (fs.existsSync(legacyProjectsDir) && !fs.existsSync(wikiDir)) {
     fs.renameSync(legacyProjectsDir, wikiDir)
-    console.log('[openagent] Migrated memory/projects/ to memory/wiki/')
+    console.log('[axiom] Migrated memory/projects/ to memory/wiki/')
   } else if (!fs.existsSync(wikiDir)) {
     fs.mkdirSync(wikiDir, { recursive: true })
   }

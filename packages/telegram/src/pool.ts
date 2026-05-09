@@ -1,5 +1,5 @@
-import { loadConfig, loadMultiPersonaSettings } from '@openagent/core'
-import type { AgentCore, Database } from '@openagent/core'
+import { loadConfig, loadMultiPersonaSettings } from '@axiom/core'
+import type { AgentCore, Database } from '@axiom/core'
 import { TelegramBot } from './bot.js'
 import type { TelegramConfig, TelegramChatEvent } from './bot.js'
 

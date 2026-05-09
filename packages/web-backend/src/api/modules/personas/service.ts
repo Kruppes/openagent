@@ -1,9 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { loadMultiPersonaSettings, loadConfig, invalidatePersonaCache } from '@openagent/core'
-import type { PersonaFilesContract as PersonaFiles, PersonaListItemContract as PersonaListItem, PersonaDetailContract as PersonaDetail } from '@openagent/core/contracts'
-import { PERSONA_FILE_NAMES, PERSONA_FILE_KEYS } from '@openagent/core/contracts'
-import type { PersonaFileKey } from '@openagent/core/contracts'
+import { loadMultiPersonaSettings, loadConfig, invalidatePersonaCache } from '@axiom/core'
+import type { PersonaFilesContract as PersonaFiles, PersonaListItemContract as PersonaListItem, PersonaDetailContract as PersonaDetail } from '@axiom/core/contracts'
+import { PERSONA_FILE_NAMES, PERSONA_FILE_KEYS } from '@axiom/core/contracts'
+import type { PersonaFileKey } from '@axiom/core/contracts'
 
 /** Map file name → key in PersonaFiles */
 const FILE_TO_KEY: Record<string, PersonaFileKey> = {

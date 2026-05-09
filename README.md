@@ -1,9 +1,9 @@
-# OpenAgent
+# Axiom
 
 > **There are many agents, but this one is mine.**  
 > *Inspired by [pi.dev](https://pi.dev)*
 
-OpenAgent is not just an AI agent platform. It is a foundation for building an agent that becomes truly your own through
+Axiom is not just an AI agent platform. It is a foundation for building an agent that becomes truly your own through
 customization, memory, workflow integration, and continued collaboration.
 
 It combines a minimal core with practical interfaces like the web UI and Telegram, while leaving room for extension,
@@ -13,7 +13,7 @@ adapt to one person’s way of thinking, building, and working.
 Over time, an agent should become more than a generic tool. It should become a reliable working partner. Shaped by use,
 improved through iteration, and aligned with the needs of its user.
 
-**OpenAgent is not only what it is built on. It is also what you make of it.**
+**Axiom is not only what it is built on. It is also what you make of it.**
 
 ## Quick Start with Docker
 
@@ -38,7 +38,7 @@ JWT_SECRET=your-jwt-secret
 docker compose up -d
 ```
 
-OpenAgent will be available at `http://localhost:3000`.
+Axiom will be available at `http://localhost:3000`.
 
 ### Pin a specific version
 

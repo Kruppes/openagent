@@ -34,7 +34,7 @@ describe('memory', () => {
   })
 
   function makeTmpDir(): string {
-    tmpDir = path.join(os.tmpdir(), `openagent-memory-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    tmpDir = path.join(os.tmpdir(), `axiom-memory-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     return tmpDir
   }
 

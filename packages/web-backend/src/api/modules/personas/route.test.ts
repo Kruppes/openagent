@@ -4,7 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 
 // Mock config before any imports
-vi.mock('@openagent/core', async (importOriginal) => {
+vi.mock('@axiom/core', async (importOriginal) => {
   const original = await importOriginal() as Record<string, unknown>
   return {
     ...original,
@@ -20,7 +20,7 @@ vi.mock('@openagent/core', async (importOriginal) => {
   }
 })
 
-import { parseAgentId, parsePersonaFiles, parseCreatePersonaPayload, parseUpdatePersonaPayload } from '@openagent/core/contracts'
+import { parseAgentId, parsePersonaFiles, parseCreatePersonaPayload, parseUpdatePersonaPayload } from '@axiom/core/contracts'
 import * as service from './service.js'
 
 describe('personas API', () => {
@@ -29,7 +29,7 @@ describe('personas API', () => {
   let originalDataDir: string | undefined
 
   beforeEach(() => {
-    tmpDir = path.join(os.tmpdir(), `openagent-personas-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    tmpDir = path.join(os.tmpdir(), `axiom-personas-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     agentsDir = path.join(tmpDir, 'agents')
     fs.mkdirSync(agentsDir, { recursive: true })
     originalDataDir = process.env.DATA_DIR
@@ -258,7 +258,7 @@ describe('personas API', () => {
 
   describe('telegram binding guard on delete (3.7)', () => {
     it('refuses deletion when persona has active telegram binding', async () => {
-      const { loadConfig } = await import('@openagent/core')
+      const { loadConfig } = await import('@axiom/core')
       const mockLoadConfig = vi.mocked(loadConfig)
 
       // Create persona

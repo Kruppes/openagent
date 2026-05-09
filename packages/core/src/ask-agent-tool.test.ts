@@ -63,7 +63,7 @@ describe('ask-agent-tool', () => {
   let agentsDir: string
 
   beforeEach(() => {
-    tmpDir = path.join(os.tmpdir(), `openagent-ask-agent-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    tmpDir = path.join(os.tmpdir(), `axiom-ask-agent-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     agentsDir = path.join(tmpDir, 'agents')
     fs.mkdirSync(agentsDir, { recursive: true })
     mockCompleteSimple.mockReset()

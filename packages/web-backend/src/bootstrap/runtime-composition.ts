@@ -35,7 +35,7 @@ import {
   ProviderManager,
   removeCronjobTool,
   TaskEventBus,
-} from '@openagent/core'
+} from '@axiom/core'
 import type {
   BuiltinToolsConfig,
   Database,
@@ -43,9 +43,9 @@ import type {
   ProviderConfig,
   TaskRuntimeBoundary,
   TaskRuntimeTaskBoundary,
-} from '@openagent/core'
-import { createTelegramBot, TelegramBotPool, createTelegramBotPool } from '@openagent/telegram'
-import type { TelegramBot, TelegramChatEvent } from '@openagent/telegram'
+} from '@axiom/core'
+import { createTelegramBot, TelegramBotPool, createTelegramBotPool } from '@axiom/telegram'
+import type { TelegramBot, TelegramChatEvent } from '@axiom/telegram'
 import { ChatEventBus } from '../chat-event-bus.js'
 import { triggerFactExtractionForSessionEnd } from '../fact-extraction-session-end.js'
 import { HealthMonitorService } from '../health-monitor.js'
@@ -222,21 +222,21 @@ function parseNumericUserId(userId: string): number | null {
 export async function createRuntimeComposition(options: RuntimeCompositionOptions = {}): Promise<RuntimeComposition> {
   const logger = options.logger ?? console
 
-  logger.log('[openagent] Initializing database...')
+  logger.log('[axiom] Initializing database...')
   const db = initDatabase()
 
-  logger.log('[openagent] Ensuring config templates...')
+  logger.log('[axiom] Ensuring config templates...')
   ensureConfigTemplates()
 
-  logger.log('[openagent] Ensuring memory structure...')
+  logger.log('[axiom] Ensuring memory structure...')
   ensureMemoryStructure()
   ensureConfigStructure()
 
-  logger.log('[openagent] Injecting global secrets into environment...')
+  logger.log('[axiom] Injecting global secrets into environment...')
   injectSecretsIntoEnv()
 
   // Clean up zombie tasks from previous run (tasks that were running/paused when the server crashed)
-  logger.log('[openagent] Cleaning up zombie tasks from previous run...')
+  logger.log('[axiom] Cleaning up zombie tasks from previous run...')
   db.prepare(
     `UPDATE tasks SET status='failed', result_status='failed', result_summary='Aborted: server restarted', error_message='Aborted: server restarted', completed_at=datetime('now') WHERE status IN ('running', 'paused')`
   ).run()
@@ -296,7 +296,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     if (agentCore) {
       pendingTaskInjections.push({ taskId: task.id, userId, agentId: effectiveAgentId ?? 'main' })
       agentCore.injectTaskResult(injection, effectiveAgentId).catch(err => {
-        logger.error(`[openagent] Failed to inject task result for ${taskId}:`, err)
+        logger.error(`[axiom] Failed to inject task result for ${taskId}:`, err)
         const idx = pendingTaskInjections.findIndex(p => p.taskId === task.id)
         if (idx >= 0) pendingTaskInjections.splice(idx, 1)
       })
@@ -338,7 +338,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         })
       },
     }).catch(err => {
-      logger.error(`[openagent] Failed to deliver task notification for ${taskId}:`, err)
+      logger.error(`[axiom] Failed to deliver task notification for ${taskId}:`, err)
     })
   }
 
@@ -413,7 +413,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
                 status: ok ? 'success' : 'error',
               })
             }).catch(err => {
-              logger.error(`[openagent] Failed to send Telegram reminder for ${scheduledTask.id}:`, err)
+              logger.error(`[axiom] Failed to send Telegram reminder for ${scheduledTask.id}:`, err)
               logToolCall(db, {
                 sessionId: `cronjob-${scheduledTask.id}`,
                 toolName: 'reminder_delivery',
@@ -431,10 +431,10 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
                 status: 'error',
               })
             })
-            logger.log(`[openagent] Reminder "${scheduledTask.name}" sent via Telegram to chat ${chatId}`)
+            logger.log(`[axiom] Reminder "${scheduledTask.name}" sent via Telegram to chat ${chatId}`)
           } else {
             deliveryResults.push('telegram: no linked chat for this user (requires approved telegram_users entry linked to the same user_id)')
-            logger.log(`[openagent] No linked Telegram chat for user ${userId}`)
+            logger.log(`[axiom] No linked Telegram chat for user ${userId}`)
 
             chatEventBus.broadcast({
               type: 'system',
@@ -459,7 +459,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
           }
         } else {
           deliveryResults.push('telegram: bot not available')
-          logger.log(`[openagent] No Telegram bot available for reminder "${scheduledTask.name}"`)
+          logger.log(`[axiom] No Telegram bot available for reminder "${scheduledTask.name}"`)
 
           chatEventBus.broadcast({
             type: 'system',
@@ -483,7 +483,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
           })
         }
 
-        logger.log(`[openagent] Reminder "${scheduledTask.name}" fired for user ${userId}`)
+        logger.log(`[axiom] Reminder "${scheduledTask.name}" fired for user ${userId}`)
       },
     },
   })
@@ -626,7 +626,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
             if (chatId) {
               lastTelegramDelivered = true
               resolvedBot.sendFormattedMessage(chatId, responseText).catch(err => {
-                logger.error(`[openagent] Failed to send Telegram for task ${pendingMeta.taskId}:`, err)
+                logger.error(`[axiom] Failed to send Telegram for task ${pendingMeta.taskId}:`, err)
               })
             }
           }
@@ -645,7 +645,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
               'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
             ).run(taskSession.id, pendingMeta?.userId ?? 1, 'assistant', responseText, metadata, taskAgentId)
           } catch (err) {
-            logger.error('[openagent] Failed to persist task injection response:', err)
+            logger.error('[axiom] Failed to persist task injection response:', err)
           }
         }
       }
@@ -669,7 +669,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
   async function restartTelegramBot(): Promise<void> {
     if (!agentCore) {
-      logger.warn('[openagent] Cannot start Telegram bot: no agent core initialized')
+      logger.warn('[axiom] Cannot start Telegram bot: no agent core initialized')
       return
     }
 
@@ -704,7 +704,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         onChatEvent: onTelegramChatEvent,
         onActiveProviderChanged: () => {
           initOrUpdateAgentCore().catch((err) => {
-            logger.error('[openagent] Error initializing agent core after Telegram provider change:', err)
+            logger.error('[axiom] Error initializing agent core after Telegram provider change:', err)
           })
         },
       })
@@ -714,31 +714,31 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         // Set telegramBot to primary bot for backward compatibility
         telegramBot = telegramBotPool.getPrimaryBot()
         if (telegramBotPool.hasRunningBots()) {
-          logger.log('[openagent] Telegram bot pool (re)started')
+          logger.log('[axiom] Telegram bot pool (re)started')
         } else {
-          logger.log('[openagent] Telegram bot pool: no bots configured or all disabled')
+          logger.log('[axiom] Telegram bot pool: no bots configured or all disabled')
         }
       } catch (err) {
-        logger.error('[openagent] Failed to start Telegram bot pool:', err)
+        logger.error('[axiom] Failed to start Telegram bot pool:', err)
         telegramBotPool = null
       }
     } else {
       // Legacy single-bot mode
       telegramBot = createTelegramBot(agentCore, db, onTelegramChatEvent, () => {
         initOrUpdateAgentCore().catch((err) => {
-          logger.error('[openagent] Error initializing agent core after Telegram provider change:', err)
+          logger.error('[axiom] Error initializing agent core after Telegram provider change:', err)
         })
       })
       if (telegramBot) {
         try {
           await telegramBot.start()
-          logger.log('[openagent] Telegram bot (re)started')
+          logger.log('[axiom] Telegram bot (re)started')
         } catch (err) {
-          logger.error('[openagent] Failed to start Telegram bot:', err)
+          logger.error('[axiom] Failed to start Telegram bot:', err)
           telegramBot = null
         }
       } else {
-        logger.log('[openagent] Telegram bot disabled or not configured')
+        logger.log('[axiom] Telegram bot disabled or not configured')
       }
     }
   }
@@ -746,7 +746,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   async function initOrUpdateAgentCore(): Promise<void> {
     const provider = getActiveProvider()
     if (!provider) {
-      logger.warn('[openagent] No provider configured — chat will be unavailable. Configure a provider in Settings.')
+      logger.warn('[axiom] No provider configured — chat will be unavailable. Configure a provider in Settings.')
       return
     }
 
@@ -757,13 +757,13 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         try {
           await previousAgentCore.endAllSessions()
         } catch (err) {
-          logger.error('[openagent] Failed to end sessions before provider change:', err)
+          logger.error('[axiom] Failed to end sessions before provider change:', err)
         }
 
         try {
           await previousAgentCore.dispose()
         } catch (err) {
-          logger.error('[openagent] Failed to dispose previous agent core:', err)
+          logger.error('[axiom] Failed to dispose previous agent core:', err)
         }
       }
 
@@ -793,9 +793,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
           const fbModelId = getFallbackModelId()
           const key = await getApiKeyForProvider(effectiveProvider)
           agentCore.swapProvider(effectiveProvider, key, fbModelId ?? undefined)
-          logger.log(`[openagent] Swapped to fallback provider: ${effectiveProvider.name} (${fbModelId ?? effectiveProvider.defaultModel})`)
+          logger.log(`[axiom] Swapped to fallback provider: ${effectiveProvider.name} (${fbModelId ?? effectiveProvider.defaultModel})`)
         } catch (err) {
-          logger.error('[openagent] Failed to swap to fallback provider:', err)
+          logger.error('[axiom] Failed to swap to fallback provider:', err)
         }
       })
 
@@ -808,9 +808,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
           const actModelId = getActiveModelId()
           const key = await getApiKeyForProvider(effectiveProvider)
           agentCore.swapProvider(effectiveProvider, key, actModelId ?? undefined)
-          logger.log(`[openagent] Swapped back to primary provider: ${effectiveProvider.name} (${actModelId ?? effectiveProvider.defaultModel})`)
+          logger.log(`[axiom] Swapped back to primary provider: ${effectiveProvider.name} (${actModelId ?? effectiveProvider.defaultModel})`)
         } catch (err) {
-          logger.error('[openagent] Failed to swap to primary provider:', err)
+          logger.error('[axiom] Failed to swap to primary provider:', err)
         }
       })
 
@@ -820,17 +820,17 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       wireAgentCoreEvents()
 
       agentCore.init().catch(err => {
-        logger.error('[openagent] Error during agentCore.init():', err)
+        logger.error('[axiom] Error during agentCore.init():', err)
       })
 
       await restartTelegramBot()
 
-      logger.log(`[openagent] Agent core initialized with provider: ${provider.name} (${provider.defaultModel})`)
+      logger.log(`[axiom] Agent core initialized with provider: ${provider.name} (${provider.defaultModel})`)
       if (fallbackProvider) {
-        logger.log(`[openagent] Fallback provider configured: ${fallbackProvider.name} (${fallbackProvider.defaultModel})`)
+        logger.log(`[axiom] Fallback provider configured: ${fallbackProvider.name} (${fallbackProvider.defaultModel})`)
       }
     } catch (err) {
-      logger.error('[openagent] Failed to initialize agent core:', err)
+      logger.error('[axiom] Failed to initialize agent core:', err)
     }
   }
 
@@ -849,12 +849,12 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     getTelegramBot: () => telegramBot,
     onTelegramSettingsChanged: () => {
       restartTelegramBot().catch((err) => {
-        logger.error('[openagent] Error restarting Telegram bot:', err)
+        logger.error('[axiom] Error restarting Telegram bot:', err)
       })
     },
     onActiveProviderChanged: () => {
       initOrUpdateAgentCore().catch((err) => {
-        logger.error('[openagent] Error initializing agent core after provider change:', err)
+        logger.error('[axiom] Error initializing agent core after provider change:', err)
       })
     },
     setWebSocketChatPresenceChecker: (checker) => {
