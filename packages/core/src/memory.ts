@@ -623,6 +623,12 @@ export function assembleSystemPrompt(options?: {
   currentUser?: { username: string }
   builtinTools?: BuiltinToolsPromptConfig
   agentSkillsDir?: string
+  /**
+   * List of configured LLM providers and their enabled models. Surfaced to
+   * the agent so it can map natural-language model requests ("kimi-k2.6")
+   * onto the correct provider when creating tasks/cronjobs.
+   */
+  availableProviders?: Array<{ name: string; models: string[] }>
   /** Agent ID for multi-persona support. When set and persona files exist, they override global files. */
   agentId?: string
 }): string {
@@ -739,6 +745,21 @@ ${dailyContext}
     }
 
     sections.push(`<available_tools>\nYou have the following tools available. Use the right tool for the job.\n\n${toolLines.join('\n')}\n</available_tools>`)
+  }
+
+  // 7b. Configured LLM providers — lets the agent map a user-specified
+  // model name (e.g. "kimi-k2.6") onto the correct provider when calling
+  // create_task / create_cronjob / edit_cronjob.
+  if (options?.availableProviders && options.availableProviders.length > 0) {
+    const providerLines = options.availableProviders.map(p => {
+      const modelsStr = p.models.length > 0 ? p.models.join(', ') : '(no models configured)'
+      return `- **${p.name}**: ${modelsStr}`
+    }).join('\n')
+    sections.push(`<available_providers>
+Configured LLM providers and their enabled models. When the user asks for a task or cronjob with a specific model or provider, pass it through to \`create_task\` / \`create_cronjob\` / \`edit_cronjob\` via their \`provider\` and/or \`model\` parameters. If the user names only a model (e.g. "run this with kimi-k2.6"), pass it as \`model\` — the tool will auto-detect the provider from this list.
+
+${providerLines}
+</available_providers>`)
   }
 
   // 8. Wiki pages (LLM-maintained knowledge base)

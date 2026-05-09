@@ -7,7 +7,7 @@ import type { Api, AssistantMessage, Message, ImageContent, Model } from '@mario
 import { Type } from '@mariozechner/pi-ai'
 import type { Database } from './database.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
-import { estimateCost, getApiKeyForProvider, buildModel } from './provider-config.js'
+import { estimateCost, getApiKeyForProvider, buildModel, loadProvidersDecrypted } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import type { ProviderManager } from './provider-manager.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
@@ -618,6 +618,24 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       stt: { enabled: sttEnabled },
     }
 
+    // Provider/model inventory — lets the agent translate user-facing
+    // model names (e.g. "kimi-k2.6") into the right `provider`/`model`
+    // arguments for create_task / create_cronjob / edit_cronjob.
+    // Failures here are non-fatal: the tools still work without this hint,
+    // the agent just has to guess or ask.
+    let availableProviders: Array<{ name: string; models: string[] }> | undefined
+    try {
+      const file = loadProvidersDecrypted()
+      availableProviders = file.providers.map(p => ({
+        name: p.name,
+        models: p.enabledModels && p.enabledModels.length > 0
+          ? p.enabledModels
+          : [p.defaultModel],
+      }))
+    } catch {
+      availableProviders = undefined
+    }
+
     let prompt = assembleSystemPrompt({
       memoryDir: this.memoryDir,
       baseInstructions: this.baseInstructions,
@@ -630,6 +648,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       builtinTools: builtinToolsPromptConfig,
       agentSkillsDir: getAgentSkillsDir(),
       agentId,
+      availableProviders,
     })
 
     // Append cross-persona hint when ask_agent is available
