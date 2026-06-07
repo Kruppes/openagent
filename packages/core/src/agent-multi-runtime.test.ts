@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { AgentTool } from '@mariozechner/pi-agent-core'
+import type { AgentTool } from '@earendil-works/pi-agent-core'
 
 /**
  * Track all created MockAgent instances by agentId.
@@ -17,7 +17,7 @@ const mockAgentInstances = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('@mariozechner/pi-agent-core', () => {
+vi.mock('@earendil-works/pi-agent-core', () => {
   class MockAgent {
     public state: { systemPrompt: string; model: unknown; tools: AgentTool[]; messages: unknown[]; thinkingLevel?: string }
     public promptCalls: Array<{ text: string }> = []

@@ -1,7 +1,7 @@
 import { loadConfig, ensureConfigTemplates } from './config.js'
 import { loadProvidersDecrypted, getApiKeyForProvider, buildModel, parseProviderModelId } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
-import { completeSimple } from '@mariozechner/pi-ai'
+import { completeSimple } from '@earendil-works/pi-ai'
 
 // ── Types ─────────────────────────────────────────────────────────────
 
