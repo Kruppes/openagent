@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
-vi.mock('@mariozechner/pi-ai', async (importOriginal) => {
+vi.mock('@earendil-works/pi-ai', async (importOriginal) => {
   const original = await importOriginal() as Record<string, unknown>
   return {
     ...original,
@@ -17,7 +17,7 @@ vi.mock('./config.js', () => ({
   getConfigDir: vi.fn(() => '/tmp/config'),
 }))
 
-import { completeSimple } from '@mariozechner/pi-ai'
+import { completeSimple } from '@earendil-works/pi-ai'
 import { createAskAgentTool, listAvailableAgents, buildAskAgentPromptHint } from './ask-agent-tool.js'
 import type { AskAgentToolOptions } from './ask-agent-tool.js'
 
