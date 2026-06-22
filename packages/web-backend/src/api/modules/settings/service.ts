@@ -66,7 +66,8 @@ export function createSettingsService(options: SettingsRouterOptions = {}): Sett
     const previousTelegramBotToken = telegram.botToken
 
     if (body.sessionTimeoutMinutes !== undefined) {
-      const err = validatePositiveNumber(body.sessionTimeoutMinutes, 'sessionTimeoutMinutes')
+      // 0 = never expire (disable time-based session cutting); only topic-shift cuts.
+      const err = validateNonNegativeNumber(body.sessionTimeoutMinutes, 'sessionTimeoutMinutes')
       if (err) throw new SettingsValidationError(err)
       settings.sessionTimeoutMinutes = body.sessionTimeoutMinutes as number
     }

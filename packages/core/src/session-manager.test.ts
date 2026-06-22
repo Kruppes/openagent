@@ -430,6 +430,56 @@ describe('SessionManager', () => {
     })
   })
 
+  describe('timeoutMinutes: 0 means never expire', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('never fires a time-based timeout when configured with 0', async () => {
+      const onSessionEnd = vi.fn()
+      const manager = new SessionManager({
+        db,
+        memoryDir,
+        timeoutMinutes: 0,
+        onSessionEnd,
+      })
+      await manager.init()
+
+      manager.getOrCreateSession('user1')
+      manager.recordMessage('user1')
+
+      // Advance way past any normal timeout (1 year)
+      await vi.advanceTimersByTimeAsync(525600 * 60 * 1000)
+
+      expect(onSessionEnd).not.toHaveBeenCalled()
+      expect(manager.hasActiveSession('user1')).toBe(true)
+    })
+
+    it('disables timeout at runtime when set to 0 via setTimeoutMinutes', async () => {
+      const onSessionEnd = vi.fn()
+      const manager = new SessionManager({
+        db,
+        memoryDir,
+        timeoutMinutes: 1,
+        onSessionEnd,
+      })
+      await manager.init()
+
+      manager.setTimeoutMinutes(0)
+      manager.getOrCreateSession('user1')
+      manager.recordMessage('user1')
+
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+
+      expect(onSessionEnd).not.toHaveBeenCalled()
+      expect(manager.hasActiveSession('user1')).toBe(true)
+    })
+  })
+
   describe('session summaries always generate', () => {
     it('always generates summary when session has messages and onSummarize is configured', async () => {
       const onSummarize = vi.fn().mockResolvedValue('Summary text')

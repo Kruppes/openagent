@@ -126,7 +126,8 @@ function loadRuntimeSettings(): RuntimeSettings {
       searxngUrl?: string
     }>('settings.json')
 
-    if (settings.sessionTimeoutMinutes && settings.sessionTimeoutMinutes > 0) {
+    // Accept 0 explicitly: 0 = never expire (disable time-based session cutting).
+    if (typeof settings.sessionTimeoutMinutes === 'number' && settings.sessionTimeoutMinutes >= 0) {
       sessionTimeoutMinutes = settings.sessionTimeoutMinutes
     }
 

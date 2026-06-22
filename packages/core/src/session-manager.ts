@@ -126,7 +126,10 @@ export class SessionManager {
       const elapsed = Date.now() - lastActivity
       const userId = row.session_user ?? this.parseUserIdFromSessionId(row.id)
 
-      if (elapsed >= this.timeoutMs) {
+      // timeoutMs <= 0 means "never expire": always restore, never time-close on boot.
+      if (this.timeoutMs <= 0) {
+        this.restoreSession(row, userId, lastActivity, 0)
+      } else if (elapsed >= this.timeoutMs) {
         await this.summarizeAndCloseOrphanedSession(row, userId, lastActivity)
       } else {
         this.restoreSession(row, userId, lastActivity, this.timeoutMs - elapsed)
@@ -226,6 +229,12 @@ export class SessionManager {
     }
 
     this.sessions.set(key, session)
+
+    // remainingMs <= 0 means "never expire": restore without a time-based timer.
+    if (remainingMs <= 0) {
+      console.log(`[session] Restored session ${row.id} for user ${userId} agent ${agentId} (no time-based expiry)`)
+      return
+    }
 
     const remainingMinutes = Math.round(remainingMs / 60000)
     console.log(`[session] Restored session ${row.id} for user ${userId} agent ${agentId} (${remainingMinutes}min remaining)`)
