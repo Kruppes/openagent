@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import nodePath from 'node:path'
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
@@ -109,6 +109,83 @@ function resolveWorkspacePath(filePath: string): string {
   return nodePath.resolve(getWorkspaceDir(), filePath)
 }
 
+const SHELL_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+
+interface ShellResult {
+  output: string
+  exitCode: number
+  timedOut: boolean
+}
+
+/**
+ * Run a shell command without blocking the Node event loop.
+ *
+ * Uses async spawn (not execSync) so the HTTP server stays responsive while a
+ * command runs. stdin is closed so interactive prompts (ssh/sudo password) get
+ * EOF immediately instead of hanging forever. On timeout the whole process
+ * group is SIGKILLed, so backgrounded grandchildren (e.g. an ssh ControlMaster)
+ * that hold the stdout pipe open cannot keep the call alive past the deadline.
+ */
+function runShellCommand(command: string, timeout: number, cwd: string): Promise<ShellResult> {
+  return new Promise((resolve) => {
+    const child = spawn(command, {
+      shell: true,
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+    })
+
+    let stdout = ''
+    let stderr = ''
+    let bytes = 0
+    let timedOut = false
+    let settled = false
+
+    const killGroup = () => {
+      if (child.pid === undefined) return
+      try {
+        process.kill(-child.pid, 'SIGKILL')
+      } catch {
+        try {
+          child.kill('SIGKILL')
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+
+    const timer = setTimeout(() => {
+      timedOut = true
+      killGroup()
+    }, timeout)
+
+    const append = (chunk: Buffer, toStderr: boolean) => {
+      if (bytes >= SHELL_MAX_OUTPUT_BYTES) return
+      bytes += chunk.length
+      if (toStderr) stderr += chunk.toString('utf-8')
+      else stdout += chunk.toString('utf-8')
+    }
+    child.stdout?.on('data', (chunk: Buffer) => append(chunk, false))
+    child.stderr?.on('data', (chunk: Buffer) => append(chunk, true))
+
+    const finish = (exitCode: number) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      const parts = [stdout, stderr].filter(Boolean)
+      if (timedOut) parts.push(`Command timed out after ${timeout}ms and was killed.`)
+      const output = parts.join('\n') || (exitCode === 0 ? '(no output)' : 'Command failed')
+      resolve({ output, exitCode, timedOut })
+    }
+
+    child.on('error', (err: Error) => {
+      stderr += (stderr ? '\n' : '') + err.message
+      finish(1)
+    })
+    child.on('close', (code) => finish(code ?? (timedOut ? 124 : 1)))
+  })
+}
+
 /**
  * Build YOLO-mode tools that give the agent unrestricted access
  */
@@ -123,24 +200,10 @@ export function createYoloTools(): AgentTool[] {
     }),
     execute: async (_toolCallId, params) => {
       const { command, timeout = 60000 } = params as { command: string; timeout?: number }
-      try {
-        const result = execSync(command, {
-          timeout,
-          encoding: 'utf-8',
-          maxBuffer: 10 * 1024 * 1024,
-          cwd: getWorkspaceDir(),
-        })
-        return {
-          content: [{ type: 'text' as const, text: result || '(no output)' }],
-          details: { exitCode: 0 },
-        }
-      } catch (err: unknown) {
-        const error = err as { stdout?: string; stderr?: string; status?: number; message?: string }
-        const output = [error.stdout, error.stderr].filter(Boolean).join('\n') || error.message || 'Command failed'
-        return {
-          content: [{ type: 'text' as const, text: output }],
-          details: { exitCode: error.status ?? 1 },
-        }
+      const { output, exitCode } = await runShellCommand(command, timeout, getWorkspaceDir())
+      return {
+        content: [{ type: 'text' as const, text: output }],
+        details: { exitCode },
       }
     },
   }
