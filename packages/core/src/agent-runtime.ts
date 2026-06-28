@@ -14,6 +14,8 @@ import type { SettingsThinkingLevel } from './contracts/settings.js'
 import { normalizeThinkingLevel } from './thinking-level.js'
 import { assembleSystemPrompt, ensureMemoryStructure, ensureConfigStructure, formatCurrentTimeContext } from './memory.js'
 import type { SkillPromptEntry, AvailableProviderModelPromptEntry } from './memory.js'
+import { loadMultiPersonaSettings } from './config.js'
+import { createAskAgentTool, buildAskAgentPromptHint } from './ask-agent-tool.js'
 import { getWorkspaceDir } from './workspace.js'
 import { loadConfig, ensureConfigTemplates } from './config.js'
 import { loadSkills, getSkillDecrypted } from './skill-config.js'
@@ -74,11 +76,17 @@ export interface AgentRuntimeOptions {
    * stored in `settings.json` (`thinkingLevel`), or `off` if not configured.
    */
   thinkingLevel?: SettingsThinkingLevel
+  /**
+   * Agent ID for multi-persona support. Determines which persona files to load
+   * and which agent identity to use for cross-persona tools like ask_agent.
+   * Defaults to 'main'.
+   */
+  agentId?: string
 }
 
 export interface AgentRuntimeBoundary {
   streamPrompt(text: string, sessionId: string, images?: ImageContent[]): AsyncIterable<ResponseChunk>
-  refreshSystemPrompt(channel?: string, currentUser?: { username: string }): void
+  refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void
   getCurrentTimeContext(): string
   swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string): void
   getProviderManager(): ProviderManager | undefined
@@ -498,6 +506,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
   private providerConfig?: ProviderConfig
   private providerManager?: ProviderManager
   private getCurrentToolUserId: () => number | undefined
+  private agentId: string
 
   constructor(options: AgentRuntimeOptions) {
     this.model = options.model
@@ -508,6 +517,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     this.providerConfig = options.providerConfig
     this.providerManager = options.providerManager
     this.getCurrentToolUserId = options.getCurrentToolUserId ?? (() => undefined)
+    this.agentId = options.agentId ?? 'main'
 
     // Ensure memory/config structure exists before prompt assembly.
     ensureMemoryStructure(options.memoryDir)
@@ -516,7 +526,36 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     const { sttEnabled, thinkingLevel: storedThinkingLevel } = this.readRuntimeSettings()
     const effectiveThinkingLevel = normalizeThinkingLevel(options.thinkingLevel) ?? storedThinkingLevel ?? 'off'
 
-    const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt()
+    const systemPrompt = options.systemPrompt ?? this.buildSystemPrompt(undefined, undefined, this.agentId)
+
+    // Conditionally add the ask_agent tool when multi-persona is enabled.
+    //
+    // getApiKey must mirror the main PiAgent's OAuth-aware resolver: for OAuth-authenticated
+    // providers (e.g. Claude Pro) `this.apiKey` is an empty string and the real token has to
+    // be resolved fresh from the provider config on every call. Without this, cross-persona
+    // calls hit the provider with an empty key and fail silently.
+    const runtimeAgentId = this.agentId
+    const providerConfigRef = this.providerConfig
+    const askAgentTools: AgentTool[] = loadMultiPersonaSettings().enabled
+      ? [createAskAgentTool({
+          getCurrentAgentId: () => runtimeAgentId,
+          getModel: () => this.model,
+          getApiKey: providerConfigRef?.authMethod === 'oauth'
+            ? async () => {
+                try {
+                  const file = loadProvidersDecrypted()
+                  const freshProvider = file.providers.find(p => p.id === providerConfigRef.id)
+                  if (freshProvider) {
+                    return await getApiKeyForProvider(freshProvider)
+                  }
+                } catch (err) {
+                  console.error('[ask_agent] OAuth token refresh failed:', err)
+                }
+                return this.apiKey
+              }
+            : () => this.apiKey,
+        })]
+      : []
 
     const tools: AgentTool[] = [
       ...(options.tools ?? []),
@@ -526,6 +565,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         sttEnabled,
         getCurrentUserId: () => this.getCurrentToolUserId(),
       }),
+      ...askAgentTools,
     ]
 
     this.agent = new PiAgent({
@@ -564,8 +604,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     return this.executePromptWithRetry(text, sessionId, false, images)
   }
 
-  refreshSystemPrompt(channel?: string, currentUser?: { username: string }): void {
-    this.agent.state.systemPrompt = this.buildSystemPrompt(channel, currentUser)
+  refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void {
+    this.agent.state.systemPrompt = this.buildSystemPrompt(channel, currentUser, agentId ?? this.agentId)
   }
 
   getCurrentTimeContext(): string {
@@ -659,7 +699,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     return { language, timezone, builtinToolsConfig, sttEnabled, thinkingLevel }
   }
 
-  private buildSystemPrompt(channel?: string, currentUser?: { username: string }): string {
+  private buildSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): string {
     const { language, timezone, builtinToolsConfig, sttEnabled } = this.readRuntimeSettings()
 
     const activeSkills = getActiveSkillEntries()
@@ -736,7 +776,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       availableProviders = undefined
     }
 
-    return assembleSystemPrompt({
+    let prompt = assembleSystemPrompt({
       memoryDir: this.memoryDir,
       baseInstructions: this.baseInstructions,
       language,
@@ -748,7 +788,18 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       builtinTools: builtinToolsPromptConfig,
       agentSkillsDir: getAgentSkillsDir(),
       availableProviders,
+      agentId,
     })
+
+    // Append cross-persona hint when ask_agent is available.
+    if (loadMultiPersonaSettings().enabled) {
+      const hint = buildAskAgentPromptHint(agentId ?? 'main')
+      if (hint) {
+        prompt += hint
+      }
+    }
+
+    return prompt
   }
 
   /**
