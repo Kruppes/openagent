@@ -66,9 +66,9 @@ export interface TaskRunnerOptions {
   /** Memory directory reference for task agent system prompt */
   memoryDir?: string
   /** Callback when a task completes/fails — delivers the injection message */
-  onTaskComplete: (taskId: string, injection: string) => void
+  onTaskComplete: (taskId: string, injection: string, agentId: string | null) => void
   /** Callback when a task pauses with a question — delivers the injection message */
-  onTaskPaused?: (taskId: string, injection: string) => void
+  onTaskPaused?: (taskId: string, injection: string, agentId: string | null) => void
   /** Callback for periodic status updates */
   /**
    * Periodic heartbeat callback. Fires every `statusUpdates.intervalMinutes`
@@ -620,7 +620,7 @@ export class TaskRunner {
         const startedAt = taskStartedAtMs(task.startedAt)
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskPaused(taskId, injection, summary)
+        this.notifyTaskPaused(taskId, injection, summary, task.agentId)
         unsubscribe()
         return
       }
@@ -658,7 +658,7 @@ export class TaskRunner {
         const startedAt = taskStartedAtMs(task.startedAt)
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskComplete(taskId, injection, task.status, task.resultSummary ?? undefined)
+        this.notifyTaskComplete(taskId, injection, task.status, task.resultSummary ?? undefined, task.agentId)
       }
     } catch (err) {
       // Task failed
@@ -685,7 +685,7 @@ export class TaskRunner {
         const startedAt = taskStartedAtMs(task.startedAt)
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskComplete(taskId, injection, "failed", errorMessage)
+        this.notifyTaskComplete(taskId, injection, "failed", errorMessage, task.agentId)
       }
     }
   }
@@ -762,9 +762,10 @@ export class TaskRunner {
               model: assistantMsg.model,
             })
             try {
+              const taskAgentId = this.store.getById(runningTask.taskId)?.agentId ?? 'main'
               this.db.prepare(
-                'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-              ).run(sessionId, null, 'assistant', content, metadata)
+                'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+              ).run(sessionId, null, 'assistant', content, metadata, taskAgentId)
             } catch {
               // Ignore persistence errors — non-critical
             }
@@ -987,7 +988,7 @@ export class TaskRunner {
 ${reason}
 Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
 </task_injection>`
-      this.notifyTaskComplete(taskId, injection, "failed", reason)
+      this.notifyTaskComplete(taskId, injection, "failed", reason, task.agentId)
     }
   }
 
@@ -1059,19 +1060,23 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
   }
 
   /**
-   * Notify completion/failure and emit status change
+   * Notify completion/failure and emit status change.
+   * Passes the task's agentId so the caller can route the notification
+   * to the correct persona runtime and Telegram bot.
    */
-  private notifyTaskComplete(taskId: string, injection: string, status: string, message?: string): void {
+  private notifyTaskComplete(taskId: string, injection: string, status: string, message?: string, agentId?: string | null): void {
     this.emitStatusChange(taskId, status, message)
-    this.options.onTaskComplete(taskId, injection)
+    this.options.onTaskComplete(taskId, injection, agentId ?? null)
   }
 
   /**
-   * Notify task paused and emit status change
+   * Notify task paused and emit status change.
+   * Passes the task's agentId so the caller can route the notification
+   * to the correct persona runtime and Telegram bot.
    */
-  private notifyTaskPaused(taskId: string, injection: string, message?: string): void {
+  private notifyTaskPaused(taskId: string, injection: string, message?: string, agentId?: string | null): void {
     this.emitStatusChange(taskId, 'paused', message)
-    this.options.onTaskPaused?.(taskId, injection)
+    this.options.onTaskPaused?.(taskId, injection, agentId ?? null)
   }
 
   /**
@@ -1111,7 +1116,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
         const startedAt = taskStartedAtMs(task.startedAt)
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskComplete(taskId, injection, 'failed', reason)
+        this.notifyTaskComplete(taskId, injection, 'failed', reason, task.agentId)
       }
       return
     }
@@ -1137,7 +1142,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
       const startedAt = taskStartedAtMs(task.startedAt)
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
       const injection = formatTaskInjection(task, durationMinutes)
-      this.notifyTaskComplete(taskId, injection, "failed", reason)
+      this.notifyTaskComplete(taskId, injection, "failed", reason, task.agentId)
     }
   }
 
@@ -1381,7 +1386,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
         const startedAt = taskStartedAtMs(task.startedAt)
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(task, durationMinutes)
-        this.notifyTaskPaused(taskId, injection, summary)
+        this.notifyTaskPaused(taskId, injection, summary, task.agentId)
         return
       }
 
@@ -1416,7 +1421,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
       const startedAt = taskStartedAtMs(task.startedAt)
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
       const injection = formatTaskInjection(task, durationMinutes)
-      this.notifyTaskComplete(taskId, injection, task.status, task.resultSummary ?? undefined)
+      this.notifyTaskComplete(taskId, injection, task.status, task.resultSummary ?? undefined, task.agentId)
     } catch (err) {
       unsubscribe()
       this.cleanupRunningTask(taskId)
@@ -1440,7 +1445,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
       const startedAt = taskStartedAtMs(task.startedAt)
       const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
       const injection = formatTaskInjection(task, durationMinutes)
-      this.notifyTaskComplete(taskId, injection, "failed", errorMessage)
+      this.notifyTaskComplete(taskId, injection, "failed", errorMessage, task.agentId)
     }
   }
 
@@ -1508,7 +1513,7 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
         const startedAt = taskStartedAtMs(updated.startedAt)
         const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
         const injection = formatTaskInjection(updated, durationMinutes)
-        this.notifyTaskComplete(taskId, injection, 'failed', reason)
+        this.notifyTaskComplete(taskId, injection, 'failed', reason, updated.agentId)
       }
 
       cleanedCount++

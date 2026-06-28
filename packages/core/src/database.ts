@@ -327,6 +327,12 @@ export function initDatabase(dbPath?: string): Database {
     db.exec("ALTER TABLE scheduled_tasks ADD COLUMN attached_skills TEXT")
   }
 
+  // Fork: add agent_id column to scheduled_tasks for multi-persona cronjob scoping
+  if (!scheduledCols.find(c => c.name === 'agent_id')) {
+    db.exec("ALTER TABLE scheduled_tasks ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'")
+    db.exec("CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_agent_id ON scheduled_tasks(agent_id)")
+  }
+
   // Migration: add 'paused' to tasks status CHECK constraint
   // Test by inserting a paused row — if CHECK fails, recreate the table
   try {
@@ -520,6 +526,12 @@ export function initDatabase(dbPath?: string): Database {
   if (!sessionCols.find(c => c.name === 'parent_session_id')) {
     db.exec("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
   }
+  // Fork: multi-persona session scoping. Add agent_id BEFORE the type-CHECK
+  // recreation probe below so that, if the sessions table is rebuilt, the
+  // explicit column copy can carry agent_id forward (no persona data loss).
+  if (!sessionCols.find(c => c.name === 'agent_id')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'")
+  }
 
   // Ensure CHECK constraint on sessions.type exists. Detect by probing the
   // table with an invalid type value inside a SAVEPOINT that is ALWAYS
@@ -568,11 +580,12 @@ export function initDatabase(dbPath?: string): Database {
           session_user TEXT,
           prompt_tokens INTEGER NOT NULL DEFAULT 0,
           completion_tokens INTEGER NOT NULL DEFAULT 0,
+          agent_id TEXT NOT NULL DEFAULT 'main',
           FOREIGN KEY (user_id) REFERENCES users(id),
           FOREIGN KEY (parent_session_id) REFERENCES sessions(id)
         );
-        INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, ended_at, message_count, summary_written, last_activity, session_user, prompt_tokens, completion_tokens)
-          SELECT id, user_id, source, type, parent_session_id, started_at, ended_at, message_count, summary_written, last_activity, session_user, prompt_tokens, completion_tokens FROM sessions_old;
+        INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, ended_at, message_count, summary_written, last_activity, session_user, prompt_tokens, completion_tokens, agent_id)
+          SELECT id, user_id, source, type, parent_session_id, started_at, ended_at, message_count, summary_written, last_activity, session_user, prompt_tokens, completion_tokens, agent_id FROM sessions_old;
         DROP TABLE sessions_old;
         CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
         CREATE INDEX IF NOT EXISTS idx_sessions_type ON sessions(type);
@@ -584,6 +597,21 @@ export function initDatabase(dbPath?: string): Database {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sessions_type ON sessions(type);
     CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
+  `)
+
+  // Fork: multi-persona scoping for memories and chat_messages.
+  const memoryCols = db.prepare("PRAGMA table_info(memories)").all() as { name: string }[]
+  if (!memoryCols.find(c => c.name === 'agent_id')) {
+    db.exec("ALTER TABLE memories ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'")
+  }
+  const chatMsgCols = db.prepare("PRAGMA table_info(chat_messages)").all() as { name: string }[]
+  if (!chatMsgCols.find(c => c.name === 'agent_id')) {
+    db.exec("ALTER TABLE chat_messages ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'")
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_memories_agent_id ON memories(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_agent_id ON chat_messages(agent_id);
   `)
 
   // Migration (PRD #11 Task 2): Legacy prefix-based session IDs -> UUIDs + type backfill
