@@ -28,6 +28,7 @@ import {
   listCronjobsTool,
   listTasksTool,
   loadConfig,
+  storeFact,
   loadMultiPersonaSettings,
   loadProvidersDecrypted,
   resolveProviderModelInput,
@@ -1106,6 +1107,39 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     return `🔁 Follow-up task started on ${provider.name} (${getProviderDefaultModel(provider)}).\nTask: ${followUp.name}\nID: ${followUp.id}`
   }
 
+  /**
+   * Inline-button actions on Telegram task messages: kill a running task or
+   * store 👍/👎 feedback as a memory fact (picked up by the nightly
+   * consolidation, so personas learn what worked).
+   */
+  async function handleTelegramTaskAction(input: {
+    taskId: string
+    action: 'kill' | 'feedback_up' | 'feedback_down'
+    agentId: string
+    userId: string | null
+  }): Promise<string> {
+    const task = taskRuntime.tasks.getById(input.taskId)
+    if (!task) return 'Task not found.'
+
+    if (input.action === 'kill') {
+      if (task.status !== 'running' && task.status !== 'paused') {
+        return `Task is already ${task.status}.`
+      }
+      taskRuntime.tasks.abort(input.taskId, 'Killed via Telegram button')
+      return '🗑 Task killed.'
+    }
+
+    const positive = input.action === 'feedback_up'
+    const numericUserId = input.userId ? parseStrictUserId(input.userId) : null
+    storeFact(
+      db,
+      numericUserId,
+      task.sessionId ?? `task-feedback-${task.id}`,
+      `User rated the result of background task "${task.name}" (persona: ${input.agentId}, model: ${task.model ?? 'default'}) as ${positive ? 'good 👍' : 'not good 👎'}.${positive ? '' : ' When handling similar tasks, reconsider the approach that was used here.'}`,
+    )
+    return positive ? '👍 Feedback saved.' : '👎 Feedback saved — flows into memory consolidation.'
+  }
+
   taskRuntime.schedules.start()
 
   const healthMonitorService = new HealthMonitorService({ db, providerManager: null })
@@ -1368,6 +1402,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         onQueueDepthChanged: () => runtimeMetrics.setQueueDepth('telegram', pool.getQueueDepth()),
         startModelTask: startPinnedModelTask,
         onTaskReply: handleTelegramTaskReply,
+        onTaskAction: handleTelegramTaskAction,
         onActiveProviderChanged: () => {
           initOrUpdateAgentCore().catch((err) => {
             logger.error('[axiom] Error rebuilding agent core after Telegram provider change:', err)
@@ -1407,6 +1442,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
           logger.error('[axiom] Error rebuilding agent core after Telegram provider change:', err)
         })
       },
+      handleTelegramTaskAction,
     )
     if (telegramBot) {
       try {

@@ -37,6 +37,8 @@ import type { UploadDescriptor } from '@axiom/core'
  * the callback. Tokens auto-expire (see `PICKER_TOKEN_TTL_MS`).
  */
 const PICKER_CALLBACK_PREFIX = 'pick:'
+/** Inline-button callback prefix for task actions: `tsk:<action>:<taskId>` */
+const TASK_CALLBACK_PREFIX = 'tsk:'
 const PICKER_TOKEN_TTL_MS = 10 * 60 * 1000 // 10 minutes
 
 const POLLING_RETRY_INITIAL_MS = 5_000
@@ -126,6 +128,17 @@ export interface TelegramBotOptions {
    * restarts this bot.
    */
   onActiveProviderChanged?: () => void
+  /**
+   * Inline-button actions on task messages: kill a running task, or record
+   * 👍/👎 feedback on a delivered result (stored as a memory fact so the
+   * nightly consolidation learns from it). Returns a short ack text.
+   */
+  onTaskAction?: (input: {
+    taskId: string
+    action: 'kill' | 'feedback_up' | 'feedback_down'
+    agentId: string
+    userId: string | null
+  }) => Promise<string>
   onQueueDepthChanged?: (queueDepth: number) => void
   /** Called for every chat event (user message, response chunks, etc.) for cross-channel sync */
   onChatEvent?: (event: TelegramChatEvent) => void
@@ -396,6 +409,7 @@ export class TelegramBot {
   private startModelTaskCallback?: TelegramBotOptions['startModelTask']
   private onTaskReplyCallback?: TelegramBotOptions['onTaskReply']
   private onActiveProviderChangedCallback?: TelegramBotOptions['onActiveProviderChanged']
+  private onTaskActionCallback?: TelegramBotOptions['onTaskAction']
   /**
    * Maps `chatId:messageId` of bot-sent task messages (results, questions,
    * status updates) to their task id, so a Telegram reply to such a message
@@ -427,6 +441,7 @@ export class TelegramBot {
     this.startModelTaskCallback = options.startModelTask
     this.onTaskReplyCallback = options.onTaskReply
     this.onActiveProviderChangedCallback = options.onActiveProviderChanged
+    this.onTaskActionCallback = options.onTaskAction
     this.onQueueDepthChanged = options.onQueueDepthChanged
     this.onChatEvent = options.onChatEvent
     this.slashRegistry = buildTelegramSlashCommandRegistry()
@@ -577,6 +592,10 @@ export class TelegramBot {
     // picker step or the final text confirmation.
     this.bot.on('callback_query:data', async (ctx) => {
       const data = ctx.callbackQuery.data
+      if (data.startsWith(TASK_CALLBACK_PREFIX)) {
+        await this.handleTaskCallback(ctx, data.slice(TASK_CALLBACK_PREFIX.length))
+        return
+      }
       if (!data.startsWith(PICKER_CALLBACK_PREFIX)) return
       await this.handlePickerCallback(ctx, data.slice(PICKER_CALLBACK_PREFIX.length))
     })
@@ -772,6 +791,51 @@ export class TelegramBot {
 
     const replyContext = extractReplyContext(ctx.message?.reply_to_message)
     this.bufferMessage(ctx, text, replyContext)
+  }
+
+  /**
+   * Handle `tsk:<action>:<taskId>` inline-button taps on task messages.
+   */
+  private async handleTaskCallback(ctx: Context, payload: string): Promise<void> {
+    const sep = payload.indexOf(':')
+    const action = sep === -1 ? payload : payload.slice(0, sep)
+    const taskId = sep === -1 ? '' : payload.slice(sep + 1)
+
+    if (!await this.checkAuthorized(ctx)) {
+      await ctx.answerCallbackQuery({ text: 'Not authorized.', show_alert: true })
+      return
+    }
+    if (!taskId || !['kill', 'feedback_up', 'feedback_down'].includes(action) || !this.onTaskActionCallback) {
+      await ctx.answerCallbackQuery({ text: 'Action not available.', show_alert: true })
+      return
+    }
+
+    try {
+      const ack = await this.onTaskActionCallback({
+        taskId,
+        action: action as 'kill' | 'feedback_up' | 'feedback_down',
+        agentId: this.agentId,
+        userId: this.resolveUserId(ctx),
+      })
+      await ctx.answerCallbackQuery({ text: ack.slice(0, 190) })
+      // Feedback / kill is one-shot — drop the keyboard so buttons can't be re-tapped.
+      try { await ctx.editMessageReplyMarkup({ reply_markup: undefined }) } catch { /* ignore */ }
+    } catch (err) {
+      await ctx.answerCallbackQuery({ text: `⚠️ ${(err as Error).message}`.slice(0, 190), show_alert: true })
+    }
+  }
+
+  /** Inline keyboard with 👍/👎 feedback buttons for a delivered task result. */
+  private buildFeedbackKeyboard(taskId: string): InlineKeyboard {
+    return new InlineKeyboard()
+      .text('👍', `${TASK_CALLBACK_PREFIX}feedback_up:${taskId}`)
+      .text('👎', `${TASK_CALLBACK_PREFIX}feedback_down:${taskId}`)
+  }
+
+  /** Inline keyboard with a kill button for a still-running task. */
+  private buildTaskControlKeyboard(taskId: string): InlineKeyboard {
+    return new InlineKeyboard()
+      .text('🗑 Kill task', `${TASK_CALLBACK_PREFIX}kill:${taskId}`)
   }
 
   /** Record a bot-sent message as belonging to a task (bounded FIFO). */
@@ -1697,15 +1761,20 @@ export class TelegramBot {
     const parts = splitMessage(html)
     const plainFull = telegramHtmlToPlainText(html)
 
-    for (const part of parts) {
+    for (const [index, part] of parts.entries()) {
+      // Status updates describe a still-running task — offer a kill button
+      // on the last part.
+      const replyMarkup = taskId && index === parts.length - 1
+        ? this.buildTaskControlKeyboard(taskId)
+        : undefined
       try {
-        const sent = await this.bot.api.sendMessage(chatId, part, { parse_mode: 'HTML' })
+        const sent = await this.bot.api.sendMessage(chatId, part, { parse_mode: 'HTML', reply_markup: replyMarkup })
         if (taskId) this.rememberTaskMessage(chatId, sent.message_id, taskId)
       } catch {
         // Fallback to plain text if HTML parsing fails
         try {
           const plainPart = telegramHtmlToPlainText(part)
-          const sent = await this.bot.api.sendMessage(chatId, plainPart)
+          const sent = await this.bot.api.sendMessage(chatId, plainPart, { reply_markup: replyMarkup })
           if (taskId) this.rememberTaskMessage(chatId, sent.message_id, taskId)
         } catch (fallbackErr) {
           console.error(`[telegram] Failed to send task notification to ${chatId}:`, fallbackErr)
@@ -1735,14 +1804,19 @@ export class TelegramBot {
   async sendFormattedMessage(chatId: string | number, markdown: string, taskId?: string): Promise<boolean> {
     const parts = splitMessage(markdown)
 
-    for (const part of parts) {
+    for (const [index, part] of parts.entries()) {
+      // Feedback buttons on the LAST part of a task result, so 👍/👎 sits
+      // directly under the delivered content.
+      const replyMarkup = taskId && index === parts.length - 1
+        ? this.buildFeedbackKeyboard(taskId)
+        : undefined
       try {
         const html = markdownToTelegramHtml(part)
-        const sent = await this.bot.api.sendMessage(chatId, html, { parse_mode: 'HTML' })
+        const sent = await this.bot.api.sendMessage(chatId, html, { parse_mode: 'HTML', reply_markup: replyMarkup })
         if (taskId) this.rememberTaskMessage(chatId, sent.message_id, taskId)
       } catch {
         try {
-          const sent = await this.bot.api.sendMessage(chatId, part)
+          const sent = await this.bot.api.sendMessage(chatId, part, { reply_markup: replyMarkup })
           if (taskId) this.rememberTaskMessage(chatId, sent.message_id, taskId)
         } catch (err) {
           console.error(`[telegram] Failed to send formatted message to ${chatId}:`, err)
@@ -1776,6 +1850,7 @@ export function createTelegramBot(
   startModelTask?: TelegramBotOptions['startModelTask'],
   onTaskReply?: TelegramBotOptions['onTaskReply'],
   onActiveProviderChanged?: TelegramBotOptions['onActiveProviderChanged'],
+  onTaskAction?: TelegramBotOptions['onTaskAction'],
 ): TelegramBot | null {
   try {
     const config = loadTelegramRuntimeConfig()
@@ -1790,7 +1865,7 @@ export function createTelegramBot(
       return null
     }
 
-    return new TelegramBot({ agentCore, db, config, onChatEvent, onQueueDepthChanged, startModelTask, onTaskReply, onActiveProviderChanged })
+    return new TelegramBot({ agentCore, db, config, onChatEvent, onQueueDepthChanged, startModelTask, onTaskReply, onActiveProviderChanged, onTaskAction })
   } catch {
     console.log('ℹ️  Telegram config not found. Running in web-only mode.')
     return null
