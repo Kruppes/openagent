@@ -62,6 +62,8 @@ export interface TelegramChatEvent {
   userId: number | null
   /** Session ID used for chat_messages */
   sessionId: string
+  /** Agent ID for multi-persona routing (default: 'main') */
+  agentId?: string
   /** Text content */
   text?: string
   /** Streamed thinking/reasoning delta (for `type: 'thinking'`) */
@@ -87,6 +89,8 @@ export interface TelegramBotOptions {
   agentCore: AgentCore
   db?: Database
   config?: TelegramConfig
+  /** Agent ID this bot instance represents (default: 'main') */
+  agentId?: string
   onQueueDepthChanged?: (queueDepth: number) => void
   /** Called for every chat event (user message, response chunks, etc.) for cross-channel sync */
   onChatEvent?: (event: TelegramChatEvent) => void
@@ -353,6 +357,7 @@ export class TelegramBot {
   private agentCore: AgentCore
   private db: Database | null
   private config: TelegramConfig
+  private agentId: string
   private running = false
   private pollingRetryTimer: ReturnType<typeof setTimeout> | null = null
   private pollingRetryDelayMs = POLLING_RETRY_INITIAL_MS
@@ -374,6 +379,7 @@ export class TelegramBot {
     this.agentCore = options.agentCore
     this.db = options.db ?? null
     this.config = options.config ?? loadTelegramRuntimeConfig()
+    this.agentId = options.agentId ?? 'main'
     this.onQueueDepthChanged = options.onQueueDepthChanged
     this.onChatEvent = options.onChatEvent
     this.slashRegistry = buildTelegramSlashCommandRegistry()
@@ -696,7 +702,7 @@ export class TelegramBot {
     const numericUserId = this.resolveNumericUserId(ctx)
     const caption = ctx.msg?.caption?.trim() ?? ''
     // Resolve session ID from SessionManager (aligns chat_messages with session tracking)
-    const smSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram')
+    const smSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram', this.agentId)
     const sessionId = smSession.id
 
     try {
@@ -729,11 +735,11 @@ export class TelegramBot {
       const messageText = caption || upload.originalName
 
       if (this.db && numericUserId) {
-        this.db.prepare('INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)')
-          .run(sessionId, numericUserId, 'user', messageText, serializeUploadsMetadata([upload]))
+        this.db.prepare('INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(sessionId, numericUserId, 'user', messageText, serializeUploadsMetadata([upload]), this.agentId)
       }
 
-      this.onChatEvent?.({ type: 'user_message', userId: numericUserId, sessionId, text: messageText, senderName: this.getSenderName(ctx) })
+      this.onChatEvent?.({ type: 'user_message', userId: numericUserId, sessionId, text: messageText, senderName: this.getSenderName(ctx), agentId: this.agentId })
 
       // Route to agent for processing (same path as text messages)
       const chatKey = getChatKey(ctx)
@@ -979,7 +985,7 @@ export class TelegramBot {
     const isDM = this.isDMChat(ctx)
 
     // Resolve session ID from SessionManager (aligns chat_messages with session tracking)
-    const smSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram')
+    const smSession = this.agentCore.getSessionManager().getOrCreateSession(userId, 'telegram', this.agentId)
     const sessionId = smSession.id
 
     // Save user message to chat_messages (if linked to a web user)
@@ -989,8 +995,8 @@ export class TelegramBot {
     if (this.db && numericUserId && !attachments?.length) {
       const metadata = replyContext ? JSON.stringify({ replyContext }) : null
       this.db.prepare(
-        'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-      ).run(sessionId, numericUserId, 'user', text, metadata)
+        'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(sessionId, numericUserId, 'user', text, metadata, this.agentId)
     }
 
     // Broadcast user message event (skip if already broadcast by attachment handler)
@@ -999,6 +1005,7 @@ export class TelegramBot {
         type: 'user_message',
         userId: numericUserId,
         sessionId,
+        agentId: this.agentId,
         text,
         senderName,
         replyContext,
@@ -1034,7 +1041,7 @@ export class TelegramBot {
 
       try {
         const source = isDM ? 'telegram' : 'telegram-group'
-        for await (const chunk of this.agentCore.sendMessage(userId, messageForAgent, source, attachments)) {
+        for await (const chunk of this.agentCore.sendMessage(userId, messageForAgent, source, attachments, this.agentId)) {
           if (state.abortRequested) break
 
           if (chunk.type === 'text' && chunk.text) {
@@ -1062,8 +1069,8 @@ export class TelegramBot {
                 toolIsError: chunk.toolIsError ?? false,
               })
               this.db.prepare(
-                'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-              ).run(sessionId, numericUserId, 'tool', `Tool: ${toolName}`, metadata)
+                'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+              ).run(sessionId, numericUserId, 'tool', `Tool: ${toolName}`, metadata, this.agentId)
             }
             pendingToolCalls.delete(chunk.toolCallId)
 
@@ -1077,6 +1084,7 @@ export class TelegramBot {
                 type: 'attachment',
                 userId: numericUserId,
                 sessionId,
+                agentId: this.agentId,
                 attachment: upload,
               })
             }
@@ -1087,6 +1095,7 @@ export class TelegramBot {
             type: chunk.type === 'done' ? 'done' : chunk.type,
             userId: numericUserId,
             sessionId,
+            agentId: this.agentId,
             text: chunk.text,
             thinking: chunk.thinking,
             toolName: chunk.toolName,
@@ -1122,8 +1131,8 @@ export class TelegramBot {
           ? serializeUploadsMetadata(assistantUploads)
           : null
         this.db.prepare(
-          'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-        ).run(sessionId, numericUserId, 'assistant', fullResponse.trim(), metadata)
+          'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(sessionId, numericUserId, 'assistant', fullResponse.trim(), metadata, this.agentId)
       }
     } catch (err) {
       if (state.abortRequested) {
@@ -1517,13 +1526,13 @@ export class TelegramBot {
     if (!userId) return
 
     // Resolve session ID from SessionManager (aligns chat_messages with session tracking)
-    const smSession = this.agentCore.getSessionManager().getOrCreateSession(String(userId), 'telegram')
+    const smSession = this.agentCore.getSessionManager().getOrCreateSession(String(userId), 'telegram', this.agentId)
     const sessionId = smSession.id
 
     try {
       this.db.prepare(
-        'INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, ?, ?, ?)'
-      ).run(sessionId, userId, 'assistant', text)
+        'INSERT INTO chat_messages (session_id, user_id, role, content, agent_id) VALUES (?, ?, ?, ?, ?)'
+      ).run(sessionId, userId, 'assistant', text, this.agentId)
     } catch (err) {
       console.error(`[telegram] Failed to persist outbound Telegram message for user ${userId}:`, err)
     }
@@ -1532,12 +1541,14 @@ export class TelegramBot {
       type: 'text',
       userId,
       sessionId,
+      agentId: this.agentId,
       text,
     })
     this.onChatEvent?.({
       type: 'done',
       userId,
       sessionId,
+      agentId: this.agentId,
     })
   }
 
@@ -1614,6 +1625,11 @@ export class TelegramBot {
 
   getBot(): Bot {
     return this.bot
+  }
+
+  /** Agent ID this bot instance represents (multi-persona routing). */
+  getAgentId(): string {
+    return this.agentId
   }
 }
 

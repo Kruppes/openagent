@@ -28,6 +28,7 @@ import {
   listCronjobsTool,
   listTasksTool,
   loadConfig,
+  loadMultiPersonaSettings,
   loadProvidersDecrypted,
   logToolCall,
   parseProviderModelId,
@@ -47,8 +48,8 @@ import type {
 } from '@axiom/core'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { randomUUID } from 'node:crypto'
-import { createTelegramBot } from '@axiom/telegram'
-import type { TelegramBot, TelegramChatEvent } from '@axiom/telegram'
+import { createTelegramBot, createTelegramBotPool } from '@axiom/telegram'
+import type { TelegramBot, TelegramBotPool, TelegramChatEvent } from '@axiom/telegram'
 import { ChatEventBus } from '../chat-event-bus.js'
 import { triggerFactExtractionForSessionEnd } from '../fact-extraction-session-end.js'
 import { HealthMonitorService } from '../health-monitor.js'
@@ -77,6 +78,12 @@ interface PendingTaskInjectionMeta {
    * tagged onto every emitted chunk as `chunk.injectionId`.
    */
   injectionId: string
+  /**
+   * Persona the task belongs to. Deterministically sourced from the task
+   * row (never LLM-inferred); routes the injection into the persona's
+   * runtime/session and the Telegram delivery to the persona's bot.
+   */
+  agentId: string
 }
 
 interface TaskSettings {
@@ -173,7 +180,8 @@ export function loadRuntimeSettings(): RuntimeSettings {
       tavilyApiKey?: string
     }>('settings.json')
 
-    if (settings.sessionTimeoutMinutes && settings.sessionTimeoutMinutes > 0) {
+    // Accept 0 explicitly: 0 = never expire (disable time-based session cutting).
+    if (typeof settings.sessionTimeoutMinutes === 'number' && settings.sessionTimeoutMinutes >= 0) {
       sessionTimeoutMinutes = settings.sessionTimeoutMinutes
     }
 
@@ -366,6 +374,20 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   let agentCore: AgentCore | null = null
   let providerManager: ProviderManager | null = null
   let telegramBot: TelegramBot | null = null
+  // Multi-persona mode: one TelegramBot per persona account. `telegramBot`
+  // then points at the pool's primary bot for backward compatibility.
+  let telegramBotPool: TelegramBotPool | null = null
+
+  /**
+   * Resolve the Telegram bot bound to a persona. Falls back to the primary
+   * bot when no pool is running or the persona has no dedicated bot.
+   */
+  function resolveTelegramBotForAgent(agentId: string | null | undefined): TelegramBot | null {
+    if (agentId && telegramBotPool) {
+      return telegramBotPool.getBot(agentId) ?? telegramBot
+    }
+    return telegramBot
+  }
 
   // Pending task injections keyed by a per-injection UUID. The key is
   // minted here, passed into AgentCore.injectTaskResult as the
@@ -481,9 +503,14 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     return row.id
   }
 
-  function handleTaskNotification(taskId: string, injection: string, taskRuntime: TaskRuntimeTaskBoundary): void {
+  function handleTaskNotification(taskId: string, injection: string, taskRuntime: TaskRuntimeTaskBoundary, agentIdFromTask: string | null): void {
     const task = taskRuntime.getById(taskId)
     if (!task) return
+
+    // Persona routing: prefer the agentId handed through the task-runner
+    // callback, fall back to the task row. Deterministic data, never
+    // LLM-inferred.
+    const effectiveAgentId = agentIdFromTask ?? task.agentId ?? 'main'
 
     const startMs = task.startedAt ? new Date(task.startedAt.replace(' ', 'T') + 'Z').getTime() : Date.now()
     const endMs = task.completedAt ? new Date(task.completedAt.replace(' ', 'T') + 'Z').getTime() : Date.now()
@@ -522,16 +549,17 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     // same cached session id and would otherwise collide in the map.
     let injectionSessionId: string | null = null
     if (agentCore) {
-      injectionSessionId = agentCore.resolveInjectionSessionId(String(userId), lineageSessionId)
+      injectionSessionId = agentCore.resolveInjectionSessionId(String(userId), lineageSessionId, effectiveAgentId)
       const injectionId = randomUUID()
       pendingInjections.set(injectionId, {
         taskId: task.id,
         userId,
         sessionId: injectionSessionId,
         injectionId,
+        agentId: effectiveAgentId,
       })
       const forcedSessionId = injectionSessionId
-      agentCore.injectTaskResult(injection, String(userId), forcedSessionId, injectionId).catch(err => {
+      agentCore.injectTaskResult(injection, String(userId), forcedSessionId, injectionId, effectiveAgentId).catch(err => {
         logger.error(`[axiom] Failed to inject task result for ${taskId}:`, err)
         pendingInjections.delete(injectionId)
       })
@@ -596,6 +624,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
     const resolvedUserId = resolveTargetUserIdForTask(task.sessionId)
     const userId = resolvedUserId ?? getFallbackUserId()
+    const statusAgentId = task.agentId ?? 'main'
 
     const lineageSessionId = resolveTaskNotificationSessionId(db, task)
     // Prefer the user's currently-cached interactive session (via
@@ -605,13 +634,14 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     // — `deliverTaskStatusUpdate` skips the persist step (with a warn)
     // if `targetSessionId` is still undefined.
     const injectionSessionId = agentCore
-      ? agentCore.resolveInjectionSessionId(String(userId), lineageSessionId)
+      ? agentCore.resolveInjectionSessionId(String(userId), lineageSessionId, statusAgentId)
       : null
     const targetSessionId = injectionSessionId ?? lineageSessionId ?? undefined
 
-    const telegramChatId = telegramBot ? telegramBot.getTelegramChatIdForUser(userId) : null
-    const sendTelegram = telegramBot && telegramChatId
-      ? (html: string) => telegramBot!.sendTaskNotification(telegramChatId, html)
+    const statusBot = resolveTelegramBotForAgent(statusAgentId)
+    const telegramChatId = statusBot ? statusBot.getTelegramChatIdForUser(userId) : null
+    const sendTelegram = statusBot && telegramChatId
+      ? (html: string) => statusBot.sendTaskNotification(telegramChatId, html)
       : undefined
 
     deliverTaskStatusUpdate({
@@ -666,11 +696,11 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       getApiKey: getApiKeyForProvider,
       sessionManager: backgroundSessions,
       tools: backgroundTaskTools,
-      onTaskComplete: (taskId: string, injection: string) => {
-        handleTaskNotification(taskId, injection, taskRuntime.tasks)
+      onTaskComplete: (taskId: string, injection: string, agentId: string | null) => {
+        handleTaskNotification(taskId, injection, taskRuntime.tasks, agentId)
       },
-      onTaskPaused: (taskId: string, injection: string) => {
-        handleTaskNotification(taskId, injection, taskRuntime.tasks)
+      onTaskPaused: (taskId: string, injection: string, agentId: string | null) => {
+        handleTaskNotification(taskId, injection, taskRuntime.tasks, agentId)
       },
       onStatusUpdate: (taskId: string, statusMessage: string, details) => {
         handleStatusUpdateNotification(taskId, statusMessage, details, taskRuntime.tasks)
@@ -826,6 +856,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     // sessions.parent_session_id. Returns null when no interactive session
     // is active (e.g. tool invoked from a background context).
     getParentSessionId: () => agentCore?.getCurrentInteractiveSessionId() ?? null,
+    // Attribute new tasks to the persona whose runtime invoked the tool so
+    // their results route back to the same persona (runtime + Telegram bot).
+    getCurrentAgentId: () => agentCore?.getCurrentToolAgentId(),
   }
 
   // Now that taskRuntime exists, push create_task / list_tasks into the
@@ -945,7 +978,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       userId: string,
       sessionId: string,
       summary: string | null,
-      _agentId: string,
+      agentId: string,
       opts,
     ) => {
       const numericUserId = parseNumericUserId(userId)
@@ -961,8 +994,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       // the NEW session's transcript instead of the OLD one.
       const dividerMetadata = JSON.stringify({ type: 'session_divider', summary: summary ?? null })
       db.prepare(
-        'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-      ).run(sessionId, numericUserId, 'system', summary ?? '', dividerMetadata)
+        'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(sessionId, numericUserId, 'system', summary ?? '', dividerMetadata, agentId)
 
       if (numericUserId !== null) {
         if (isBackground) {
@@ -1050,16 +1083,18 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         if (chunk.type === 'done') {
           const responseText = streamState.responseBuffer
 
-          if (telegramBot && responseText) {
+          // Route the Telegram delivery to the persona's own bot.
+          const resolvedBot = resolveTelegramBotForAgent(pendingMeta.agentId)
+          if (resolvedBot && responseText) {
             const shouldSend =
               taskSettings.telegramDelivery === 'always' ||
               (taskSettings.telegramDelivery === 'auto' && !(wsChatPresenceChecker?.(pendingMeta.userId) ?? false))
 
             if (shouldSend) {
-              const chatId = telegramBot.getTelegramChatIdForUser(pendingMeta.userId)
+              const chatId = resolvedBot.getTelegramChatIdForUser(pendingMeta.userId)
               if (chatId) {
                 streamState.telegramDelivered = true
-                telegramBot.sendFormattedMessage(chatId, responseText).catch(err => {
+                resolvedBot.sendFormattedMessage(chatId, responseText).catch(err => {
                   logger.error(`[axiom] Failed to send Telegram for task ${pendingMeta.taskId}:`, err)
                 })
               }
@@ -1074,8 +1109,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
               // rows live together and are reachable via
               // `buildConversationHistory`.
               db.prepare(
-                'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-              ).run(persistSessionId, pendingMeta.userId, 'assistant', responseText, metadata)
+                'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+              ).run(persistSessionId, pendingMeta.userId, 'assistant', responseText, metadata, pendingMeta.agentId)
             } catch (err) {
               logger.error('[axiom] Failed to persist task injection response:', err)
             }
@@ -1118,6 +1153,18 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       return
     }
 
+    // Stop existing pool if any
+    if (telegramBotPool) {
+      try {
+        await telegramBotPool.stop()
+      } catch {
+        // ignore
+      }
+      telegramBotPool = null
+      telegramBot = null
+    }
+
+    // Stop existing single bot if any
     if (telegramBot) {
       try {
         await telegramBot.stop()
@@ -1127,6 +1174,39 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       telegramBot = null
     }
 
+    const multiPersonaSettings = loadMultiPersonaSettings()
+
+    if (multiPersonaSettings.enabled) {
+      // Multi-persona mode: one bot per persona account via TelegramBotPool.
+      const pool = createTelegramBotPool({
+        agentCore,
+        db,
+        onChatEvent: onTelegramChatEvent,
+        // Per-bot depth changes report the pool-wide aggregate so the
+        // metric reflects total telegram backlog, not the last bot's.
+        onQueueDepthChanged: () => runtimeMetrics.setQueueDepth('telegram', pool.getQueueDepth()),
+      })
+      telegramBotPool = pool
+
+      try {
+        await telegramBotPool.start()
+        // Point telegramBot at the primary bot for backward compatibility
+        // (reminders, status updates, single-bot callers).
+        telegramBot = telegramBotPool.getPrimaryBot()
+        if (telegramBotPool.hasRunningBots()) {
+          logger.log('[axiom] Telegram bot pool (re)started')
+        } else {
+          logger.log('[axiom] Telegram bot pool: no bots configured or all disabled')
+        }
+      } catch (err) {
+        logger.error('[axiom] Failed to start Telegram bot pool:', err)
+        telegramBotPool = null
+        telegramBot = null
+      }
+      return
+    }
+
+    // Legacy single-bot mode
     telegramBot = createTelegramBot(
       agentCore,
       db,
@@ -1279,6 +1359,16 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       agentHeartbeatService.stop()
       uploadCleanupService.stop()
       taskRuntime.schedules.stop()
+
+      if (telegramBotPool) {
+        try {
+          await telegramBotPool.stop()
+        } catch {
+          // ignore
+        }
+        telegramBotPool = null
+        telegramBot = null
+      }
 
       if (telegramBot) {
         try {

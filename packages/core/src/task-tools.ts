@@ -22,6 +22,12 @@ export interface TaskToolsOptions {
    * from a background context).
    */
   getParentSessionId?: () => string | null
+  /**
+   * Returns the agentId of the persona runtime currently executing the tool
+   * call, so the new task is attributed to it and its result routes back to
+   * the same persona. Undefined when invoked from a background context.
+   */
+  getCurrentAgentId?: () => string | undefined
 }
 
 /**
@@ -196,6 +202,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           model: getProviderDefaultModel(provider),
           isDefaultModel,
           maxDurationMinutes: maxDuration,
+          agentId: options.getCurrentAgentId?.() ?? undefined,
         })
 
         // Start the task, linking its session to the current interactive session

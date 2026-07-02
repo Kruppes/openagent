@@ -476,13 +476,13 @@ export class AgentCore {
    * The returned id is guaranteed to match the session AgentCore will use
    * when `injectTaskResult(..., forcedSessionId)` is invoked with it.
    */
-  resolveInjectionSessionId(userId: string, fallbackSessionId?: string | null): string {
-    const cached = this.sessionManager.getSession(userId)
+  resolveInjectionSessionId(userId: string, fallbackSessionId?: string | null, agentId: string = 'main'): string {
+    const cached = this.sessionManager.getSession(userId, agentId)
     if (cached) return cached.id
     if (fallbackSessionId) return fallbackSessionId
     const source = this.resolveLastInteractiveSource(userId)
       ?? this.resolveDefaultInjectionSource(userId)
-    return this.sessionManager.getOrCreateSession(userId, source).id
+    return this.sessionManager.getOrCreateSession(userId, source, agentId).id
   }
 
   /**
