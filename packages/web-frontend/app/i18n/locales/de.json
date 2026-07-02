@@ -661,7 +661,14 @@
     "deepgramApiKeyPlaceholder": "Deepgram-API-Schlüssel eingeben",
     "deepgramApiKeyHint": "Maskierten Wert stehen lassen, um den bestehenden Schlüssel zu behalten.",
     "deepgramModelPlaceholder": "Modell wählen…",
-    "deepgramModelsRefresh": "Modellliste von Deepgram aktualisieren"
+    "deepgramModelsRefresh": "Modellliste von Deepgram aktualisieren",
+    "multiPersonaTitle": "Multi-Persona",
+    "multiPersonaDescription": "Aktiviert Unterstützung für mehrere Telegram-Bots mit eigenen Personas. Jeder Bot bekommt eigene Persona-Files unter /data/agents/[id]/ und isolierte Sessions + Memory.",
+    "multiPersonaEnabled": "Multi-Persona-Modus aktivieren",
+    "multiPersonaEnabledHint": "Wenn aktiviert, kann jeder Telegram-Bot eine eigene Persona, Sessions und Memory haben.",
+    "multiPersonaDefaultAgentId": "Standard Agent-ID",
+    "multiPersonaDefaultAgentIdHint": "Die Standard-Agent-ID für den Haupt-Bot (normalerweise \"main\").",
+    "multiPersonaManageLink": "Personas verwalten"
   },
   "users": {
     "kicker": "Zugriffssteuerung",
