@@ -60,6 +60,15 @@ function buildAgentHeartbeatResponse(settingsRaw: Record<string, unknown>) {
   }
 }
 
+function buildMultiPersonaResponse(settingsRaw: Record<string, unknown>) {
+  const multiPersona = (settingsRaw.multiPersona ?? {}) as Record<string, unknown>
+
+  return {
+    enabled: multiPersona.enabled ?? false,
+    defaultAgentId: multiPersona.defaultAgentId ?? 'main',
+  }
+}
+
 function buildTasksResponse(settingsRaw: Record<string, unknown>) {
   const tasks = (settingsRaw.tasks ?? {}) as Record<string, unknown>
   const loopDetection = (tasks.loopDetection ?? {}) as Record<string, unknown>
@@ -173,6 +182,7 @@ export function mapSettingsResponse(context: SettingsResponseContext) {
     memoryConsolidation: buildConsolidationResponse(settingsRaw),
     factExtraction: buildFactExtractionResponse(settingsRaw),
     agentHeartbeat: buildAgentHeartbeatResponse(settingsRaw),
+    multiPersona: buildMultiPersonaResponse(settingsRaw),
     tasks: buildTasksResponse(settingsRaw),
     tts: buildTtsResponse(settingsRaw),
     stt: buildSttResponse(settingsRaw),

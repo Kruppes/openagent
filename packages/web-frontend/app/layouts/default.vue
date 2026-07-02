@@ -142,6 +142,15 @@
             </NuxtLink>
 
             <NuxtLink
+              to="/personas"
+              :class="navItemClass('/personas')"
+              @click="closeSidebarOnMobile"
+            >
+              <AppIcon name="bot" class="shrink-0" />
+              <span>{{ $t('nav.personas') }}</span>
+            </NuxtLink>
+
+            <NuxtLink
               to="/instructions"
               :class="navItemClass('/instructions')"
               @click="closeSidebarOnMobile"

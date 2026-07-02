@@ -7,6 +7,7 @@ import {
   mergeConsolidation,
   mergeFactExtraction,
   mergeHealthMonitor,
+  mergeMultiPersona,
   mergeStt,
   mergeTasks,
   mergeTts,
@@ -118,6 +119,9 @@ export function createSettingsService(options: SettingsRouterOptions = {}): Sett
     const agentHeartbeatMerge = mergeAgentHeartbeat(body, settingsRaw)
     if (agentHeartbeatMerge.error) throw new SettingsValidationError(agentHeartbeatMerge.error)
 
+    const multiPersonaMerge = mergeMultiPersona(body, settingsRaw)
+    if (multiPersonaMerge.error) throw new SettingsValidationError(multiPersonaMerge.error)
+
     const tasksMerge = mergeTasks(body, settingsRaw)
     if (tasksMerge.error) throw new SettingsValidationError(tasksMerge.error)
 
@@ -186,7 +190,13 @@ export function createSettingsService(options: SettingsRouterOptions = {}): Sett
       options.onAgentHeartbeatSettingsChanged?.()
     }
 
-    if (telegram.enabled !== previousTelegramEnabled || telegram.botToken !== previousTelegramBotToken) {
+    // Multi-persona toggles which Telegram bots run (pool vs single bot),
+    // so a change must restart the Telegram layer too.
+    if (
+      telegram.enabled !== previousTelegramEnabled
+      || telegram.botToken !== previousTelegramBotToken
+      || multiPersonaMerge.changed
+    ) {
       options.onTelegramSettingsChanged?.()
     }
 

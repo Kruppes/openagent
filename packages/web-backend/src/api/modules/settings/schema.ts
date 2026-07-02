@@ -228,6 +228,27 @@ export function mergeAgentHeartbeat(
   return { error: null, changed: true }
 }
 
+export function mergeMultiPersona(
+  body: Record<string, unknown>,
+  settingsRaw: Record<string, unknown>,
+): MergeGroupResult {
+  const multiPersona = body.multiPersona as Record<string, unknown> | undefined
+  if (!multiPersona) return { error: null, changed: false }
+
+  const existing = (settingsRaw.multiPersona ?? {}) as Record<string, unknown>
+
+  if (multiPersona.enabled !== undefined) existing.enabled = !!multiPersona.enabled
+
+  if (multiPersona.defaultAgentId !== undefined) {
+    const err = validateNonEmptyString(multiPersona.defaultAgentId, 'multiPersona.defaultAgentId')
+    if (err) return { error: err, changed: false }
+    existing.defaultAgentId = (multiPersona.defaultAgentId as string).trim()
+  }
+
+  settingsRaw.multiPersona = existing
+  return { error: null, changed: true }
+}
+
 export function mergeTasks(
   body: Record<string, unknown>,
   settingsRaw: Record<string, unknown>,

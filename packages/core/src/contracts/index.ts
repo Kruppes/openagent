@@ -30,6 +30,7 @@ export type {
   FactExtractionSettingsContract,
   AgentHeartbeatNightModeContract,
   AgentHeartbeatSettingsContract,
+  MultiPersonaSettingsContract,
   TasksLoopDetectionSettingsContract,
   TasksSettingsContract,
   TtsSettingsContract,

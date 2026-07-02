@@ -84,6 +84,16 @@ export interface AgentHeartbeatSettingsContract {
   nightMode: AgentHeartbeatNightModeContract
 }
 
+/**
+ * Multi-persona mode settings. When enabled, each persona gets its own
+ * files under /data/agents/<id>/, isolated sessions + memory, and
+ * optionally its own Telegram bot account.
+ */
+export interface MultiPersonaSettingsContract {
+  enabled: boolean
+  defaultAgentId: string
+}
+
 export interface TasksLoopDetectionSettingsContract {
   enabled: boolean
   method: TaskLoopDetectionMethod
@@ -181,6 +191,7 @@ export interface SettingsContract {
   memoryConsolidation: MemoryConsolidationSettingsContract
   factExtraction: FactExtractionSettingsContract
   agentHeartbeat: AgentHeartbeatSettingsContract
+  multiPersona: MultiPersonaSettingsContract
   tasks: TasksSettingsContract
   tts: TtsSettingsContract
   stt: SttSettingsContract
@@ -200,6 +211,7 @@ export interface SettingsStorageContract {
   memoryConsolidation?: Partial<MemoryConsolidationSettingsContract>
   factExtraction?: Partial<FactExtractionSettingsContract>
   agentHeartbeat?: Partial<AgentHeartbeatSettingsContract>
+  multiPersona?: Partial<MultiPersonaSettingsContract>
   tasks?: Partial<TasksSettingsContract>
   tts?: Partial<TtsSettingsContract>
   stt?: Partial<SttSettingsContract>
@@ -275,6 +287,10 @@ export const DEFAULT_SETTINGS_CONTRACT: SettingsContract = {
       startHour: 23,
       endHour: 8,
     },
+  },
+  multiPersona: {
+    enabled: false,
+    defaultAgentId: 'main',
   },
   tasks: {
     defaultProvider: '',
@@ -434,6 +450,10 @@ export function normalizeSettingsContract(input: DeepPartial<SettingsContract> |
           source.agentHeartbeat?.nightMode?.startHour ?? DEFAULT_SETTINGS_CONTRACT.agentHeartbeat.nightMode.startHour,
         endHour: source.agentHeartbeat?.nightMode?.endHour ?? DEFAULT_SETTINGS_CONTRACT.agentHeartbeat.nightMode.endHour,
       },
+    },
+    multiPersona: {
+      enabled: source.multiPersona?.enabled ?? DEFAULT_SETTINGS_CONTRACT.multiPersona.enabled,
+      defaultAgentId: source.multiPersona?.defaultAgentId ?? DEFAULT_SETTINGS_CONTRACT.multiPersona.defaultAgentId,
     },
     tasks: {
       defaultProvider: source.tasks?.defaultProvider ?? DEFAULT_SETTINGS_CONTRACT.tasks.defaultProvider,
