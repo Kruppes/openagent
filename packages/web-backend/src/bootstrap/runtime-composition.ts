@@ -50,6 +50,7 @@ import type {
   TaskRuntimeTaskBoundary,
 } from '@axiom/core'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
+import { completeSimple } from '@earendil-works/pi-ai/compat'
 import { randomUUID } from 'node:crypto'
 import { createTelegramBot, createTelegramBotPool } from '@axiom/telegram'
 import type { TelegramBot, TelegramBotPool, TelegramChatEvent } from '@axiom/telegram'
@@ -1041,6 +1042,45 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   }
 
   /**
+   * Draft a short execution plan for a pinned-model task BEFORE the heavy
+   * model starts — shown to the user for ✅/❌ approval. Runs on the
+   * verification provider when configured (cheap/local), else the active
+   * chat provider. Never on the heavy target model itself.
+   */
+  async function draftTaskPlan(input: { prompt: string; agentId: string; userId: string | null }): Promise<string> {
+    const cfg = getCurrentTaskSettings().verification
+    const provider = (cfg.providerId ? resolveProvider(cfg.providerId) : null) ?? getActiveProvider()
+    if (!provider) throw new Error('No provider available for plan drafting')
+
+    const model = buildModel(provider, getProviderDefaultModel(provider) || undefined)
+    const apiKey = await getApiKeyForProvider(provider)
+    const contextBlock = input.userId ? buildChatContextBlock(String(input.userId), input.agentId, 8, 2000) : null
+
+    const response = await completeSimple(model, {
+      systemPrompt:
+        'You draft execution plans for autonomous background tasks. ' +
+        'Produce a concise plan: max 6 short bullet points, concrete steps, no preamble, no closing remarks. ' +
+        'If the request is ambiguous, make the most reasonable assumption and note it as the last bullet.',
+      messages: [{
+        role: 'user' as const,
+        content: `${contextBlock ? `${contextBlock}\n\n` : ''}Task request: ${input.prompt}`,
+        timestamp: Date.now(),
+      }],
+    }, {
+      apiKey,
+      temperature: 0,
+    })
+
+    const text = response.content
+      .filter((item) => item.type === 'text')
+      .map((item) => (item as { type: 'text'; text: string }).text)
+      .join('')
+      .trim()
+    if (!text) throw new Error('Plan drafting returned no text')
+    return text.length > 1500 ? `${text.slice(0, 1500)}…` : text
+  }
+
+  /**
    * Deterministic handler for Telegram replies to task messages.
    * paused → resume with the user's text; running → status hint;
    * finished → follow-up task on the same provider/model + persona,
@@ -1403,6 +1443,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         startModelTask: startPinnedModelTask,
         onTaskReply: handleTelegramTaskReply,
         onTaskAction: handleTelegramTaskAction,
+        draftTaskPlan,
         onActiveProviderChanged: () => {
           initOrUpdateAgentCore().catch((err) => {
             logger.error('[axiom] Error rebuilding agent core after Telegram provider change:', err)
@@ -1435,14 +1476,17 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       db,
       onTelegramChatEvent,
       (queueDepth) => runtimeMetrics.setQueueDepth('telegram', queueDepth),
-      startPinnedModelTask,
-      handleTelegramTaskReply,
-      () => {
-        initOrUpdateAgentCore().catch((err) => {
-          logger.error('[axiom] Error rebuilding agent core after Telegram provider change:', err)
-        })
+      {
+        startModelTask: startPinnedModelTask,
+        onTaskReply: handleTelegramTaskReply,
+        onTaskAction: handleTelegramTaskAction,
+        draftTaskPlan,
+        onActiveProviderChanged: () => {
+          initOrUpdateAgentCore().catch((err) => {
+            logger.error('[axiom] Error rebuilding agent core after Telegram provider change:', err)
+          })
+        },
       },
-      handleTelegramTaskAction,
     )
     if (telegramBot) {
       try {

@@ -129,6 +129,16 @@ export interface TelegramBotOptions {
    */
   onActiveProviderChanged?: () => void
   /**
+   * Drafts a short execution plan for a pinned-model task (cheap/triage
+   * model). When provided, /fable-style commands show the plan with
+   * ✅ Start / ❌ Cancel buttons before the heavy model runs.
+   */
+  draftTaskPlan?: (input: {
+    prompt: string
+    agentId: string
+    userId: string | null
+  }) => Promise<string>
+  /**
    * Inline-button actions on task messages: kill a running task, or record
    * 👍/👎 feedback on a delivered result (stored as a memory fact so the
    * nightly consolidation learns from it). Returns a short ack text.
@@ -410,6 +420,21 @@ export class TelegramBot {
   private onTaskReplyCallback?: TelegramBotOptions['onTaskReply']
   private onActiveProviderChangedCallback?: TelegramBotOptions['onActiveProviderChanged']
   private onTaskActionCallback?: TelegramBotOptions['onTaskAction']
+  private draftTaskPlanCallback?: TelegramBotOptions['draftTaskPlan']
+  /**
+   * Pending plan-approve flows for /fable-style commands, keyed by a
+   * one-shot token carried in the ✅/❌ callback data. Entries expire after
+   * 15 minutes; bounded like the picker token store.
+   */
+  private pendingModelTasks = new Map<string, {
+    modelId: string
+    modelLabel: string
+    commandName: string
+    prompt: string
+    plan: string
+    userId: string | null
+    expiresAt: number
+  }>()
   /**
    * Maps `chatId:messageId` of bot-sent task messages (results, questions,
    * status updates) to their task id, so a Telegram reply to such a message
@@ -442,6 +467,7 @@ export class TelegramBot {
     this.onTaskReplyCallback = options.onTaskReply
     this.onActiveProviderChangedCallback = options.onActiveProviderChanged
     this.onTaskActionCallback = options.onTaskAction
+    this.draftTaskPlanCallback = options.draftTaskPlan
     this.onQueueDepthChanged = options.onQueueDepthChanged
     this.onChatEvent = options.onChatEvent
     this.slashRegistry = buildTelegramSlashCommandRegistry()
@@ -573,10 +599,12 @@ export class TelegramBot {
     })
 
     // Model-pinned task prefix commands (/fable …) — one-off background
-    // tasks on a heavy model, default chat model stays unchanged.
+    // tasks on a heavy model, default chat model stays unchanged. With a
+    // plan drafter available, a cheap plan is shown for ✅/❌ approval
+    // before the heavy model starts.
     for (const spec of MODEL_TASK_COMMANDS) {
       this.bot.command(spec.name, async (ctx) => {
-        await this.handleRegistryCommand(ctx, spec.name)
+        await this.handleModelTaskCommand(ctx, spec)
       })
     }
 
@@ -794,6 +822,97 @@ export class TelegramBot {
   }
 
   /**
+   * /fable-style command: draft a plan (cheap model), ask for ✅/❌
+   * approval, then start the pinned heavy-model task. Falls back to
+   * starting directly when no plan drafter is wired or drafting fails.
+   */
+  private async handleModelTaskCommand(
+    ctx: Context,
+    spec: { name: string; modelId: string; modelLabel: string },
+  ): Promise<void> {
+    if (!await this.checkAuthorized(ctx)) return
+
+    const text = ctx.message?.text ?? ''
+    const prompt = text.replace(/^\/[\w_]+(?:@[\w_]+)?\s*/, '').trim()
+    if (!prompt) {
+      await this.safeSendMessage(ctx, `Usage: /${spec.name} <prompt>\nRuns the request as a background task on ${spec.modelLabel}; the result is posted back into this chat.`)
+      return
+    }
+    if (!this.startModelTaskCallback) {
+      await this.safeSendMessage(ctx, `/${spec.name} is not available.`)
+      return
+    }
+
+    const userId = this.resolveUserId(ctx)
+
+    // No plan drafter → start directly (previous behavior).
+    if (!this.draftTaskPlanCallback) {
+      await this.startModelTaskAndConfirm(ctx, spec, prompt, undefined, userId)
+      return
+    }
+
+    try {
+      await ctx.replyWithChatAction('typing')
+      const plan = await this.draftTaskPlanCallback({ prompt, agentId: this.agentId, userId })
+
+      const token = crypto.randomBytes(8).toString('hex')
+      // Bounded: prune expired entries opportunistically.
+      const nowMs = Date.now()
+      for (const [key, entry] of this.pendingModelTasks) {
+        if (entry.expiresAt <= nowMs) this.pendingModelTasks.delete(key)
+      }
+      if (this.pendingModelTasks.size >= 50) {
+        const oldest = this.pendingModelTasks.keys().next().value
+        if (oldest) this.pendingModelTasks.delete(oldest)
+      }
+      this.pendingModelTasks.set(token, {
+        modelId: spec.modelId,
+        modelLabel: spec.modelLabel,
+        commandName: spec.name,
+        prompt,
+        plan,
+        userId,
+        expiresAt: nowMs + 15 * 60_000,
+      })
+
+      const keyboard = new InlineKeyboard()
+        .text(`✅ Start on ${spec.modelLabel}`, `${TASK_CALLBACK_PREFIX}plan_go:${token}`)
+        .text('❌ Cancel', `${TASK_CALLBACK_PREFIX}plan_x:${token}`)
+      await ctx.reply(`📋 Plan for ${spec.modelLabel}:\n\n${plan}`, { reply_markup: keyboard })
+    } catch (err) {
+      // Plan drafting failed — fall back to direct start rather than block.
+      console.warn(`[telegram] Plan drafting failed for /${spec.name}, starting directly:`, (err as Error).message)
+      await this.startModelTaskAndConfirm(ctx, spec, prompt, undefined, userId)
+    }
+  }
+
+  /** Start a pinned-model task and send the confirmation (reply-threadable). */
+  private async startModelTaskAndConfirm(
+    ctx: Context,
+    spec: { name: string; modelId: string; modelLabel: string },
+    prompt: string,
+    plan: string | undefined,
+    userId: string | null,
+  ): Promise<void> {
+    const taskPrompt = plan
+      ? `${prompt}\n\n<suggested_plan>\nA triage model drafted this plan — review it and adapt where it falls short:\n${plan}\n</suggested_plan>`
+      : prompt
+    try {
+      const result = await this.startModelTaskCallback!({
+        modelId: spec.modelId,
+        prompt: taskPrompt,
+        agentId: this.agentId,
+        userId,
+        source: 'telegram',
+      })
+      const sent = await ctx.reply(`🚀 Task started on ${result.providerName} (${result.modelId}).\n\nTask: ${result.taskName}\nID: ${result.taskId}\n\nThe result will be posted here when it finishes.`)
+      if (ctx.chat) this.rememberTaskMessage(ctx.chat.id, sent.message_id, result.taskId)
+    } catch (err) {
+      await this.safeSendMessage(ctx, `⚠️ ${(err as Error).message}`)
+    }
+  }
+
+  /**
    * Handle `tsk:<action>:<taskId>` inline-button taps on task messages.
    */
   private async handleTaskCallback(ctx: Context, payload: string): Promise<void> {
@@ -805,6 +924,13 @@ export class TelegramBot {
       await ctx.answerCallbackQuery({ text: 'Not authorized.', show_alert: true })
       return
     }
+
+    // Plan-approve buttons carry a pending-task token instead of a task id.
+    if (action === 'plan_go' || action === 'plan_x') {
+      await this.handlePlanCallback(ctx, action, taskId)
+      return
+    }
+
     if (!taskId || !['kill', 'feedback_up', 'feedback_down'].includes(action) || !this.onTaskActionCallback) {
       await ctx.answerCallbackQuery({ text: 'Action not available.', show_alert: true })
       return
@@ -823,6 +949,33 @@ export class TelegramBot {
     } catch (err) {
       await ctx.answerCallbackQuery({ text: `⚠️ ${(err as Error).message}`.slice(0, 190), show_alert: true })
     }
+  }
+
+  /** Handle ✅/❌ taps on a plan-approve message. */
+  private async handlePlanCallback(ctx: Context, action: 'plan_go' | 'plan_x', token: string): Promise<void> {
+    const pending = this.pendingModelTasks.get(token)
+    if (!pending || pending.expiresAt <= Date.now()) {
+      await ctx.answerCallbackQuery({ text: 'This plan has expired — run the command again.', show_alert: true })
+      try { await ctx.editMessageReplyMarkup({ reply_markup: undefined }) } catch { /* ignore */ }
+      return
+    }
+    this.pendingModelTasks.delete(token)
+    await ctx.answerCallbackQuery()
+
+    if (action === 'plan_x') {
+      try { await ctx.editMessageText(`❌ Cancelled.\n\n📋 Plan was:\n${pending.plan}`) } catch { /* ignore */ }
+      return
+    }
+
+    // Keep the plan visible, drop the buttons, then start the task.
+    try { await ctx.editMessageReplyMarkup({ reply_markup: undefined }) } catch { /* ignore */ }
+    await this.startModelTaskAndConfirm(
+      ctx,
+      { name: pending.commandName, modelId: pending.modelId, modelLabel: pending.modelLabel },
+      pending.prompt,
+      pending.plan,
+      pending.userId,
+    )
   }
 
   /** Inline keyboard with 👍/👎 feedback buttons for a delivered task result. */
@@ -1847,10 +2000,7 @@ export function createTelegramBot(
   db?: Database,
   onChatEvent?: (event: TelegramChatEvent) => void,
   onQueueDepthChanged?: (queueDepth: number) => void,
-  startModelTask?: TelegramBotOptions['startModelTask'],
-  onTaskReply?: TelegramBotOptions['onTaskReply'],
-  onActiveProviderChanged?: TelegramBotOptions['onActiveProviderChanged'],
-  onTaskAction?: TelegramBotOptions['onTaskAction'],
+  extras?: Omit<TelegramBotOptions, 'agentCore' | 'db' | 'config' | 'onChatEvent' | 'onQueueDepthChanged'>,
 ): TelegramBot | null {
   try {
     const config = loadTelegramRuntimeConfig()
@@ -1865,7 +2015,7 @@ export function createTelegramBot(
       return null
     }
 
-    return new TelegramBot({ agentCore, db, config, onChatEvent, onQueueDepthChanged, startModelTask, onTaskReply, onActiveProviderChanged, onTaskAction })
+    return new TelegramBot({ agentCore, db, config, onChatEvent, onQueueDepthChanged, ...extras })
   } catch {
     console.log('ℹ️  Telegram config not found. Running in web-only mode.')
     return null
