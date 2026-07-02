@@ -1,6 +1,7 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import type { Api, Model } from '@earendil-works/pi-ai'
-import { Type, completeSimple } from '@earendil-works/pi-ai'
+import { Type } from '@earendil-works/pi-ai'
+import { completeSimple } from '@earendil-works/pi-ai/compat'
 import { loadPersona, getPersonaDir } from './persona-loader.js'
 // resolveBackgroundReasoning import removed — cross-persona calls explicitly disable reasoning
 import fs from 'node:fs'
