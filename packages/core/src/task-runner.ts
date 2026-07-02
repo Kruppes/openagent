@@ -3,13 +3,14 @@ import path from 'node:path'
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { AgentEvent, AgentTool } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, Message, Model, Api } from '@earendil-works/pi-ai'
+import { completeSimple } from '@earendil-works/pi-ai/compat'
 
 import type { Database } from './database.js'
 import { getAgentSkillsDir } from './agent-skills.js'
 import { getSkill } from './skill-config.js'
 import { readTasksGuidelinesFile } from './memory.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
-import { readBackgroundThinkingLevelFromConfig } from './thinking-level.js'
+import { readBackgroundThinkingLevelFromConfig, resolveBackgroundReasoning } from './thinking-level.js'
 import { TaskStore } from './task-store.js'
 import type { Task, TaskResultStatus, TaskTriggerType } from './task-store.js'
 import type { SessionManager, SessionType } from './session-manager.js'
@@ -98,6 +99,15 @@ export interface TaskRunnerOptions {
    * so existing installations stay quiet until the operator opts in.
    */
   statusUpdates?: { enabled: boolean; intervalMinutes: number }
+  /**
+   * Result verification. When enabled (default), a completed user/agent/
+   * cronjob task result is checked by an independent reviewer pass before
+   * delivery; on a failed verdict the task agent gets ONE revision round
+   * with the critique. `providerId` routes the reviewer call to a specific
+   * provider (e.g. a local model) — empty uses the task's own provider.
+   * Verification fails open: any reviewer error delivers the original result.
+   */
+  verification?: { enabled: boolean; providerId?: string }
   /** Function to resolve a provider config by ID (for smart detection) */
   getProviderById?: (providerId: string) => ProviderConfig | null
   /** Optional event bus for streaming task execution events to WebSocket clients */
@@ -144,6 +154,8 @@ function triggerTypeToSessionType(triggerType: TaskTriggerType): SessionType {
 interface RunningTask {
   taskId: string
   agent: PiAgent
+  /** Provider the task runs on (null on resume — provider not persisted in PausedTask). */
+  provider?: ProviderConfig | null
   abortController: AbortController
   timeoutTimer: ReturnType<typeof setTimeout> | null
   promptTokens: number
@@ -306,6 +318,24 @@ Use STATUS: silent when there is genuinely nothing to report to the user (e.g. a
 If you encounter an unrecoverable error, use STATUS: failed and explain what went wrong.`)
 
   return sections.join('\n\n')
+}
+
+/**
+ * Extract the text content of the agent's most recent assistant message.
+ */
+function extractAgentResultText(agent: PiAgent): string {
+  const messages = agent.state.messages
+  const lastAssistantMsg = [...messages].reverse().find(
+    (m) => 'role' in m && m.role === 'assistant'
+  ) as AssistantMessage | undefined
+
+  if (!lastAssistantMsg || !('content' in lastAssistantMsg) || !Array.isArray(lastAssistantMsg.content)) {
+    return ''
+  }
+  return lastAssistantMsg.content
+    .filter((c: { type: string }) => c.type === 'text')
+    .map((c: { type: string; text?: string }) => c.text ?? '')
+    .join('')
 }
 
 /**
@@ -480,6 +510,7 @@ export class TaskRunner {
       const runningTask: RunningTask = {
         taskId,
         agent,
+        provider,
         abortController,
         timeoutTimer: null,
         promptTokens: 0,
@@ -549,6 +580,86 @@ export class TaskRunner {
   }
 
   /**
+   * Independent reviewer pass over a "completed" task result, with at most
+   * ONE revision round. Only for user/agent/cronjob tasks (heartbeat and
+   * consolidation are internal plumbing). Fails open — any reviewer error
+   * delivers the original result unchanged (returns null = keep original).
+   */
+  private async maybeVerifyAndRevise(
+    taskId: string,
+    agent: PiAgent,
+    resultText: string,
+    taskProvider: ProviderConfig | null,
+  ): Promise<{ status: TaskResultStatus; summary: string } | null> {
+    const cfg = this.options.verification
+    if (cfg && cfg.enabled === false) return null
+
+    const task = this.store.getById(taskId)
+    if (!task) return null
+    if (!['user', 'agent', 'cronjob'].includes(task.triggerType)) return null
+
+    try {
+      const reviewerProvider =
+        (cfg?.providerId ? this.options.getProviderById?.(cfg.providerId) : null) ?? taskProvider
+      if (!reviewerProvider) return null
+
+      const model = this.options.buildModel(reviewerProvider)
+      const apiKey = await this.options.getApiKey(reviewerProvider)
+
+      const promptExcerpt = task.prompt.length > 4000 ? `${task.prompt.slice(0, 4000)}…` : task.prompt
+      const resultExcerpt = resultText.length > 6000 ? `${resultText.slice(0, 6000)}…` : resultText
+
+      const response = await completeSimple(model, {
+        systemPrompt:
+          'You are a strict reviewer for results of autonomous background tasks. ' +
+          'Judge ONLY whether the reported result actually fulfills the task: are the claims concrete and backed by the described work, is anything essential missing, does it answer what was asked? ' +
+          'Minor style issues are NOT a fail. Respond in exactly this format:\n' +
+          'VERDICT: pass|fail\nCRITIQUE: <if fail: the specific, actionable gaps to fix — max 5 bullet points. If pass: "-">',
+        messages: [{
+          role: 'user' as const,
+          content: `<task>\n${promptExcerpt}\n</task>\n\n<reported_result>\n${resultExcerpt}\n</reported_result>`,
+          timestamp: Date.now(),
+        }],
+      }, {
+        apiKey,
+        temperature: 0,
+        reasoning: resolveBackgroundReasoning(),
+      })
+
+      const verdictText = response.content
+        .filter((item) => item.type === 'text')
+        .map((item) => (item as { type: 'text'; text: string }).text)
+        .join('')
+      const failed = /VERDICT:\s*fail/i.test(verdictText)
+      if (!failed) return null
+
+      const critique = (verdictText.match(/CRITIQUE:\s*([\s\S]*)$/i)?.[1] ?? '').trim().slice(0, 2000)
+      if (!critique || critique === '-') return null
+
+      console.log(`[task-runner] Verifier requested revision for task ${taskId}`)
+      this.emitStatusChange(taskId, 'running', 'Result verification requested improvements — running one revision round')
+
+      await agent.prompt(
+        'An independent reviewer checked your reported result against the original task and found gaps:\n\n' +
+        `${critique}\n\n` +
+        'Address these points (do additional work with your tools if needed), then report your final result again in the required STATUS/SUMMARY format.'
+      )
+
+      const revisedText = extractAgentResultText(agent)
+      const parsed = parseTaskOutput(revisedText)
+      // A revision must not silently downgrade to question/silent mid-flight;
+      // only accept completed/failed outcomes, else keep the original.
+      if (parsed.status === 'completed' || parsed.status === 'failed') {
+        return parsed
+      }
+      return null
+    } catch (err) {
+      console.warn(`[task-runner] Result verification skipped (fail-open) for ${taskId}:`, (err as Error).message)
+      return null
+    }
+  }
+
+  /**
    * Run the task agent asynchronously
    */
   private async runTaskAsync(
@@ -567,20 +678,20 @@ export class TaskRunner {
       this.cleanupRunningTask(taskId)
 
       // Extract result from agent messages
-      const messages = agent.state.messages
-      const lastAssistantMsg = [...messages].reverse().find(
-        (m) => 'role' in m && m.role === 'assistant'
-      ) as AssistantMessage | undefined
+      const resultText = extractAgentResultText(agent)
 
-      let resultText = ''
-      if (lastAssistantMsg && 'content' in lastAssistantMsg && Array.isArray(lastAssistantMsg.content)) {
-        resultText = lastAssistantMsg.content
-          .filter((c: { type: string }) => c.type === 'text')
-          .map((c: { type: string; text?: string }) => c.text ?? '')
-          .join('')
+      let { status, summary } = parseTaskOutput(resultText)
+
+      // Verifier pass: independent review of a "completed" result before it
+      // reaches the user; one revision round on a failed verdict.
+      if (status === 'completed') {
+        const revised = await this.maybeVerifyAndRevise(taskId, agent, resultText, runningTask.provider ?? null)
+        if (revised) {
+          status = revised.status
+          summary = revised.summary
+        }
       }
 
-      const { status, summary } = parseTaskOutput(resultText)
       const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
       // Handle "question" status — pause the task instead of completing
@@ -1336,20 +1447,21 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
       unsubscribe()
       this.cleanupRunningTask(taskId)
 
-      const messages = agent.state.messages
-      const lastAssistantMsg = [...messages].reverse().find(
-        (m) => 'role' in m && m.role === 'assistant'
-      ) as AssistantMessage | undefined
+      const resultText = extractAgentResultText(agent)
 
-      let resultText = ''
-      if (lastAssistantMsg && 'content' in lastAssistantMsg && Array.isArray(lastAssistantMsg.content)) {
-        resultText = lastAssistantMsg.content
-          .filter((c: { type: string }) => c.type === 'text')
-          .map((c: { type: string; text?: string }) => c.text ?? '')
-          .join('')
+      let { status, summary } = parseTaskOutput(resultText)
+
+      // Verifier pass (resume path). Provider is not persisted across the
+      // pause, so the reviewer runs only when verification.providerId is
+      // configured; otherwise this is a no-op.
+      if (status === 'completed') {
+        const revised = await this.maybeVerifyAndRevise(taskId, agent, resultText, null)
+        if (revised) {
+          status = revised.status
+          summary = revised.summary
+        }
       }
 
-      const { status, summary } = parseTaskOutput(resultText)
       const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
       // Handle nested question (task pauses again)

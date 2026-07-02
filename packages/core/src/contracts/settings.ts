@@ -107,6 +107,11 @@ export interface TasksStatusUpdatesSettingsContract {
   intervalMinutes: number
 }
 
+export interface TasksVerificationSettingsContract {
+  enabled: boolean
+  providerId: string
+}
+
 export interface TasksSettingsContract {
   defaultProvider: string
   maxDurationMinutes: number
@@ -120,6 +125,13 @@ export interface TasksSettingsContract {
    * chat event bus and (optionally) Telegram without invoking the LLM.
    */
   statusUpdates: TasksStatusUpdatesSettingsContract
+  /**
+   * Independent reviewer pass over completed user/agent/cronjob task
+   * results with one revision round on a failed verdict. `providerId`
+   * routes the reviewer call to a specific provider (e.g. a local model);
+   * empty string uses the task's own provider.
+   */
+  verification: TasksVerificationSettingsContract
   /**
    * Thinking level used for background task agents, the task runner's loop
    * detection calls, and internal background jobs (fact extraction, memory
@@ -307,6 +319,10 @@ export const DEFAULT_SETTINGS_CONTRACT: SettingsContract = {
       enabled: false,
       intervalMinutes: 10,
     },
+    verification: {
+      enabled: true,
+      providerId: '',
+    },
     backgroundThinkingLevel: 'off',
   },
   tts: {
@@ -472,6 +488,10 @@ export function normalizeSettingsContract(input: DeepPartial<SettingsContract> |
           ?? DEFAULT_SETTINGS_CONTRACT.tasks.loopDetection.smartCheckInterval,
       },
       statusUpdates: normalizeTasksStatusUpdates(source.tasks),
+      verification: {
+        enabled: source.tasks?.verification?.enabled ?? DEFAULT_SETTINGS_CONTRACT.tasks.verification.enabled,
+        providerId: source.tasks?.verification?.providerId ?? DEFAULT_SETTINGS_CONTRACT.tasks.verification.providerId,
+      },
       backgroundThinkingLevel: normalizeThinkingLevel(
         source.tasks?.backgroundThinkingLevel,
         DEFAULT_SETTINGS_CONTRACT.tasks.backgroundThinkingLevel,

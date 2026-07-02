@@ -94,6 +94,10 @@ function buildTasksResponse(settingsRaw: Record<string, unknown>) {
       enabled: statusUpdates.enabled ?? false,
       intervalMinutes: resolvedStatusInterval,
     },
+    verification: {
+      enabled: (tasks.verification as Record<string, unknown> | undefined)?.enabled ?? true,
+      providerId: (tasks.verification as Record<string, unknown> | undefined)?.providerId ?? '',
+    },
     backgroundThinkingLevel: tasks.backgroundThinkingLevel ?? 'off',
   }
 }

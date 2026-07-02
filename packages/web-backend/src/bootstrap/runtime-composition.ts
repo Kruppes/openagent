@@ -103,6 +103,10 @@ interface TaskSettings {
     enabled: boolean
     intervalMinutes: number
   }
+  verification: {
+    enabled: boolean
+    providerId: string
+  }
 }
 
 interface RuntimeSettings {
@@ -168,6 +172,10 @@ export function loadRuntimeSettings(): RuntimeSettings {
       enabled: false,
       intervalMinutes: 10,
     },
+    verification: {
+      enabled: true,
+      providerId: '',
+    },
   }
 
   let builtinToolsConfig: BuiltinToolsConfig | undefined
@@ -215,6 +223,13 @@ export function loadRuntimeSettings(): RuntimeSettings {
         taskSettings.loopDetection = {
           ...taskSettings.loopDetection,
           ...tasksConfig.loopDetection,
+        }
+      }
+
+      if (tasksConfig.verification) {
+        taskSettings.verification = {
+          ...taskSettings.verification,
+          ...tasksConfig.verification,
         }
       }
     }
@@ -717,6 +732,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
           }
         : undefined,
       statusUpdates: taskSettings.statusUpdates,
+      verification: taskSettings.verification,
       getProviderById: (id: string) => resolveProvider(id),
       taskEventBus,
       // Watchdog fallback for tasks that never set maxDurationMinutes

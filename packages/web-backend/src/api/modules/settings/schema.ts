@@ -328,6 +328,24 @@ export function mergeTasks(
     existing.statusUpdates = existingStatusUpdates
   }
 
+  if (tasks.verification !== undefined) {
+    const verification = tasks.verification as Record<string, unknown>
+    const existingVerification = (existing.verification ?? {}) as Record<string, unknown>
+
+    if (verification.enabled !== undefined) {
+      existingVerification.enabled = !!verification.enabled
+    }
+
+    if (verification.providerId !== undefined) {
+      if (typeof verification.providerId !== 'string') {
+        return { error: 'tasks.verification.providerId must be a string' }
+      }
+      existingVerification.providerId = verification.providerId.trim()
+    }
+
+    existing.verification = existingVerification
+  }
+
   // Legacy flat key — preserved so existing PATCH callers that still send
   // `tasks.statusUpdateIntervalMinutes` keep working. We migrate it into the
   // new sub-object without clobbering an explicit `enabled` flag.
