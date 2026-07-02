@@ -288,6 +288,8 @@ export function registerBuiltInSlashCommands(registry: SlashCommandRegistry): vo
  */
 export const MODEL_TASK_COMMANDS: ReadonlyArray<{ name: string; modelId: string; modelLabel: string }> = [
   { name: 'fable', modelId: 'claude-fable-5', modelLabel: 'Claude Fable 5' },
+  { name: 'opus', modelId: 'claude-opus-4-8', modelLabel: 'Claude Opus 4.8' },
+  { name: 'sonnet', modelId: 'claude-sonnet-5', modelLabel: 'Claude Sonnet 5' },
 ]
 
 async function handleModelTaskCommand(

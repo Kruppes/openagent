@@ -933,6 +933,40 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   ]
 
   /**
+   * Compact tail of the user's recent conversation with a persona, for
+   * injection into prefix-command tasks. Without this, a `/fable mach das`
+   * task has zero idea what "das" refers to. Deterministic (no LLM call):
+   * last N user/assistant messages, oldest first, hard char cap.
+   */
+  function buildChatContextBlock(userId: string, agentId: string, maxMessages = 15, maxChars = 4000): string | null {
+    try {
+      const rows = db.prepare(
+        `SELECT role, content FROM chat_messages
+         WHERE user_id = ? AND agent_id = ? AND role IN ('user','assistant') AND content != ''
+         ORDER BY id DESC LIMIT ?`
+      ).all(Number(userId), agentId, maxMessages) as Array<{ role: string; content: string }>
+      if (rows.length === 0) return null
+
+      const lines: string[] = []
+      let used = 0
+      // rows are newest-first; walk and keep until the budget is spent, then
+      // reverse so the block reads oldest → newest.
+      for (const row of rows) {
+        const text = row.content.length > 600 ? `${row.content.slice(0, 600)}…` : row.content
+        const line = `${row.role === 'user' ? 'User' : 'Assistant'}: ${text}`
+        if (used + line.length > maxChars) break
+        lines.push(line)
+        used += line.length
+      }
+      if (lines.length === 0) return null
+      lines.reverse()
+      return `<chat_context>\nRecent conversation with the user (oldest first) — use it to resolve references in the task:\n${lines.join('\n')}\n</chat_context>`
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * Start a one-off background task pinned to a specific model — backs the
    * /fable-style Telegram prefix commands. The task inherits the caller's
    * persona and links its session lineage to the user's interactive session
@@ -955,9 +989,15 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     const provider = { ...baseProvider, enabledModels: [resolved.modelId] }
 
     const promptPreview = input.prompt.length > 60 ? `${input.prompt.slice(0, 60)}…` : input.prompt
+    const contextBlock = input.userId
+      ? buildChatContextBlock(String(input.userId), input.agentId)
+      : null
+    const taskPrompt = contextBlock
+      ? `${contextBlock}\n\nTask: ${input.prompt}`
+      : input.prompt
     const task = taskRuntime.tasks.create({
       name: `${resolved.modelId}: ${promptPreview}`,
-      prompt: input.prompt,
+      prompt: taskPrompt,
       triggerType: 'user',
       provider: provider.name,
       model: resolved.modelId,
