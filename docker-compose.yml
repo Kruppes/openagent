@@ -1,6 +1,7 @@
 services:
   axiom:
-    image: ghcr.io/meteyou/axiom:latest
+    build: .
+    image: axiom:local
     container_name: axiom
     restart: unless-stopped
     ports:

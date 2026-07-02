@@ -88,6 +88,33 @@ if [ -d /app/skills_agent_defaults ]; then
     done
 fi
 
+# ---------------------------------------------------------------------------
+# Seed persona files for multi-persona agents (only if not already present)
+# Persona seed files ship with the image under /app/agents-seed/<agentId>/
+# Target: /data/agents/<agentId>/
+# ---------------------------------------------------------------------------
+mkdir -p /data/agents
+if [ -d /app/agents-seed ]; then
+    for agent_dir in /app/agents-seed/*/; do
+        agent_id=$(basename "$agent_dir")
+        target="/data/agents/$agent_id"
+        if [ ! -d "$target" ]; then
+            cp -r "$agent_dir" "$target"
+            echo "[axiom] Seeded persona files: $agent_id"
+        else
+            # Copy only files that don't exist yet (never overwrite user edits)
+            for src_file in "$agent_dir"*; do
+                [ -f "$src_file" ] || continue
+                filename=$(basename "$src_file")
+                if [ ! -f "$target/$filename" ]; then
+                    cp "$src_file" "$target/$filename"
+                    echo "[axiom] Seeded persona file: $agent_id/$filename"
+                fi
+            done
+        fi
+    done
+fi
+
 # Fix ownership on first run or after migration from root user
 if [ "$(stat -c '%u' /workspace)" = "0" ]; then
     echo "[axiom] Migrating workspace ownership to agent user..."
@@ -98,6 +125,9 @@ if [ "$(stat -c '%u' /data)" = "0" ]; then
     echo "[axiom] Migrating data ownership to agent user..."
     chown -R agent:agent /data
 fi
+
+# Always ensure /data/config is owned by agent (may have been created by root)
+chown -R agent:agent /data/config 2>/dev/null || true
 
 # Set up home defaults if missing (volume overlays image content on first run)
 if [ ! -f /workspace/.bashrc ]; then
