@@ -2,6 +2,16 @@ import { randomUUID } from 'node:crypto'
 import type { Database } from './database.js'
 import { appendToDailyFile } from './memory.js'
 import { logToolCall } from './token-logger.js'
+import {
+  extractTopicTags,
+  getSessionMessages,
+  detectTopicShift,
+  queryMemoriesFts,
+  buildFactInjection,
+  estimateTokens,
+  hasAttachmentMarker,
+} from './session-store.js'
+import type { SessionMessage } from './session-store.js'
 
 /**
  * The single canonical session ID generator. All new sessions — interactive,
@@ -10,6 +20,20 @@ import { logToolCall } from './token-logger.js'
  */
 export function generateSessionId(): string {
   return randomUUID()
+}
+
+/**
+ * Merge incoming topic tags into an existing list, de-duplicating and
+ * capping at 8 to keep the sliding-window signal bounded.
+ */
+function mergeTopicTags(existing: string[], incoming: string[]): string[] {
+  const merged = [...existing]
+  for (const tag of incoming) {
+    if (!merged.includes(tag)) {
+      merged.push(tag)
+    }
+  }
+  return merged.slice(0, 8)
 }
 
 export type SessionType =
@@ -36,6 +60,10 @@ export interface SessionInfo {
   summaryWritten: boolean
   /** True if this session was restored from DB after a server restart */
   restored: boolean
+  /** Cached topic tags for the current session (topic-shift detection) */
+  topicTags?: string[]
+  /** Agent ID for multi-persona support (default: 'main') */
+  agentId: string
 }
 
 export interface SessionManagerOptions {
@@ -62,9 +90,14 @@ export interface SessionManagerOptions {
     summary: string | null,
     options?: { background?: boolean },
   ) => void
+  /**
+   * Called when a topic shift is detected (or facts are injected on a fresh
+   * session). Lets the caller surface the injected memory context to the UI.
+   */
+  onTopicShift?: (session: SessionInfo, factInjection: string) => void
 }
 
-export type SessionEndReason = 'timeout' | 'manual' | 'provider_change'
+export type SessionEndReason = 'timeout' | 'manual' | 'provider_change' | 'topic_shift'
 
 /**
  * Manages active sessions per user with timeout and auto-summarization.
@@ -73,8 +106,8 @@ export type SessionEndReason = 'timeout' | 'manual' | 'provider_change'
  * a previous server run (restore or summarize them).
  */
 export class SessionManager {
-  private sessions: Map<string, SessionInfo> = new Map() // userId -> session
-  private timers: Map<string, ReturnType<typeof setTimeout>> = new Map() // userId -> timeout timer
+  private sessions: Map<string, SessionInfo> = new Map() // sessionKey (userId:agentId) -> session
+  private timers: Map<string, ReturnType<typeof setTimeout>> = new Map() // sessionKey -> timeout timer
   private db: Database
   private timeoutMs: number
   private memoryDir?: string
@@ -84,6 +117,9 @@ export class SessionManager {
     summary: string | null,
     options?: { background?: boolean },
   ) => void
+  private onTopicShift?: (session: SessionInfo, factInjection: string) => void
+  /** Pending fact injection text to be included in the next response, keyed by sessionKey */
+  private pendingFactInjection: Map<string, string> = new Map()
   /**
    * Tracks pending background summary jobs spawned by
    * `handleNewCommandAsync` so `dispose()` can drain them on shutdown
@@ -107,6 +143,15 @@ export class SessionManager {
     this.memoryDir = options.memoryDir
     this.onSummarize = options.onSummarize
     this.onSessionEnd = options.onSessionEnd
+    this.onTopicShift = options.onTopicShift
+  }
+
+  /**
+   * Compute the session map key. Uses a userId:agentId composite so the same
+   * user can hold independent sessions with different persona bots.
+   */
+  private sessionKey(userId: string, agentId: string = 'main'): string {
+    return `${userId}:${agentId}`
   }
 
   /**
@@ -128,7 +173,7 @@ export class SessionManager {
     // loop_detection) are owned by their respective producers and must not be
     // auto-summarized or auto-closed by SessionManager on startup.
     const orphaned = this.db.prepare(
-      `SELECT id, user_id, session_user, source, type, started_at, last_activity, message_count, summary_written
+      `SELECT id, user_id, session_user, source, type, started_at, last_activity, message_count, summary_written, agent_id
        FROM sessions WHERE ended_at IS NULL AND type = 'interactive'`
     ).all() as Array<{
       id: string
@@ -140,6 +185,7 @@ export class SessionManager {
       last_activity: string | null
       message_count: number
       summary_written: number
+      agent_id: string | null
     }>
 
     if (orphaned.length === 0) return
@@ -189,12 +235,17 @@ export class SessionManager {
         ? String(row.user_id)
         : (row.session_user ?? `orphan:${row.id}`)
 
-      if (elapsed >= this.timeoutMs) {
+      // No-time-reset guarantee: when timeouts are disabled (timeoutMs <= 0),
+      // sessions never expire — always force-restore orphans rather than
+      // summarizing+closing them, so a restart can't silently reset a user's
+      // long-running conversation.
+      if (this.timeoutMs > 0 && elapsed >= this.timeoutMs) {
         // Timeout already elapsed → summarize and close
         await this.summarizeAndCloseOrphanedSession(row, userId, lastActivity)
       } else {
-        // Timeout not yet elapsed → restore session with remaining time
-        this.restoreSession(row, userId, lastActivity, this.timeoutMs - elapsed)
+        // Timeout not yet elapsed (or timeouts disabled) → restore session
+        const remainingMs = this.timeoutMs > 0 ? this.timeoutMs - elapsed : 0
+        this.restoreSession(row, userId, lastActivity, remainingMs)
       }
     }
   }
@@ -214,7 +265,7 @@ export class SessionManager {
    * Uses the lastActivity timestamp to write to the correct daily file.
    */
   private async summarizeAndCloseOrphanedSession(
-    row: { id: string; started_at: string; message_count: number; summary_written: number; source: string },
+    row: { id: string; started_at: string; message_count: number; summary_written: number; source: string; agent_id: string | null },
     userId: string,
     lastActivity: number,
   ): Promise<void> {
@@ -275,6 +326,7 @@ export class SessionManager {
         messageCount: row.message_count,
         summaryWritten,
         restored: true,
+        agentId: row.agent_id ?? 'main',
       }, summary)
     }
   }
@@ -290,12 +342,15 @@ export class SessionManager {
       started_at: string
       message_count: number
       summary_written: number
+      agent_id: string | null
     },
     userId: string,
     lastActivity: number,
     remainingMs: number,
   ): void {
     const startedAt = this.parseSqliteTimestamp(row.started_at)
+    const agentId = row.agent_id ?? 'main'
+    const key = this.sessionKey(userId, agentId)
 
     const session: SessionInfo = {
       id: row.id,
@@ -306,18 +361,26 @@ export class SessionManager {
       messageCount: row.message_count,
       summaryWritten: !!row.summary_written,
       restored: true,
+      agentId,
     }
 
-    this.sessions.set(userId, session)
+    this.sessions.set(key, session)
+
+    // No-time-reset guarantee: when timeouts are disabled, restore without a
+    // timer so the session never expires.
+    if (this.timeoutMs <= 0) {
+      console.log(`[session] Restored session ${row.id} for user ${userId} agent ${agentId} (no time-based expiry)`)
+      return
+    }
 
     const remainingMinutes = Math.round(remainingMs / 60000)
-    console.log(`[session] Restored session ${row.id} for user ${userId} (${remainingMinutes}min remaining)`)
+    console.log(`[session] Restored session ${row.id} for user ${userId} agent ${agentId} (${remainingMinutes}min remaining)`)
 
     // Start timer with remaining time
     const timer = setTimeout(() => {
-      console.log(`[session] Timeout fired for restored session of user ${userId}`)
-      this.endSession(userId).catch(err => {
-        console.error(`[session] Timeout error for user ${userId}:`, err)
+      console.log(`[session] Timeout fired for restored session of user ${userId} agent ${agentId}`)
+      this.endSession(key).catch(err => {
+        console.error(`[session] Timeout error for user ${userId} agent ${agentId}:`, err)
       })
     }, remainingMs)
 
@@ -325,7 +388,7 @@ export class SessionManager {
       timer.unref()
     }
 
-    this.timers.set(userId, timer)
+    this.timers.set(key, timer)
   }
 
   /**
@@ -426,42 +489,151 @@ export class SessionManager {
    * are not cached per-user and do not occupy the interactive-session
    * lifecycle slot.
    */
-  getOrCreateSession(userId: string, source: string = 'web'): SessionInfo {
-    let session = this.sessions.get(userId)
+  getOrCreateSession(userId: string, source: string = 'web', agentId: string = 'main'): SessionInfo {
+    return this.resolveSession(userId, source, undefined, agentId)
+  }
 
-    if (!session) {
-      const id = generateSessionId()
-      session = {
-        id,
-        userId,
-        source,
-        startedAt: Date.now(),
-        lastActivity: Date.now(),
-        messageCount: 0,
-        summaryWritten: false,
-        restored: false,
+  /**
+   * Resolve the active interactive session for a (user, agent), running
+   * topic-shift detection when `messageText` is supplied.
+   *
+   * - No active session → create a fresh one and (if messageText) inject facts.
+   * - Active session + messageText + topic shift → end the current session
+   *   (fire-and-forget summary) and start a fresh one with fact injection.
+   * - Active session, no shift → continue it, refreshing topic tags + timer.
+   *
+   * ALWAYS creates a fresh session on shift (never reactivates an old one).
+   */
+  resolveSession(userId: string, source: string = 'web', messageText?: string, agentId: string = 'main'): SessionInfo {
+    const key = this.sessionKey(userId, agentId)
+    const existingSession = this.sessions.get(key)
+
+    if (existingSession && messageText) {
+      const history = getSessionMessages(this.db, existingSession.id)
+
+      if (history.length > 0) {
+        const newMsg: SessionMessage = {
+          content: messageText,
+          timestampMs: Date.now(),
+          tokens: estimateTokens(messageText),
+          hasAttachment: hasAttachmentMarker(messageText),
+        }
+
+        const result = detectTopicShift(history, newMsg)
+
+        if (result.shiftDetected) {
+          console.log(`[session] Topic shift detected for user ${userId} agent ${agentId} (score=${result.score}, signals=${JSON.stringify(result.signals)})`)
+
+          // End current session (fire-and-forget the summary)
+          this.endSession(key, 'topic_shift').catch(err => {
+            console.error(`[session] Error ending session on topic shift:`, err)
+          })
+
+          // Create fresh session and inject facts
+          const newSession = this.createFreshSession(userId, source, agentId)
+          this.injectFacts(key, messageText, agentId)
+          return newSession
+        }
       }
-      this.sessions.set(userId, session)
 
-      // Insert into SQLite (type is hardcoded to 'interactive'; see method
-      // docstring for rationale).
-      this.db.prepare(
-        `INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, last_activity, session_user, message_count, summary_written)
-         VALUES (?, ?, ?, 'interactive', NULL, datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), ?, 0, 0)`
-      ).run(session.id, null, source, session.startedAt, session.lastActivity, userId)
-
-      // Log session start to tool_calls for activity log visibility
-      logToolCall(this.db, {
-        sessionId: session.id,
-        toolName: 'session_start',
-        input: JSON.stringify({ userId, source }),
-        output: JSON.stringify({ sessionId: session.id }),
-        durationMs: 0,
-        status: 'success',
-      })
+      // No shift — update topic tags incrementally and continue
+      const newTags = extractTopicTags([messageText])
+      existingSession.topicTags = mergeTopicTags(existingSession.topicTags ?? [], newTags)
+      existingSession.lastActivity = Date.now()
+      this.resetTimer(key)
+      return existingSession
     }
 
+    if (existingSession) {
+      // No message text — just continue the existing session
+      existingSession.lastActivity = Date.now()
+      this.resetTimer(key)
+      return existingSession
+    }
+
+    // No active session — create a new one and inject facts
+    const session = this.createFreshSession(userId, source, agentId)
+    if (messageText) {
+      this.injectFacts(key, messageText, agentId)
+    }
     return session
+  }
+
+  /**
+   * Create a fresh interactive session for a (user, agent) and cache it.
+   */
+  private createFreshSession(userId: string, source: string, agentId: string = 'main'): SessionInfo {
+    const id = generateSessionId()
+    const key = this.sessionKey(userId, agentId)
+
+    const session: SessionInfo = {
+      id,
+      userId,
+      source,
+      startedAt: Date.now(),
+      lastActivity: Date.now(),
+      messageCount: 0,
+      summaryWritten: false,
+      restored: false,
+      agentId,
+    }
+    this.sessions.set(key, session)
+
+    this.db.prepare(
+      `INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, last_activity, session_user, message_count, summary_written, agent_id)
+       VALUES (?, ?, ?, 'interactive', NULL, datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), ?, 0, 0, ?)`
+    ).run(session.id, null, source, session.startedAt, session.lastActivity, userId, agentId)
+
+    logToolCall(this.db, {
+      sessionId: session.id,
+      toolName: 'session_start',
+      input: JSON.stringify({ userId, source, agentId }),
+      output: JSON.stringify({ sessionId: session.id }),
+      durationMs: 0,
+      status: 'success',
+    })
+
+    this.resetTimer(key)
+    return session
+  }
+
+  /**
+   * Query memories FTS5 for relevant facts based on message text and store
+   * the injection for the next response (consumed via consumeFactInjection).
+   */
+  private injectFacts(key: string, messageText: string, agentId?: string): void {
+    try {
+      const keywords = extractTopicTags([messageText])
+      if (keywords.length === 0) return
+
+      const facts = queryMemoriesFts(this.db, keywords, 5, agentId)
+      if (facts.length === 0) return
+
+      const injection = buildFactInjection(facts)
+      this.pendingFactInjection.set(key, injection)
+
+      const session = this.sessions.get(key)
+      if (session && this.onTopicShift) {
+        this.onTopicShift(session, injection)
+      }
+
+      console.log(`[session] Injected ${facts.length} facts for key ${key} (keywords: ${keywords.join(', ')})`)
+    } catch (err) {
+      console.error('[session] Fact injection error:', err)
+    }
+  }
+
+  /**
+   * Consume and clear any pending fact injection for a (user, agent).
+   */
+  consumeFactInjection(userId: string, agentId: string = 'main'): string | null {
+    const key = this.sessionKey(userId, agentId)
+    const injection = this.pendingFactInjection.get(key)
+    if (injection) {
+      this.pendingFactInjection.delete(key)
+      return injection
+    }
+    return null
   }
 
   /**
@@ -482,6 +654,7 @@ export class SessionManager {
       messageCount: 0,
       summaryWritten: false,
       restored: false,
+      agentId: 'main',
     }
 
     this.db.prepare(
@@ -503,12 +676,13 @@ export class SessionManager {
   /**
    * Record a message in the active session
    */
-  recordMessage(userId: string): void {
-    const session = this.sessions.get(userId)
+  recordMessage(userId: string, agentId: string = 'main'): void {
+    const key = this.sessionKey(userId, agentId)
+    const session = this.sessions.get(key)
     if (session) {
       session.messageCount++
       session.lastActivity = Date.now()
-      this.resetTimer(userId)
+      this.resetTimer(key)
 
       // Update SQLite (message count and last activity)
       this.db.prepare(
@@ -518,17 +692,17 @@ export class SessionManager {
   }
 
   /**
-   * Get the active session for a user (without creating one)
+   * Get the active session for a (user, agent) (without creating one)
    */
-  getSession(userId: string): SessionInfo | undefined {
-    return this.sessions.get(userId)
+  getSession(userId: string, agentId: string = 'main'): SessionInfo | undefined {
+    return this.sessions.get(this.sessionKey(userId, agentId))
   }
 
   /**
-   * Check if a user has an active session
+   * Check if a (user, agent) has an active session
    */
-  hasActiveSession(userId: string): boolean {
-    return this.sessions.has(userId)
+  hasActiveSession(userId: string, agentId: string = 'main'): boolean {
+    return this.sessions.has(this.sessionKey(userId, agentId))
   }
 
   /**
@@ -539,13 +713,14 @@ export class SessionManager {
    * interactive UIs where blocking on summary generation is
    * user-visible.
    */
-  async handleNewCommand(userId: string): Promise<string | null> {
-    const session = this.sessions.get(userId)
+  async handleNewCommand(userId: string, agentId: string = 'main'): Promise<string | null> {
+    const key = this.sessionKey(userId, agentId)
+    const session = this.sessions.get(key)
     if (!session) {
       return null
     }
 
-    return this.endSession(userId, 'manual')
+    return this.endSession(key, 'manual')
   }
 
   /**
@@ -563,8 +738,9 @@ export class SessionManager {
    * session was opened.
    */
   // Used by the websocket chat /new command handler for instant session switch.
-  handleNewCommandAsync(userId: string, source: string = 'web'): SessionInfo {
-    const oldSession = this.sessions.get(userId)
+  handleNewCommandAsync(userId: string, source: string = 'web', agentId: string = 'main'): SessionInfo {
+    const key = this.sessionKey(userId, agentId)
+    const oldSession = this.sessions.get(key)
     // Snapshot the OLD session's id as a primitive *before* we mint the new
     // one, so every downstream write (daily-log, chat_messages divider,
     // tool_calls row, onSessionEnd callback) is unambiguously bound to the
@@ -576,8 +752,8 @@ export class SessionManager {
     const oldSessionId = oldSession?.id
 
     if (oldSession && oldSessionId) {
-      this.clearTimer(userId)
-      this.sessions.delete(userId)
+      this.clearTimer(key)
+      this.sessions.delete(key)
 
       // Defer the finalize one microtask so that `onSessionEnd` (and any
       // resulting broadcast) NEVER fires on the synchronous stack of this
@@ -603,7 +779,7 @@ export class SessionManager {
       })
     }
 
-    return this.getOrCreateSession(userId, source)
+    return this.getOrCreateSession(userId, source, agentId)
   }
 
   /**
@@ -721,17 +897,18 @@ export class SessionManager {
    * End a session: summarize and dispose.
    * Always uses session.lastActivity as the timestamp for the daily file entry.
    */
-  private async endSession(userId: string, reason: SessionEndReason = 'timeout'): Promise<string | null> {
-    const session = this.sessions.get(userId)
+  private async endSession(key: string, reason: SessionEndReason = 'timeout'): Promise<string | null> {
+    const session = this.sessions.get(key)
     if (!session) {
-      console.log(`[session] endSession called for user ${userId} but no active session found`)
+      console.log(`[session] endSession called for key ${key} but no active session found`)
       return null
     }
+    const userId = session.userId
 
-    console.log(`[session] Ending session ${session.id} for user ${userId} (${session.messageCount} messages)`)
+    console.log(`[session] Ending session ${session.id} for user ${userId} agent ${session.agentId} (${session.messageCount} messages)`)
 
     // Clear the timeout timer
-    this.clearTimer(userId)
+    this.clearTimer(key)
 
     let summary: string | null = null
 
@@ -785,7 +962,7 @@ export class SessionManager {
     }
 
     // Remove from active sessions
-    this.sessions.delete(userId)
+    this.sessions.delete(key)
 
     return summary
   }
@@ -794,27 +971,27 @@ export class SessionManager {
    * End all active sessions.
    */
   async endAllSessions(reason: Exclude<SessionEndReason, 'timeout'> = 'manual'): Promise<void> {
-    const userIds = Array.from(this.sessions.keys())
-    for (const userId of userIds) {
-      await this.endSession(userId, reason)
+    const keys = Array.from(this.sessions.keys())
+    for (const key of keys) {
+      await this.endSession(key, reason)
     }
   }
 
   /**
-   * Reset the inactivity timer for a user
+   * Reset the inactivity timer for a session (keyed by userId:agentId).
    */
-  private resetTimer(userId: string): void {
-    this.clearTimer(userId)
+  private resetTimer(key: string): void {
+    this.clearTimer(key)
 
     if (this.timeoutMs <= 0) return
 
     const timeoutMinutes = Math.round(this.timeoutMs / 60000)
-    console.log(`[session] Timer set for user ${userId}: ${timeoutMinutes}min (${this.timeoutMs}ms)`)
+    console.log(`[session] Timer set for ${key}: ${timeoutMinutes}min (${this.timeoutMs}ms)`)
 
     const timer = setTimeout(() => {
-      console.log(`[session] Timeout fired for user ${userId} — ending session`)
-      this.endSession(userId).catch(err => {
-        console.error(`[session] Timeout error for user ${userId}:`, err)
+      console.log(`[session] Timeout fired for ${key} — ending session`)
+      this.endSession(key).catch(err => {
+        console.error(`[session] Timeout error for ${key}:`, err)
       })
     }, this.timeoutMs)
 
@@ -823,17 +1000,17 @@ export class SessionManager {
       timer.unref()
     }
 
-    this.timers.set(userId, timer)
+    this.timers.set(key, timer)
   }
 
   /**
-   * Clear the timeout timer for a user
+   * Clear the timeout timer for a session (keyed by userId:agentId).
    */
-  private clearTimer(userId: string): void {
-    const existing = this.timers.get(userId)
+  private clearTimer(key: string): void {
+    const existing = this.timers.get(key)
     if (existing) {
       clearTimeout(existing)
-      this.timers.delete(userId)
+      this.timers.delete(key)
     }
   }
 
@@ -843,8 +1020,8 @@ export class SessionManager {
    * and DB updates settle before we tear down.
    */
   async dispose(): Promise<void> {
-    for (const [userId] of this.timers) {
-      this.clearTimer(userId)
+    for (const [key] of this.timers) {
+      this.clearTimer(key)
     }
 
     if (this.backgroundJobs.size > 0) {
