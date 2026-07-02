@@ -747,11 +747,14 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         })
         deliveryResults.push('chatEventBus: broadcast sent')
 
-        if (telegramBot) {
-          const chatId = telegramBot.getTelegramChatIdForUser(userId)
+        // Deliver via the bot bound to the reminder's persona (falls back
+        // to the primary bot when no pool is running).
+        const reminderBot = resolveTelegramBotForAgent(scheduledTask.agentId)
+        if (reminderBot) {
+          const chatId = reminderBot.getTelegramChatIdForUser(userId)
           if (chatId) {
             const telegramHtml = formatReminderTelegramHtml(scheduledTask.name, scheduledTask.prompt)
-            telegramBot.sendTaskNotification(chatId, telegramHtml).then(ok => {
+            reminderBot.sendTaskNotification(chatId, telegramHtml).then(ok => {
               const status = ok ? 'sent' : 'failed'
               logToolCall(db, {
                 sessionId: reminderSessionId,
@@ -897,6 +900,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
   const cronjobToolsOptions = {
     taskRuntime: cronjobSchedulesForTools,
+    // Attribute new cronjobs to the persona whose runtime invoked the tool.
+    getCurrentAgentId: () => agentCore?.getCurrentToolAgentId(),
   }
 
   // Exclusive tools for the interactive agent only.

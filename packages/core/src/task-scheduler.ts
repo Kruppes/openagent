@@ -377,6 +377,9 @@ export class TaskScheduler {
       provider: provider.name,
       model: getProviderDefaultModel(provider),
       isDefaultModel: !scheduledTask.provider,
+      // Route the task result back to the cronjob's persona (runtime +
+      // Telegram bot). Deterministic from the DB row, never LLM-inferred.
+      agentId: scheduledTask.agentId,
     })
 
     // Update last_run_at on the scheduled task

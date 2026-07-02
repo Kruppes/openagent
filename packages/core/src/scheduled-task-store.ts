@@ -22,6 +22,8 @@ export interface ScheduledTask {
    * instead of requiring the task agent to `read_file` them on every run.
    */
   attachedSkills: string[] | null
+  /** Persona the cronjob belongs to (multi-persona scoping; default 'main'). */
+  agentId: string
   lastRunAt: string | null
   lastRunTaskId: string | null
   lastRunStatus: string | null
@@ -37,6 +39,7 @@ export interface CreateScheduledTaskInput {
   provider?: string
   enabled?: boolean
   attachedSkills?: string[] | null
+  agentId?: string
 }
 
 export interface UpdateScheduledTaskInput {
@@ -50,6 +53,7 @@ export interface UpdateScheduledTaskInput {
   skillsOverride?: string | null
   systemPromptOverride?: string | null
   attachedSkills?: string[] | null
+  agentId?: string
   lastRunAt?: string
   lastRunTaskId?: string
   lastRunStatus?: string
@@ -67,6 +71,7 @@ interface ScheduledTaskRow {
   skills_override: string | null
   system_prompt_override: string | null
   attached_skills: string | null
+  agent_id: string
   last_run_at: string | null
   last_run_task_id: string | null
   last_run_status: string | null
@@ -106,6 +111,7 @@ function rowToScheduledTask(row: ScheduledTaskRow): ScheduledTask {
     skillsOverride: row.skills_override,
     systemPromptOverride: row.system_prompt_override,
     attachedSkills: parseAttachedSkills(row.attached_skills),
+    agentId: row.agent_id ?? 'main',
     lastRunAt: row.last_run_at,
     lastRunTaskId: row.last_run_task_id,
     lastRunStatus: row.last_run_status,
@@ -130,6 +136,7 @@ export function initScheduledTasksTable(db: Database): void {
       skills_override TEXT,
       system_prompt_override TEXT,
       attached_skills TEXT,
+      agent_id TEXT NOT NULL DEFAULT 'main',
       last_run_at TEXT,
       last_run_task_id TEXT,
       last_run_status TEXT,
@@ -137,6 +144,13 @@ export function initScheduledTasksTable(db: Database): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `)
+
+  // Additive migration for pre-existing tables (multi-persona cronjob scoping).
+  const cols = db.prepare("PRAGMA table_info(scheduled_tasks)").all() as { name: string }[]
+  if (!cols.some(c => c.name === 'agent_id')) {
+    db.exec(`ALTER TABLE scheduled_tasks ADD COLUMN agent_id TEXT NOT NULL DEFAULT 'main'`)
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_agent_id ON scheduled_tasks(agent_id)`)
+  }
 }
 
 /**
@@ -153,8 +167,8 @@ export class ScheduledTaskStore {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
     this.db.prepare(`
-      INSERT INTO scheduled_tasks (id, name, prompt, schedule, action_type, provider, enabled, attached_skills, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO scheduled_tasks (id, name, prompt, schedule, action_type, provider, enabled, attached_skills, agent_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.name,
@@ -164,6 +178,7 @@ export class ScheduledTaskStore {
       input.provider ?? null,
       input.enabled !== undefined ? (input.enabled ? 1 : 0) : 1,
       serializeAttachedSkills(input.attachedSkills ?? null),
+      input.agentId ?? 'main',
       now,
       now,
     )
@@ -241,6 +256,10 @@ export class ScheduledTaskStore {
     if (input.attachedSkills !== undefined) {
       setClauses.push('attached_skills = ?')
       params.push(serializeAttachedSkills(input.attachedSkills))
+    }
+    if (input.agentId !== undefined) {
+      setClauses.push('agent_id = ?')
+      params.push(input.agentId)
     }
     if (input.lastRunAt !== undefined) {
       setClauses.push('last_run_at = ?')

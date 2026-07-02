@@ -30,6 +30,8 @@ function resolveCronjobProviderValue(provider?: string, model?: string):
 
 export interface CronjobToolsOptions {
   taskRuntime: TaskRuntimeScheduleBoundary
+  /** Returns the agentId of the persona runtime currently executing the tool call */
+  getCurrentAgentId?: () => string | undefined
 }
 
 function looksLikeDynamicTaskRequest(name: string, message: string): boolean {
@@ -91,9 +93,14 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
           description: 'Optional list of agent-skill names (directory names under /data/skills_agent/<name>/) whose SKILL.md should be injected directly into the task prompt on each run. Use this to bake skill rules into the prompt deterministically instead of requiring the task agent to read_file them at run time. Only relevant for action_type "task". Example: ["nitter", "reddit"]. Missing SKILL.md files are skipped with a warning, the task still runs.',
         })
       ),
+      agent_id: Type.Optional(
+        Type.String({
+          description: 'Persona agent ID this cronjob belongs to (e.g. "warren"). Defaults to the current persona. Only specify to override.',
+        })
+      ),
     }),
     execute: async (_toolCallId, params) => {
-      const { prompt, name, schedule, action_type, provider, model, attached_skills } = params as {
+      const { prompt, name, schedule, action_type, provider, model, attached_skills, agent_id } = params as {
         prompt: string
         name: string
         schedule: string
@@ -101,6 +108,7 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
         provider?: string
         model?: string
         attached_skills?: string[]
+        agent_id?: string
       }
 
       try {
@@ -138,6 +146,9 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
             ))
           : undefined
 
+        // Resolve agentId: explicit param > current persona > 'main'
+        const resolvedAgentId = agent_id ?? options.getCurrentAgentId?.() ?? 'main'
+
         // Create in DB
         const scheduledTask = options.taskRuntime.create({
           name,
@@ -147,6 +158,7 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
           provider: providerValue,
           enabled: true,
           attachedSkills: normalizedAttachedSkills && normalizedAttachedSkills.length > 0 ? normalizedAttachedSkills : undefined,
+          agentId: resolvedAgentId,
         })
 
         // Register with scheduler
@@ -163,7 +175,7 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
         return {
           content: [{
             type: 'text' as const,
-            text: `Cronjob created successfully.\n\nID: ${scheduledTask.id}\nName: ${name}\nSchedule: ${humanSchedule} (${schedule})\nAction: ${actionLabel}\n${providerLabel ? `Provider: ${providerLabel}\n` : ''}${attachedSkillsLine}Status: Enabled\n\nThe cronjob is now active and will run on the specified schedule.`,
+            text: `Cronjob created successfully.\n\nID: ${scheduledTask.id}\nName: ${name}\nSchedule: ${humanSchedule} (${schedule})\nAction: ${actionLabel}\nAgent: ${resolvedAgentId}\n${providerLabel ? `Provider: ${providerLabel}\n` : ''}${attachedSkillsLine}Status: Enabled\n\nThe cronjob is now active and will run on the specified schedule.`,
           }],
           details: {
             cronjobId: scheduledTask.id,
@@ -171,6 +183,7 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
             schedule,
             humanSchedule,
             actionType,
+            agentId: resolvedAgentId,
             provider: providerValue ?? null,
             providerLabel,
             attachedSkills: scheduledTask.attachedSkills ?? null,
@@ -241,9 +254,14 @@ export function editCronjobTool(options: CronjobToolsOptions): AgentTool {
           description: 'Replace the list of agent skills attached to this cronjob. Pass an array of skill names (directory names under /data/skills_agent/<name>/). Pass an empty array [] to clear all attached skills. Omit to leave unchanged.',
         })
       ),
+      agent_id: Type.Optional(
+        Type.String({
+          description: 'Change the persona agent ID this cronjob belongs to.',
+        })
+      ),
     }),
     execute: async (_toolCallId, params) => {
-      const { id, prompt, name, schedule, action_type, provider, model, enabled, attached_skills } = params as {
+      const { id, prompt, name, schedule, action_type, provider, model, enabled, attached_skills, agent_id } = params as {
         id: string
         prompt?: string
         name?: string
@@ -253,6 +271,7 @@ export function editCronjobTool(options: CronjobToolsOptions): AgentTool {
         model?: string
         enabled?: boolean
         attached_skills?: string[]
+        agent_id?: string
       }
 
       try {
@@ -324,6 +343,7 @@ export function editCronjobTool(options: CronjobToolsOptions): AgentTool {
           provider: providerUpdate,
           enabled,
           attachedSkills: attachedSkillsUpdate,
+          agentId: agent_id,
         })
 
         if (!updated) {
@@ -347,7 +367,7 @@ export function editCronjobTool(options: CronjobToolsOptions): AgentTool {
         return {
           content: [{
             type: 'text' as const,
-            text: `Cronjob updated successfully.\n\nID: ${updated.id}\nName: ${updated.name}\nSchedule: ${humanSchedule} (${updated.schedule})\nAction: ${actionLabel}\nProvider: ${updated.provider ?? 'default'}\nAttached skills: ${attachedSkillsText}\nStatus: ${updated.enabled ? 'Enabled' : 'Disabled'}`,
+            text: `Cronjob updated successfully.\n\nID: ${updated.id}\nName: ${updated.name}\nSchedule: ${humanSchedule} (${updated.schedule})\nAction: ${actionLabel}\nAgent: ${updated.agentId}\nProvider: ${updated.provider ?? 'default'}\nAttached skills: ${attachedSkillsText}\nStatus: ${updated.enabled ? 'Enabled' : 'Disabled'}`,
           }],
           details: {
             cronjobId: updated.id,
@@ -355,6 +375,7 @@ export function editCronjobTool(options: CronjobToolsOptions): AgentTool {
             schedule: updated.schedule,
             humanSchedule,
             actionType: updated.actionType,
+            agentId: updated.agentId,
             provider: updated.provider,
             enabled: updated.enabled,
             attachedSkills: updated.attachedSkills ?? null,
@@ -513,7 +534,7 @@ export function listCronjobsTool(options: CronjobToolsOptions): AgentTool {
             ? `\n  Attached skills: ${cj.attachedSkills.join(', ')}`
             : ''
 
-          return `\u2022 [${status}] ${cj.name}\n  ID: ${cj.id}\n  Schedule: ${humanSchedule} (${cj.schedule})\n  Action: ${actionLabel}\n  Provider: ${cj.provider ?? 'default'}${attachedSkillsLine}\n  Last run: ${lastRun}${nextRunsStr}`
+          return `\u2022 [${status}] ${cj.name}\n  ID: ${cj.id}\n  Schedule: ${humanSchedule} (${cj.schedule})\n  Action: ${actionLabel}\n  Agent: ${cj.agentId}\n  Provider: ${cj.provider ?? 'default'}${attachedSkillsLine}\n  Last run: ${lastRun}${nextRunsStr}`
         })
 
         return {
@@ -574,6 +595,7 @@ export function getCronjobTool(options: CronjobToolsOptions): AgentTool {
           `ID: ${cj.id}`,
           `Schedule: ${humanSchedule} (${cj.schedule})`,
           `Action: ${actionLabel}`,
+          `Agent: ${cj.agentId}`,
           `Provider: ${cj.provider ?? 'default'}`,
           `Attached skills: ${attachedSkillsText}`,
           `Last run: ${lastRun}`,
