@@ -1368,6 +1368,11 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         onQueueDepthChanged: () => runtimeMetrics.setQueueDepth('telegram', pool.getQueueDepth()),
         startModelTask: startPinnedModelTask,
         onTaskReply: handleTelegramTaskReply,
+        onActiveProviderChanged: () => {
+          initOrUpdateAgentCore().catch((err) => {
+            logger.error('[axiom] Error rebuilding agent core after Telegram provider change:', err)
+          })
+        },
       })
       telegramBotPool = pool
 
@@ -1397,6 +1402,11 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       (queueDepth) => runtimeMetrics.setQueueDepth('telegram', queueDepth),
       startPinnedModelTask,
       handleTelegramTaskReply,
+      () => {
+        initOrUpdateAgentCore().catch((err) => {
+          logger.error('[axiom] Error rebuilding agent core after Telegram provider change:', err)
+        })
+      },
     )
     if (telegramBot) {
       try {

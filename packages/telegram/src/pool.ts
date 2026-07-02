@@ -32,6 +32,7 @@ export interface TelegramBotPoolOptions {
   onChatEvent?: (event: TelegramChatEvent) => void
   startModelTask?: TelegramBotOptions['startModelTask']
   onTaskReply?: TelegramBotOptions['onTaskReply']
+  onActiveProviderChanged?: TelegramBotOptions['onActiveProviderChanged']
 }
 
 /**
@@ -143,6 +144,7 @@ export class TelegramBotPool {
           onChatEvent: this.options.onChatEvent,
           startModelTask: this.options.startModelTask,
           onTaskReply: this.options.onTaskReply,
+          onActiveProviderChanged: this.options.onActiveProviderChanged,
         })
 
         await bot.start()

@@ -119,6 +119,13 @@ export interface TelegramBotOptions {
     userId: string | null
     source: string
   }) => Promise<string>
+  /**
+   * Called after a slash command switched the active provider on disk
+   * (/model, /offline, /online) so the host can rebuild the agent core.
+   * Invoked AFTER the confirmation reply has been sent — the rebuild
+   * restarts this bot.
+   */
+  onActiveProviderChanged?: () => void
   onQueueDepthChanged?: (queueDepth: number) => void
   /** Called for every chat event (user message, response chunks, etc.) for cross-channel sync */
   onChatEvent?: (event: TelegramChatEvent) => void
@@ -388,6 +395,7 @@ export class TelegramBot {
   private agentId: string
   private startModelTaskCallback?: TelegramBotOptions['startModelTask']
   private onTaskReplyCallback?: TelegramBotOptions['onTaskReply']
+  private onActiveProviderChangedCallback?: TelegramBotOptions['onActiveProviderChanged']
   /**
    * Maps `chatId:messageId` of bot-sent task messages (results, questions,
    * status updates) to their task id, so a Telegram reply to such a message
@@ -418,6 +426,7 @@ export class TelegramBot {
     this.agentId = options.agentId ?? 'main'
     this.startModelTaskCallback = options.startModelTask
     this.onTaskReplyCallback = options.onTaskReply
+    this.onActiveProviderChangedCallback = options.onActiveProviderChanged
     this.onQueueDepthChanged = options.onQueueDepthChanged
     this.onChatEvent = options.onChatEvent
     this.slashRegistry = buildTelegramSlashCommandRegistry()
@@ -555,6 +564,13 @@ export class TelegramBot {
         await this.handleRegistryCommand(ctx, spec.name)
       })
     }
+
+    this.bot.command('offline', async (ctx) => {
+      await this.handleRegistryCommand(ctx, 'offline')
+    })
+    this.bot.command('online', async (ctx) => {
+      await this.handleRegistryCommand(ctx, 'online')
+    })
 
     // Inline-keyboard button taps from picker messages (e.g. /model).
     // The original message is edited in place to either show the next
@@ -1230,6 +1246,9 @@ export class TelegramBot {
     if (!await this.checkAuthorized(ctx)) return
     const text = ctx.message?.text ?? `/${name}`
     const userId = this.resolveUserId(ctx)
+    // Provider changes must rebuild the agent core, which restarts this bot —
+    // defer the actual callback until AFTER the confirmation reply is sent.
+    let providerChangePending = false
     const result = await this.slashRegistry.dispatch(text, {
       surface: 'telegram',
       userId,
@@ -1246,14 +1265,23 @@ export class TelegramBot {
             source: 'telegram',
           })
         : undefined,
+      onActiveProviderChanged: () => { providerChangePending = true },
       onThinkingLevelChanged: (level) => this.agentCore.setThinkingLevel(level),
     })
+    const fireDeferred = () => {
+      if (providerChangePending) {
+        providerChangePending = false
+        this.onActiveProviderChangedCallback?.()
+      }
+    }
     if (result.kind === 'handled') {
       if (isSlashCommandPicker(result.reply)) {
         await this.sendPicker(ctx, result.reply)
+        fireDeferred()
         return
       }
       if (result.reply) await ctx.reply(result.reply)
+      fireDeferred()
       return
     }
     if (result.kind === 'not_found') {
@@ -1337,6 +1365,9 @@ export class TelegramBot {
     await ctx.answerCallbackQuery()
 
     const userId = this.resolveUserId(ctx)
+    // Deferred like in handleRegistryCommand: the rebuild restarts this bot,
+    // so it must not fire before the confirmation message edit went out.
+    let providerChangePending = false
     const result = await this.slashRegistry.dispatch(entry.command, {
       surface: 'telegram',
       userId,
@@ -1344,6 +1375,8 @@ export class TelegramBot {
       db: this.db ?? undefined,
       taskStore: this.taskStore ?? undefined,
       scheduledTaskStore: this.scheduledTaskStore ?? undefined,
+      agentId: this.agentId,
+      onActiveProviderChanged: () => { providerChangePending = true },
       onThinkingLevelChanged: (level) => this.agentCore.setThinkingLevel(level),
     })
 
@@ -1364,6 +1397,9 @@ export class TelegramBot {
 
     // Final text reply (confirmation, error, no-op). Drop the keyboard.
     await this.editPickerMessage(ctx, result.reply ?? '\u2705 Done.')
+    if (providerChangePending) {
+      this.onActiveProviderChangedCallback?.()
+    }
   }
 
   /**
@@ -1739,6 +1775,7 @@ export function createTelegramBot(
   onQueueDepthChanged?: (queueDepth: number) => void,
   startModelTask?: TelegramBotOptions['startModelTask'],
   onTaskReply?: TelegramBotOptions['onTaskReply'],
+  onActiveProviderChanged?: TelegramBotOptions['onActiveProviderChanged'],
 ): TelegramBot | null {
   try {
     const config = loadTelegramRuntimeConfig()
@@ -1753,7 +1790,7 @@ export function createTelegramBot(
       return null
     }
 
-    return new TelegramBot({ agentCore, db, config, onChatEvent, onQueueDepthChanged, startModelTask, onTaskReply })
+    return new TelegramBot({ agentCore, db, config, onChatEvent, onQueueDepthChanged, startModelTask, onTaskReply, onActiveProviderChanged })
   } catch {
     console.log('ℹ️  Telegram config not found. Running in web-only mode.')
     return null

@@ -95,6 +95,12 @@ export interface SlashCommandContext {
    */
   startModelTask?: (input: StartModelTaskInput) => Promise<StartModelTaskResult>
   onThinkingLevelChanged?: (level: SettingsThinkingLevel) => void
+  /**
+   * Notifies the host runtime that the active provider/model changed on disk
+   * (via /model, /offline, /online) so it can rebuild the agent core. Without
+   * this the running agent keeps streaming on the previously bound model.
+   */
+  onActiveProviderChanged?: () => void
 }
 
 export interface ParsedSlashCommand {
@@ -258,7 +264,22 @@ export function registerBuiltInSlashCommands(registry: SlashCommandRegistry): vo
     description: 'Show or switch the active provider and model.',
     usage: '/model [<provider> [<model>]]',
     surfaces: ['web', 'telegram'],
-    handler: (ctx) => handleModelCommand(ctx.args),
+    handler: (ctx) => handleModelCommand(ctx.args, ctx),
+  })
+
+  registry.register({
+    name: 'offline',
+    description: 'Switch the active provider to the configured local provider (offline mode).',
+    usage: '/offline [<local-provider>]',
+    surfaces: ['web', 'telegram'],
+    handler: (ctx) => handleOfflineCommand(ctx),
+  })
+
+  registry.register({
+    name: 'online',
+    description: 'Switch back to the provider that was active before /offline.',
+    surfaces: ['web', 'telegram'],
+    handler: (ctx) => handleOnlineCommand(ctx),
   })
 
   registry.register({
@@ -305,6 +326,125 @@ async function handleModelTaskCommand(
   }
   const result = await ctx.startModelTask({ modelId: spec.modelId, prompt })
   return `🚀 Task started on ${result.providerName} (${result.modelId}).\n\nTask: ${result.taskName}\nID: ${result.taskId}\n\nThe result will be posted here when it finishes.`
+}
+
+interface OfflineSettings {
+  /** Provider id of the designated local/offline provider. */
+  localProviderId?: string
+  /** `providerId:modelId` composite that was active before /offline. */
+  previousProvider?: string
+}
+
+function readOfflineSettings(): OfflineSettings {
+  try {
+    const settings = loadConfig<{ offline?: OfflineSettings }>('settings.json')
+    return settings.offline ?? {}
+  } catch {
+    return {}
+  }
+}
+
+function writeOfflineSettings(update: Partial<OfflineSettings>): void {
+  const settingsPath = path.join(getConfigDir(), 'settings.json')
+  const settings = loadConfig<Record<string, unknown>>('settings.json')
+  const offline = { ...(settings.offline as OfflineSettings | undefined ?? {}), ...update }
+  // Drop cleared keys so the file stays tidy
+  for (const key of Object.keys(offline) as Array<keyof OfflineSettings>) {
+    if (offline[key] === undefined || offline[key] === '') delete offline[key]
+  }
+  settings.offline = offline
+  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf-8')
+}
+
+function handleOfflineCommand(ctx: SlashCommandContext): string {
+  let file
+  try {
+    file = loadProviders()
+  } catch (err) {
+    return `Could not read provider settings: ${(err as Error).message}`
+  }
+
+  const offline = readOfflineSettings()
+  const arg = ctx.args.trim()
+
+  // `/offline <provider>` also (re)configures which provider is the local one.
+  let localProvider: ProviderConfig | undefined
+  if (arg) {
+    localProvider = findProvider(file.providers, arg)
+    if (!localProvider) {
+      return `Unknown provider: ${arg}\nConfigured providers: ${file.providers.map((p) => p.name).join(', ') || '(none)'}`
+    }
+    writeOfflineSettings({ localProviderId: localProvider.id })
+  } else if (offline.localProviderId) {
+    localProvider = file.providers.find((p) => p.id === offline.localProviderId)
+    if (!localProvider) {
+      return `The configured offline provider (id: ${offline.localProviderId}) no longer exists.\nSet a new one with /offline <provider>.`
+    }
+  } else {
+    return [
+      'No offline provider configured yet.',
+      '',
+      '1. Register your local endpoint (e.g. Mac Studio running Ollama/LM Studio) as a provider in Settings → Providers (OpenAI-compatible, base URL like http://<host>:11434/v1).',
+      '2. Then run /offline <provider-name> once — afterwards a bare /offline toggles to it.',
+    ].join('\n')
+  }
+
+  const localModel = getProviderDefaultModel(localProvider)
+  if (!localModel) {
+    return `Provider "${localProvider.name}" has no enabled models — enable one in Settings → Providers first.`
+  }
+
+  if (file.activeProvider === localProvider.id) {
+    return `Already offline — active: ${localProvider.name} (${file.activeModel ?? localModel}).`
+  }
+
+  // Remember what was active so /online can restore it.
+  if (file.activeProvider) {
+    writeOfflineSettings({ previousProvider: `${file.activeProvider}:${file.activeModel ?? ''}` })
+  }
+
+  try {
+    setActiveProvider(localProvider.id, localModel)
+  } catch (err) {
+    return `Could not switch provider: ${(err as Error).message}`
+  }
+  ctx.onActiveProviderChanged?.()
+
+  return `📴 Offline mode: active provider is now ${localProvider.name} (${localModel}).\nSwitch back with /online.`
+}
+
+function handleOnlineCommand(ctx: SlashCommandContext): string {
+  const offline = readOfflineSettings()
+  if (!offline.previousProvider) {
+    return 'No previous provider stored — nothing to restore. Use /model to pick one.'
+  }
+
+  const [providerId, modelId] = offline.previousProvider.split(':')
+  let file
+  try {
+    file = loadProviders()
+  } catch (err) {
+    return `Could not read provider settings: ${(err as Error).message}`
+  }
+  const provider = file.providers.find((p) => p.id === providerId)
+  if (!provider) {
+    writeOfflineSettings({ previousProvider: '' })
+    return `The previously active provider no longer exists. Use /model to pick one.`
+  }
+
+  const targetModel = modelId && (provider.enabledModels ?? []).includes(modelId)
+    ? modelId
+    : getProviderDefaultModel(provider)
+
+  try {
+    setActiveProvider(provider.id, targetModel)
+  } catch (err) {
+    return `Could not switch provider: ${(err as Error).message}`
+  }
+  writeOfflineSettings({ previousProvider: '' })
+  ctx.onActiveProviderChanged?.()
+
+  return `🌐 Back online: active provider is now ${provider.name} (${targetModel}).`
 }
 
 function handleThinkingCommand(ctx: SlashCommandContext): string {
@@ -409,7 +549,7 @@ export function formatCronjobsReply(jobs: CronjobLike[]): string {
  * `id` and `name`, so picker callbacks can use ids while users typing the
  * command directly can use names.
  */
-function handleModelCommand(rawArgs: string): SlashCommandReply {
+function handleModelCommand(rawArgs: string, ctx?: SlashCommandContext): SlashCommandReply {
   const args = rawArgs.trim()
   let file
   try {
@@ -453,6 +593,9 @@ function handleModelCommand(rawArgs: string): SlashCommandReply {
     } catch (err) {
       return `Could not switch model: ${(err as Error).message}`
     }
+    // Rebuild the agent core \u2014 without this the running agent keeps
+    // streaming on the previously bound model despite the file change.
+    ctx?.onActiveProviderChanged?.()
     return `\u2705 Active provider: ${provider.name} (${provider.providerType})\nActive model: ${modelId}`
   }
 
