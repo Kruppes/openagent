@@ -1,7 +1,7 @@
 import { loadConfig, loadMultiPersonaSettings } from '@axiom/core'
 import type { AgentCore, Database } from '@axiom/core'
 import { TelegramBot } from './bot.js'
-import type { TelegramConfig, TelegramChatEvent } from './bot.js'
+import type { TelegramConfig, TelegramChatEvent, TelegramBotOptions } from './bot.js'
 
 /**
  * Account entry in the v2 multi-persona telegram config.
@@ -30,6 +30,7 @@ export interface TelegramBotPoolOptions {
   db?: Database
   onQueueDepthChanged?: (queueDepth: number) => void
   onChatEvent?: (event: TelegramChatEvent) => void
+  startModelTask?: TelegramBotOptions['startModelTask']
 }
 
 /**
@@ -139,6 +140,7 @@ export class TelegramBotPool {
           agentId,
           onQueueDepthChanged: this.options.onQueueDepthChanged,
           onChatEvent: this.options.onChatEvent,
+          startModelTask: this.options.startModelTask,
         })
 
         await bot.start()

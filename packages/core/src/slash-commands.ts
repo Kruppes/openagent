@@ -64,6 +64,19 @@ export interface SlashCommandDefinition extends SlashCommandMetadata {
   handler?: (ctx: SlashCommandContext) => Promise<SlashCommandReply> | SlashCommandReply
 }
 
+export interface StartModelTaskInput {
+  /** Exact model id to pin the task to (must be enabled on a configured provider). */
+  modelId: string
+  prompt: string
+}
+
+export interface StartModelTaskResult {
+  taskId: string
+  taskName: string
+  providerName: string
+  modelId: string
+}
+
 export interface SlashCommandContext {
   userId: string | null
   surface: SlashCommandSurface
@@ -73,6 +86,14 @@ export interface SlashCommandContext {
   db?: Database
   taskStore?: TaskStore
   scheduledTaskStore?: ScheduledTaskStore
+  /** Persona the command was issued under (multi-persona surfaces; default 'main'). */
+  agentId?: string
+  /**
+   * Starts a one-off background task pinned to a specific model, wired by the
+   * host runtime (runtime-composition). The task result is injected back into
+   * the user's chat through the normal task-notification pipeline.
+   */
+  startModelTask?: (input: StartModelTaskInput) => Promise<StartModelTaskResult>
   onThinkingLevelChanged?: (level: SettingsThinkingLevel) => void
 }
 
@@ -247,6 +268,41 @@ export function registerBuiltInSlashCommands(registry: SlashCommandRegistry): vo
     surfaces: ['web', 'telegram'],
     handler: (ctx) => handleThinkingCommand(ctx),
   })
+
+  for (const spec of MODEL_TASK_COMMANDS) {
+    registry.register({
+      name: spec.name,
+      description: `Run the request as a one-off background task on ${spec.modelLabel} (default chat model stays unchanged).`,
+      usage: `/${spec.name} <prompt>`,
+      surfaces: ['telegram'],
+      handler: (ctx) => handleModelTaskCommand(ctx, spec),
+    })
+  }
+}
+
+/**
+ * Prefix commands that run a single request as a background task pinned to a
+ * heavy model, without touching the default chat model. Extend this table to
+ * add more shortcuts (e.g. opus, haiku) — the command name is the Telegram
+ * prefix, the modelId must be enabled on a configured provider.
+ */
+export const MODEL_TASK_COMMANDS: ReadonlyArray<{ name: string; modelId: string; modelLabel: string }> = [
+  { name: 'fable', modelId: 'claude-fable-5', modelLabel: 'Claude Fable 5' },
+]
+
+async function handleModelTaskCommand(
+  ctx: SlashCommandContext,
+  spec: { name: string; modelId: string; modelLabel: string },
+): Promise<string> {
+  const prompt = ctx.args.trim()
+  if (!prompt) {
+    return `Usage: /${spec.name} <prompt>\nRuns the request as a background task on ${spec.modelLabel}; the result is posted back into this chat.`
+  }
+  if (!ctx.startModelTask) {
+    return `/${spec.name} is not available on this surface.`
+  }
+  const result = await ctx.startModelTask({ modelId: spec.modelId, prompt })
+  return `🚀 Task started on ${result.providerName} (${result.modelId}).\n\nTask: ${result.taskName}\nID: ${result.taskId}\n\nThe result will be posted here when it finishes.`
 }
 
 function handleThinkingCommand(ctx: SlashCommandContext): string {

@@ -30,6 +30,7 @@ import {
   loadConfig,
   loadMultiPersonaSettings,
   loadProvidersDecrypted,
+  resolveProviderModelInput,
   logToolCall,
   parseProviderModelId,
   getProviderDefaultModel,
@@ -43,6 +44,7 @@ import type {
   Database,
   LoopDetectionConfig,
   ProviderConfig,
+  StartModelTaskResult,
   TaskRuntimeBoundary,
   TaskRuntimeTaskBoundary,
 } from '@axiom/core'
@@ -930,6 +932,57 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     }),
   ]
 
+  /**
+   * Start a one-off background task pinned to a specific model — backs the
+   * /fable-style Telegram prefix commands. The task inherits the caller's
+   * persona and links its session lineage to the user's interactive session
+   * so the result routes back to the right chat and Telegram bot. The
+   * default chat model is untouched.
+   */
+  async function startPinnedModelTask(input: {
+    modelId: string
+    prompt: string
+    agentId: string
+    userId: string | null
+    source: string
+  }): Promise<StartModelTaskResult> {
+    const resolved = resolveProviderModelInput({ model: input.modelId })
+    if (!resolved.ok) throw new Error(resolved.error)
+    const baseProvider = resolveProvider(resolved.providerId)
+    if (!baseProvider) throw new Error(`Provider "${resolved.providerName}" not found`)
+    // Narrow the provider clone to the pinned model — the task runner derives
+    // its model via getProviderDefaultModel() (= enabledModels[0]).
+    const provider = { ...baseProvider, enabledModels: [resolved.modelId] }
+
+    const promptPreview = input.prompt.length > 60 ? `${input.prompt.slice(0, 60)}…` : input.prompt
+    const task = taskRuntime.tasks.create({
+      name: `${resolved.modelId}: ${promptPreview}`,
+      prompt: input.prompt,
+      triggerType: 'user',
+      provider: provider.name,
+      model: resolved.modelId,
+      isDefaultModel: false,
+      maxDurationMinutes: taskSettings.maxDurationMinutes,
+      agentId: input.agentId,
+    })
+
+    // Link lineage to the user's interactive session so
+    // resolveTargetUserIdForTask delivers the result to this user.
+    let parentSessionId: string | null = null
+    if (agentCore && input.userId) {
+      parentSessionId = agentCore.getSessionManager()
+        .getOrCreateSession(String(input.userId), input.source, input.agentId).id
+    }
+    await taskRuntime.tasks.start(task, provider, undefined, parentSessionId)
+
+    return {
+      taskId: task.id,
+      taskName: task.name,
+      providerName: provider.name,
+      modelId: resolved.modelId,
+    }
+  }
+
   taskRuntime.schedules.start()
 
   const healthMonitorService = new HealthMonitorService({ db, providerManager: null })
@@ -1190,6 +1243,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         // Per-bot depth changes report the pool-wide aggregate so the
         // metric reflects total telegram backlog, not the last bot's.
         onQueueDepthChanged: () => runtimeMetrics.setQueueDepth('telegram', pool.getQueueDepth()),
+        startModelTask: startPinnedModelTask,
       })
       telegramBotPool = pool
 
@@ -1217,6 +1271,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       db,
       onTelegramChatEvent,
       (queueDepth) => runtimeMetrics.setQueueDepth('telegram', queueDepth),
+      startPinnedModelTask,
     )
     if (telegramBot) {
       try {

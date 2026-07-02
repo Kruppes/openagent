@@ -8,6 +8,7 @@ import type {
   Database,
   SlashCommandRegistry,
   SlashCommandPicker,
+  StartModelTaskResult,
 } from '@axiom/core'
 import {
   loadConfig,
@@ -21,6 +22,7 @@ import {
   synthesizeTts,
   SlashCommandRegistry as SlashCommandRegistryCtor,
   registerBuiltInSlashCommands,
+  MODEL_TASK_COMMANDS,
   isSlashCommandPicker,
   TaskStore,
   ScheduledTaskStore,
@@ -91,6 +93,18 @@ export interface TelegramBotOptions {
   config?: TelegramConfig
   /** Agent ID this bot instance represents (default: 'main') */
   agentId?: string
+  /**
+   * Host-runtime callback backing the model-pinned task prefix commands
+   * (/fable …). Starts a background task on the given model and routes the
+   * result back through the normal task-notification pipeline.
+   */
+  startModelTask?: (input: {
+    modelId: string
+    prompt: string
+    agentId: string
+    userId: string | null
+    source: string
+  }) => Promise<StartModelTaskResult>
   onQueueDepthChanged?: (queueDepth: number) => void
   /** Called for every chat event (user message, response chunks, etc.) for cross-channel sync */
   onChatEvent?: (event: TelegramChatEvent) => void
@@ -358,6 +372,7 @@ export class TelegramBot {
   private db: Database | null
   private config: TelegramConfig
   private agentId: string
+  private startModelTaskCallback?: TelegramBotOptions['startModelTask']
   private running = false
   private pollingRetryTimer: ReturnType<typeof setTimeout> | null = null
   private pollingRetryDelayMs = POLLING_RETRY_INITIAL_MS
@@ -380,6 +395,7 @@ export class TelegramBot {
     this.db = options.db ?? null
     this.config = options.config ?? loadTelegramRuntimeConfig()
     this.agentId = options.agentId ?? 'main'
+    this.startModelTaskCallback = options.startModelTask
     this.onQueueDepthChanged = options.onQueueDepthChanged
     this.onChatEvent = options.onChatEvent
     this.slashRegistry = buildTelegramSlashCommandRegistry()
@@ -509,6 +525,14 @@ export class TelegramBot {
     this.bot.command('voice', async (ctx) => {
       await this.handleRegistryCommand(ctx, 'voice')
     })
+
+    // Model-pinned task prefix commands (/fable …) — one-off background
+    // tasks on a heavy model, default chat model stays unchanged.
+    for (const spec of MODEL_TASK_COMMANDS) {
+      this.bot.command(spec.name, async (ctx) => {
+        await this.handleRegistryCommand(ctx, spec.name)
+      })
+    }
 
     // Inline-keyboard button taps from picker messages (e.g. /model).
     // The original message is edited in place to either show the next
@@ -1155,6 +1179,15 @@ export class TelegramBot {
       db: this.db ?? undefined,
       taskStore: this.taskStore ?? undefined,
       scheduledTaskStore: this.scheduledTaskStore ?? undefined,
+      agentId: this.agentId,
+      startModelTask: this.startModelTaskCallback
+        ? (input) => this.startModelTaskCallback!({
+            ...input,
+            agentId: this.agentId,
+            userId,
+            source: 'telegram',
+          })
+        : undefined,
       onThinkingLevelChanged: (level) => this.agentCore.setThinkingLevel(level),
     })
     if (result.kind === 'handled') {
@@ -1642,6 +1675,7 @@ export function createTelegramBot(
   db?: Database,
   onChatEvent?: (event: TelegramChatEvent) => void,
   onQueueDepthChanged?: (queueDepth: number) => void,
+  startModelTask?: TelegramBotOptions['startModelTask'],
 ): TelegramBot | null {
   try {
     const config = loadTelegramRuntimeConfig()
@@ -1656,7 +1690,7 @@ export function createTelegramBot(
       return null
     }
 
-    return new TelegramBot({ agentCore, db, config, onChatEvent, onQueueDepthChanged })
+    return new TelegramBot({ agentCore, db, config, onChatEvent, onQueueDepthChanged, startModelTask })
   } catch {
     console.log('ℹ️  Telegram config not found. Running in web-only mode.')
     return null
