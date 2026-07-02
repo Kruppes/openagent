@@ -31,6 +31,7 @@ export interface TelegramBotPoolOptions {
   onQueueDepthChanged?: (queueDepth: number) => void
   onChatEvent?: (event: TelegramChatEvent) => void
   startModelTask?: TelegramBotOptions['startModelTask']
+  onTaskReply?: TelegramBotOptions['onTaskReply']
 }
 
 /**
@@ -141,6 +142,7 @@ export class TelegramBotPool {
           onQueueDepthChanged: this.options.onQueueDepthChanged,
           onChatEvent: this.options.onChatEvent,
           startModelTask: this.options.startModelTask,
+          onTaskReply: this.options.onTaskReply,
         })
 
         await bot.start()

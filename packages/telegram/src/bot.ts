@@ -105,6 +105,20 @@ export interface TelegramBotOptions {
     userId: string | null
     source: string
   }) => Promise<StartModelTaskResult>
+  /**
+   * Called when the user REPLIES (Telegram reply) to a message the bot sent
+   * for a specific task (result, question, status update). Routes the text
+   * deterministically to that task — resume if paused, follow-up task if
+   * finished — instead of through the chat agent. Returns the reply text
+   * shown to the user.
+   */
+  onTaskReply?: (input: {
+    taskId: string
+    text: string
+    agentId: string
+    userId: string | null
+    source: string
+  }) => Promise<string>
   onQueueDepthChanged?: (queueDepth: number) => void
   /** Called for every chat event (user message, response chunks, etc.) for cross-channel sync */
   onChatEvent?: (event: TelegramChatEvent) => void
@@ -373,6 +387,13 @@ export class TelegramBot {
   private config: TelegramConfig
   private agentId: string
   private startModelTaskCallback?: TelegramBotOptions['startModelTask']
+  private onTaskReplyCallback?: TelegramBotOptions['onTaskReply']
+  /**
+   * Maps `chatId:messageId` of bot-sent task messages (results, questions,
+   * status updates) to their task id, so a Telegram reply to such a message
+   * can be routed deterministically to that task. Bounded FIFO (~300).
+   */
+  private taskMessages = new Map<string, string>()
   private running = false
   private pollingRetryTimer: ReturnType<typeof setTimeout> | null = null
   private pollingRetryDelayMs = POLLING_RETRY_INITIAL_MS
@@ -396,6 +417,7 @@ export class TelegramBot {
     this.config = options.config ?? loadTelegramRuntimeConfig()
     this.agentId = options.agentId ?? 'main'
     this.startModelTaskCallback = options.startModelTask
+    this.onTaskReplyCallback = options.onTaskReply
     this.onQueueDepthChanged = options.onQueueDepthChanged
     this.onChatEvent = options.onChatEvent
     this.slashRegistry = buildTelegramSlashCommandRegistry()
@@ -706,8 +728,44 @@ export class TelegramBot {
 
     if (!await this.checkAuthorized(ctx)) return
 
+    // Deterministic task routing: a reply to a bot message that belongs to a
+    // background task goes straight to that task (resume / follow-up),
+    // bypassing the chat agent entirely.
+    const replyMsgId = ctx.message?.reply_to_message?.message_id
+    if (replyMsgId !== undefined && this.onTaskReplyCallback && ctx.chat) {
+      const taskId = this.taskMessages.get(`${ctx.chat.id}:${replyMsgId}`)
+      if (taskId) {
+        try {
+          const reply = await this.onTaskReplyCallback({
+            taskId,
+            text,
+            agentId: this.agentId,
+            userId: this.resolveUserId(ctx),
+            source: 'telegram',
+          })
+          const sent = await ctx.reply(reply)
+          // Follow-up confirmations reference the (new) task too, so the
+          // user can keep threading replies.
+          this.rememberTaskMessage(ctx.chat.id, sent.message_id, taskId)
+        } catch (err) {
+          await this.safeSendMessage(ctx, `⚠️ ${(err as Error).message}`)
+        }
+        return
+      }
+    }
+
     const replyContext = extractReplyContext(ctx.message?.reply_to_message)
     this.bufferMessage(ctx, text, replyContext)
+  }
+
+  /** Record a bot-sent message as belonging to a task (bounded FIFO). */
+  private rememberTaskMessage(chatId: string | number, messageId: number, taskId: string): void {
+    const key = `${chatId}:${messageId}`
+    if (this.taskMessages.size >= 300) {
+      const oldest = this.taskMessages.keys().next().value
+      if (oldest) this.taskMessages.delete(oldest)
+    }
+    this.taskMessages.set(key, taskId)
   }
 
   private async downloadTelegramFile(fileId: string): Promise<{ buffer: Buffer; mimeType?: string }> {
@@ -1599,18 +1657,20 @@ export class TelegramBot {
 
   // Public cross-workspace API used by web-backend; Fallow cannot see this in clean CI before workspace dist files exist.
   // fallow-ignore-next-line unused-class-member
-  async sendTaskNotification(chatId: string | number, html: string): Promise<boolean> {
+  async sendTaskNotification(chatId: string | number, html: string, taskId?: string): Promise<boolean> {
     const parts = splitMessage(html)
     const plainFull = telegramHtmlToPlainText(html)
 
     for (const part of parts) {
       try {
-        await this.bot.api.sendMessage(chatId, part, { parse_mode: 'HTML' })
+        const sent = await this.bot.api.sendMessage(chatId, part, { parse_mode: 'HTML' })
+        if (taskId) this.rememberTaskMessage(chatId, sent.message_id, taskId)
       } catch {
         // Fallback to plain text if HTML parsing fails
         try {
           const plainPart = telegramHtmlToPlainText(part)
-          await this.bot.api.sendMessage(chatId, plainPart)
+          const sent = await this.bot.api.sendMessage(chatId, plainPart)
+          if (taskId) this.rememberTaskMessage(chatId, sent.message_id, taskId)
         } catch (fallbackErr) {
           console.error(`[telegram] Failed to send task notification to ${chatId}:`, fallbackErr)
           return false
@@ -1636,16 +1696,18 @@ export class TelegramBot {
 
   // Public cross-workspace API used by web-backend; Fallow cannot see this in clean CI before workspace dist files exist.
   // fallow-ignore-next-line unused-class-member
-  async sendFormattedMessage(chatId: string | number, markdown: string): Promise<boolean> {
+  async sendFormattedMessage(chatId: string | number, markdown: string, taskId?: string): Promise<boolean> {
     const parts = splitMessage(markdown)
 
     for (const part of parts) {
       try {
         const html = markdownToTelegramHtml(part)
-        await this.bot.api.sendMessage(chatId, html, { parse_mode: 'HTML' })
+        const sent = await this.bot.api.sendMessage(chatId, html, { parse_mode: 'HTML' })
+        if (taskId) this.rememberTaskMessage(chatId, sent.message_id, taskId)
       } catch {
         try {
-          await this.bot.api.sendMessage(chatId, part)
+          const sent = await this.bot.api.sendMessage(chatId, part)
+          if (taskId) this.rememberTaskMessage(chatId, sent.message_id, taskId)
         } catch (err) {
           console.error(`[telegram] Failed to send formatted message to ${chatId}:`, err)
           return false
@@ -1676,6 +1738,7 @@ export function createTelegramBot(
   onChatEvent?: (event: TelegramChatEvent) => void,
   onQueueDepthChanged?: (queueDepth: number) => void,
   startModelTask?: TelegramBotOptions['startModelTask'],
+  onTaskReply?: TelegramBotOptions['onTaskReply'],
 ): TelegramBot | null {
   try {
     const config = loadTelegramRuntimeConfig()
@@ -1690,7 +1753,7 @@ export function createTelegramBot(
       return null
     }
 
-    return new TelegramBot({ agentCore, db, config, onChatEvent, onQueueDepthChanged, startModelTask })
+    return new TelegramBot({ agentCore, db, config, onChatEvent, onQueueDepthChanged, startModelTask, onTaskReply })
   } catch {
     console.log('ℹ️  Telegram config not found. Running in web-only mode.')
     return null

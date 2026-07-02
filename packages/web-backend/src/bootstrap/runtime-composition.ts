@@ -643,7 +643,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     const statusBot = resolveTelegramBotForAgent(statusAgentId)
     const telegramChatId = statusBot ? statusBot.getTelegramChatIdForUser(userId) : null
     const sendTelegram = statusBot && telegramChatId
-      ? (html: string) => statusBot.sendTaskNotification(telegramChatId, html)
+      ? (html: string) => statusBot.sendTaskNotification(telegramChatId, html, task.id)
       : undefined
 
     deliverTaskStatusUpdate({
@@ -1023,6 +1023,73 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     }
   }
 
+  /**
+   * Deterministic handler for Telegram replies to task messages.
+   * paused → resume with the user's text; running → status hint;
+   * finished → follow-up task on the same provider/model + persona,
+   * carrying the previous prompt/result as context.
+   */
+  async function handleTelegramTaskReply(input: {
+    taskId: string
+    text: string
+    agentId: string
+    userId: string | null
+    source: string
+  }): Promise<string> {
+    const task = taskRuntime.tasks.getById(input.taskId)
+    if (!task) return '⚠️ Task not found (may have been cleaned up).'
+
+    if (task.status === 'paused') {
+      const resumed = await taskRuntime.tasks.resume(input.taskId, input.text)
+      return resumed
+        ? `▶️ Answer passed to task "${task.name}" — it continues in the background.`
+        : '⚠️ Task could not be resumed.'
+    }
+
+    if (task.status === 'running') {
+      return `⏳ Task "${task.name}" is still running — reply again once it has finished.`
+    }
+
+    // completed / failed → follow-up task with previous prompt+result as context
+    const baseProvider = task.provider ? resolveProvider(task.provider) : null
+    const provider = baseProvider && task.model
+      ? { ...baseProvider, enabledModels: [task.model] }
+      : (baseProvider ?? getTaskDefaultProvider())
+
+    const prevPrompt = task.prompt.length > 3000 ? `${task.prompt.slice(0, 3000)}…` : task.prompt
+    const prevResult = (task.resultSummary ?? '(no result summary)').slice(0, 4000)
+    const followUpPrompt = [
+      '<previous_task>',
+      `Status: ${task.status}${task.resultStatus ? ` (${task.resultStatus})` : ''}`,
+      `Prompt:\n${prevPrompt}`,
+      `Result:\n${prevResult}`,
+      '</previous_task>',
+      '',
+      `Follow-up from the user: ${input.text}`,
+    ].join('\n')
+
+    const previewText = input.text.length > 50 ? `${input.text.slice(0, 50)}…` : input.text
+    const followUp = taskRuntime.tasks.create({
+      name: `Follow-up: ${previewText}`,
+      prompt: followUpPrompt,
+      triggerType: 'user',
+      provider: provider.name,
+      model: getProviderDefaultModel(provider),
+      isDefaultModel: !task.provider,
+      maxDurationMinutes: taskSettings.maxDurationMinutes,
+      agentId: input.agentId,
+    })
+
+    let parentSessionId: string | null = null
+    if (agentCore && input.userId) {
+      parentSessionId = agentCore.getSessionManager()
+        .getOrCreateSession(String(input.userId), input.source, input.agentId).id
+    }
+    await taskRuntime.tasks.start(followUp, provider, undefined, parentSessionId)
+
+    return `🔁 Follow-up task started on ${provider.name} (${getProviderDefaultModel(provider)}).\nTask: ${followUp.name}\nID: ${followUp.id}`
+  }
+
   taskRuntime.schedules.start()
 
   const healthMonitorService = new HealthMonitorService({ db, providerManager: null })
@@ -1192,7 +1259,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
               const chatId = resolvedBot.getTelegramChatIdForUser(pendingMeta.userId)
               if (chatId) {
                 streamState.telegramDelivered = true
-                resolvedBot.sendFormattedMessage(chatId, responseText).catch(err => {
+                resolvedBot.sendFormattedMessage(chatId, responseText, pendingMeta.taskId).catch(err => {
                   logger.error(`[axiom] Failed to send Telegram for task ${pendingMeta.taskId}:`, err)
                 })
               }
@@ -1284,6 +1351,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         // metric reflects total telegram backlog, not the last bot's.
         onQueueDepthChanged: () => runtimeMetrics.setQueueDepth('telegram', pool.getQueueDepth()),
         startModelTask: startPinnedModelTask,
+        onTaskReply: handleTelegramTaskReply,
       })
       telegramBotPool = pool
 
@@ -1312,6 +1380,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       onTelegramChatEvent,
       (queueDepth) => runtimeMetrics.setQueueDepth('telegram', queueDepth),
       startPinnedModelTask,
+      handleTelegramTaskReply,
     )
     if (telegramBot) {
       try {
