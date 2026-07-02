@@ -10,6 +10,7 @@ import { createLogsRouter } from './routes/logs.js'
 import { createProvidersRouter } from './api/modules/providers/route.js'
 import { createMemoryRouter } from './api/modules/memory/route.js'
 import { createSettingsRouter } from './api/modules/settings/route.js'
+import { createPersonasRouter } from './api/modules/personas/route.js'
 import { createUsersRouter } from './routes/users.js'
 import { createTelegramUsersRouter } from './routes/telegram-users.js'
 import type { TelegramBot } from '@axiom/telegram'
@@ -143,6 +144,7 @@ export function createApp(options?: AppOptions): express.Express {
         options.onTelegramSettingsChanged?.()
       },
     }))
+    app.use('/api/personas', createPersonasRouter())
     app.use('/api/users', createUsersRouter(options.db))
     app.use('/api/telegram-users', createTelegramUsersRouter({
       db: options.db,
