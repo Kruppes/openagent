@@ -45,6 +45,7 @@ export interface AgentCoreOptions {
     userId: string,
     sessionId: string,
     summary: string | null,
+    agentId: string,
     options?: { background?: boolean },
   ) => void
 }
@@ -59,38 +60,33 @@ export { getWorkspaceDir } from './workspace.js'
 export class AgentCore {
   private db: Database
   private sessionManager: SessionManager
-  private memoryDir?: string
-  private baseInstructions?: string
   private onSessionEndCallback?: (
     userId: string,
     sessionId: string,
     summary: string | null,
+    agentId: string,
     options?: { background?: boolean },
   ) => void
   private onTaskInjectionChunkCallback?: (chunk: ResponseChunk) => void
   private messageQueue: MessageQueue
   private currentToolUserId?: number
+  private currentToolAgentId?: string
   private currentInteractiveSessionId?: string
-  private runtime: AgentRuntimeBoundary
+  /**
+   * One AgentRuntime per agentId. The 'main' runtime always exists; persona
+   * runtimes are created lazily on first use. Each has its own PiAgent with an
+   * independent systemPrompt and message history.
+   */
+  private runtimes: Map<string, AgentRuntimeBoundary> = new Map()
+  private runtimeOptions: AgentCoreOptions
 
   constructor(options: AgentCoreOptions) {
     this.db = options.db
-    this.memoryDir = options.memoryDir
-    this.baseInstructions = options.baseInstructions
     this.onSessionEndCallback = options.onSessionEnd
+    this.runtimeOptions = options
 
-    this.runtime = createAgentRuntime({
-      model: options.model,
-      apiKey: options.apiKey,
-      db: options.db,
-      systemPrompt: options.systemPrompt,
-      tools: options.tools,
-      memoryDir: options.memoryDir,
-      baseInstructions: options.baseInstructions,
-      providerConfig: options.providerConfig,
-      providerManager: options.providerManager,
-      getCurrentToolUserId: () => this.currentToolUserId,
-    })
+    // Create the default 'main' runtime eagerly.
+    this.runtimes.set('main', this.createRuntimeForAgent('main', options.systemPrompt))
 
     // Initialize message queue for sequential processing
     this.messageQueue = new MessageQueue()
@@ -104,18 +100,68 @@ export class AgentCore {
         return this.generateSessionSummary(userId, conversationHistory)
       },
       onSessionEnd: (session: SessionInfo, summary: string | null, opts) => {
+        const sessionAgentId = session.agentId ?? 'main'
         // For background ends (resetSessionAsync), runtime state was already
         // cleared synchronously when the new session was created — skip here
         // to avoid wiping the new session's accumulated messages.
         if (!opts?.background) {
-          this.runtime.clearMessages()
-          this.refreshSystemPrompt()
+          const runtime = this.runtimes.get(sessionAgentId)
+          if (runtime) {
+            runtime.clearMessages()
+            this.refreshSystemPrompt(undefined, undefined, sessionAgentId)
+          }
         }
         if (this.onSessionEndCallback) {
-          this.onSessionEndCallback(session.userId, session.id, summary, opts)
+          this.onSessionEndCallback(session.userId, session.id, summary, sessionAgentId, opts)
         }
       },
     })
+  }
+
+  /**
+   * Create an AgentRuntime bound to a specific agentId (persona).
+   */
+  private createRuntimeForAgent(agentId: string, systemPrompt?: string): AgentRuntimeBoundary {
+    return createAgentRuntime({
+      model: this.runtimeOptions.model,
+      apiKey: this.runtimeOptions.apiKey,
+      db: this.runtimeOptions.db,
+      systemPrompt,
+      tools: this.runtimeOptions.tools,
+      memoryDir: this.runtimeOptions.memoryDir,
+      baseInstructions: this.runtimeOptions.baseInstructions,
+      providerConfig: this.runtimeOptions.providerConfig,
+      providerManager: this.runtimeOptions.providerManager,
+      getCurrentToolUserId: () => this.currentToolUserId,
+      agentId,
+    })
+  }
+
+  /**
+   * Get or lazily create the AgentRuntime for a given agentId.
+   */
+  private getOrCreateRuntime(agentId: string): AgentRuntimeBoundary {
+    let runtime = this.runtimes.get(agentId)
+    if (!runtime) {
+      runtime = this.createRuntimeForAgent(agentId)
+      this.runtimes.set(agentId, runtime)
+    }
+    return runtime
+  }
+
+  /** The canonical 'main' runtime (always present). */
+  private get mainRuntime(): AgentRuntimeBoundary {
+    return this.runtimes.get('main')!
+  }
+
+  /**
+   * Get the agentId of the currently executing runtime (set during a turn).
+   * Returns undefined when no runtime is actively processing.
+   */
+  // Used by tool factories that need to attribute side effects to the active persona.
+  // fallow-ignore-next-line unused-class-member
+  getCurrentToolAgentId(): string | undefined {
+    return this.currentToolAgentId
   }
 
   /**
@@ -139,21 +185,27 @@ export class AgentCore {
    * Hot-swap the provider at runtime while preserving conversation context.
    */
   swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string): void {
-    this.runtime.swapProvider(provider, apiKey, modelId)
+    // Update stored options so future lazily-created persona runtimes use the
+    // new provider too.
+    this.runtimeOptions = { ...this.runtimeOptions, providerConfig: provider }
+    for (const runtime of this.runtimes.values()) {
+      runtime.swapProvider(provider, apiKey, modelId)
+    }
   }
 
   /**
-   * Get the ProviderManager reference (if configured).
+   * Get the ProviderManager reference (if configured). Canonical source is the
+   * 'main' runtime.
    */
   getProviderManager(): ProviderManager | undefined {
-    return this.runtime.getProviderManager()
+    return this.mainRuntime.getProviderManager()
   }
 
   /**
    * Send a message and get back an async iterable of response chunks.
    * All messages are queued and processed sequentially to prevent collisions.
    */
-  async *sendMessage(userId: string, text: string, source: string = 'web', attachments?: UploadDescriptor[]): AsyncIterable<ResponseChunk> {
+  async *sendMessage(userId: string, text: string, source: string = 'web', attachments?: UploadDescriptor[], agentId: string = 'main'): AsyncIterable<ResponseChunk> {
     const uploads = attachments
     const iterable = await this.messageQueue.enqueue<ResponseChunk>(
       'user_message',
@@ -161,7 +213,7 @@ export class AgentCore {
       text,
       source,
       (msg) => {
-        return this.processUserMessage(msg.payload.userId, msg.payload.text, msg.payload.source, uploads)
+        return this.processUserMessage(msg.payload.userId, msg.payload.text, msg.payload.source, uploads, agentId)
       },
     )
     yield* iterable
@@ -193,6 +245,7 @@ export class AgentCore {
     targetUserId: string,
     forcedSessionId?: string,
     injectionId?: string,
+    agentId: string = 'main',
   ): Promise<void> {
     const resolvedInjectionId = injectionId ?? randomUUID()
     const iterable = await this.messageQueue.enqueue<ResponseChunk>(
@@ -206,6 +259,7 @@ export class AgentCore {
           msg.payload.text,
           forcedSessionId,
           resolvedInjectionId,
+          agentId,
         )
       },
     )
@@ -218,8 +272,10 @@ export class AgentCore {
   /**
    * Process a user message (called from the queue).
    */
-  private async *processUserMessage(userId: string, text: string, source: string, attachments?: UploadDescriptor[]): AsyncIterable<ResponseChunk> {
-    const session = this.sessionManager.getOrCreateSession(userId, source)
+  private async *processUserMessage(userId: string, text: string, source: string, attachments?: UploadDescriptor[], agentId: string = 'main'): AsyncIterable<ResponseChunk> {
+    // Use resolveSession with the message text so topic-shift detection and
+    // fact injection run on new sessions / topic shifts.
+    const session = this.sessionManager.resolveSession(userId, source, text, agentId)
     const sessionId = session.id
     this.currentInteractiveSessionId = sessionId
 
@@ -238,8 +294,15 @@ export class AgentCore {
 
     // Pass channel as 'telegram' for both DM and group sources
     const channel = source.startsWith('telegram') ? 'telegram' : source
-    this.refreshSystemPrompt(channel, currentUser)
-    this.sessionManager.recordMessage(userId)
+    this.refreshSystemPrompt(channel, currentUser, agentId)
+    this.sessionManager.recordMessage(userId, agentId)
+
+    // Consume any pending fact injection (set during resolveSession on a new
+    // session start or topic shift) and prepend it to the user message.
+    const factInjection = this.sessionManager.consumeFactInjection(userId, agentId)
+    if (factInjection) {
+      text = `${factInjection}\n\n${text}`
+    }
 
     // Build image content and file context from attachments
     const images: ImageContent[] = []
@@ -262,21 +325,26 @@ export class AgentCore {
       }
     }
 
-    const timeContext = this.runtime.getCurrentTimeContext()
+    // Route to the correct runtime for this agentId.
+    const runtime = this.getOrCreateRuntime(agentId)
+
+    const timeContext = runtime.getCurrentTimeContext()
     const baseText = fileHints.length > 0 ? `${text}\n\n${fileHints.join('\n')}` : text
     const enrichedText = `${baseText}\n\n${timeContext}`
     const parsedUserId = Number.parseInt(userId, 10)
     this.currentToolUserId = Number.isFinite(parsedUserId) ? parsedUserId : undefined
+    this.currentToolAgentId = agentId
 
     try {
-      yield* this.runtime.streamPrompt(enrichedText, sessionId, images.length > 0 ? images : undefined)
+      yield* runtime.streamPrompt(enrichedText, sessionId, images.length > 0 ? images : undefined)
     } finally {
       this.currentToolUserId = undefined
+      this.currentToolAgentId = undefined
       this.currentInteractiveSessionId = undefined
     }
 
     // Count the agent response as a message too
-    this.sessionManager.recordMessage(userId)
+    this.sessionManager.recordMessage(userId, agentId)
   }
 
   /**
@@ -324,6 +392,7 @@ export class AgentCore {
     injection: string,
     forcedSessionId?: string,
     injectionId?: string,
+    agentId: string = 'main',
   ): AsyncIterable<ResponseChunk> {
     // Resolve the session for this injection. Never create interactive
     // sessions with source='task' — this breaks source-based history /
@@ -342,25 +411,29 @@ export class AgentCore {
       sessionId = forcedSessionId
       // Still bump the cached session's activity counter if it matches,
       // so the inactivity timer doesn't fire while the injection runs.
-      const cached = this.sessionManager.getSession(targetUserId)
+      const cached = this.sessionManager.getSession(targetUserId, agentId)
       if (cached && cached.id === forcedSessionId) {
-        this.sessionManager.recordMessage(targetUserId)
+        this.sessionManager.recordMessage(targetUserId, agentId)
       }
     } else {
-      const source = this.sessionManager.getSession(targetUserId)?.source
+      const source = this.sessionManager.getSession(targetUserId, agentId)?.source
         ?? this.resolveLastInteractiveSource(targetUserId)
         ?? this.resolveDefaultInjectionSource(targetUserId)
-      const session = this.sessionManager.getOrCreateSession(targetUserId, source)
+      const session = this.sessionManager.getOrCreateSession(targetUserId, source, agentId)
       sessionId = session.id
-      this.sessionManager.recordMessage(targetUserId)
+      this.sessionManager.recordMessage(targetUserId, agentId)
     }
     this.currentInteractiveSessionId = sessionId
 
     const parsedUserId = Number.parseInt(targetUserId, 10)
     this.currentToolUserId = Number.isFinite(parsedUserId) ? parsedUserId : undefined
+    this.currentToolAgentId = agentId
+
+    // Route task injection to the originating persona's runtime.
+    const runtime = this.getOrCreateRuntime(agentId)
 
     try {
-      for await (const chunk of this.runtime.streamPrompt(injection, sessionId)) {
+      for await (const chunk of runtime.streamPrompt(injection, sessionId)) {
         // Tag task-injection chunks with the actual session used AND the
         // per-injection correlation token. Downstream correlation MUST
         // key off `chunk.injectionId` (unique per call) and not
@@ -370,13 +443,14 @@ export class AgentCore {
       }
     } finally {
       this.currentToolUserId = undefined
+      this.currentToolAgentId = undefined
       this.currentInteractiveSessionId = undefined
     }
 
     // Count the agent response as a message too (only when we're driving
     // the cached session — otherwise recordMessage is a no-op for users
     // without a cached session anyway).
-    this.sessionManager.recordMessage(targetUserId)
+    this.sessionManager.recordMessage(targetUserId, agentId)
   }
 
   /**
@@ -489,13 +563,13 @@ export class AgentCore {
     console.log(`[session-summary] Generating summary for ${conversationHistory.length} chars of history`)
 
     // Resolve model + apiKey: use dedicated summary provider if configured, else current model
-    let summaryModel = this.runtime.getCurrentModel()
-    let summaryApiKey = this.runtime.getCurrentApiKey()
+    let summaryModel = this.mainRuntime.getCurrentModel()
+    let summaryApiKey = this.mainRuntime.getCurrentApiKey()
     // Track the provider config that owns summaryModel so we can honor
     // per-model temperature constraints (e.g. Kimi K2 thinking models only
     // accept temperature=1).
     let summaryProviderForTemp: Pick<ProviderConfig, 'providerType' | 'models'> | null =
-      this.runtime.getCurrentProvider()
+      this.mainRuntime.getCurrentProvider()
     try {
       const summarySettings = loadConfig<{ sessionSummaryProviderId?: string }>('settings.json')
       const summaryProviderId = summarySettings.sessionSummaryProviderId
@@ -596,6 +670,7 @@ Do NOT add this section if everything discussed was resolved or if there is noth
     userId: string,
     sessionId: string,
     summary: string | null,
+    agentId: string,
     options?: { background?: boolean },
   ) => void): void {
     this.onSessionEndCallback = callback
@@ -615,7 +690,9 @@ Do NOT add this section if everything discussed was resolved or if there is noth
   // Used by web/Telegram cancellation handlers.
   // fallow-ignore-next-line unused-class-member
   abort(): void {
-    this.runtime.abort()
+    for (const runtime of this.runtimes.values()) {
+      runtime.abort()
+    }
   }
 
   /**
@@ -641,15 +718,16 @@ Do NOT add this section if everything discussed was resolved or if there is noth
    */
   // Used by the websocket chat /new command handler for instant session switch.
   // fallow-ignore-next-line unused-class-member
-  resetSessionAsync(userId: string, source: string = 'web'): SessionInfo {
+  resetSessionAsync(userId: string, source: string = 'web', agentId: string = 'main'): SessionInfo {
     // Clear the in-memory agent messages immediately so the new session
     // is not contaminated by the previous session's context. The DB-side
     // summary still uses `buildConversationHistory()` (sourced from the
     // `chat_messages` table), so we don't lose anything by clearing the
     // in-memory copy here.
-    this.runtime.clearMessages()
-    this.refreshSystemPrompt()
-    return this.sessionManager.handleNewCommandAsync(userId, source)
+    const runtime = this.getOrCreateRuntime(agentId)
+    runtime.clearMessages()
+    this.refreshSystemPrompt(undefined, undefined, agentId)
+    return this.sessionManager.handleNewCommandAsync(userId, source, agentId)
   }
 
   /**
@@ -664,8 +742,16 @@ Do NOT add this section if everything discussed was resolved or if there is noth
   /**
    * Refresh the system prompt from current memory state.
    */
-  refreshSystemPrompt(channel?: string, currentUser?: { username: string }): void {
-    this.runtime.refreshSystemPrompt(channel, currentUser)
+  refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void {
+    if (agentId) {
+      // Refresh only the specified persona's runtime.
+      this.getOrCreateRuntime(agentId).refreshSystemPrompt(channel, currentUser, agentId)
+    } else {
+      // Refresh every existing runtime.
+      for (const [id, runtime] of this.runtimes) {
+        runtime.refreshSystemPrompt(channel, currentUser, id)
+      }
+    }
   }
 
   /**
@@ -675,7 +761,9 @@ Do NOT add this section if everything discussed was resolved or if there is noth
   // Used by settings updates to apply reasoning changes without recreating the agent.
   // fallow-ignore-next-line unused-class-member
   setThinkingLevel(level: string): void {
-    this.runtime.setThinkingLevel(level)
+    for (const runtime of this.runtimes.values()) {
+      runtime.setThinkingLevel(level)
+    }
   }
 
   /**
@@ -690,8 +778,12 @@ Do NOT add this section if everything discussed was resolved or if there is noth
   /**
    * Get a stable runtime snapshot for diagnostics/testing.
    */
-  getRuntimeStateSnapshot(): AgentRuntimeStateSnapshot {
-    return this.runtime.getStateSnapshot()
+  getRuntimeStateSnapshot(agentId: string = 'main'): AgentRuntimeStateSnapshot {
+    const runtime = this.runtimes.get(agentId)
+    if (!runtime) {
+      return { modelId: '', toolNames: [], messageCount: 0 }
+    }
+    return runtime.getStateSnapshot()
   }
 
   /**
@@ -700,8 +792,9 @@ Do NOT add this section if everything discussed was resolved or if there is noth
    */
   // Public escape hatch kept for compatibility with advanced internal integrations.
   // fallow-ignore-next-line unused-class-member
-  getAgent(): PiAgent {
-    const runtimeWithAgent = this.runtime as Partial<AgentRuntimePiAgentAccess>
+  getAgent(agentId: string = 'main'): PiAgent {
+    const runtime = this.getOrCreateRuntime(agentId)
+    const runtimeWithAgent = runtime as Partial<AgentRuntimePiAgentAccess>
     if (typeof runtimeWithAgent.getAgent !== 'function') {
       throw new Error('Direct agent access is not available on this runtime implementation.')
     }
@@ -714,5 +807,6 @@ Do NOT add this section if everything discussed was resolved or if there is noth
    */
   async dispose(): Promise<void> {
     await this.sessionManager.dispose()
+    this.runtimes.clear()
   }
 }

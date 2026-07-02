@@ -945,6 +945,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       userId: string,
       sessionId: string,
       summary: string | null,
+      _agentId: string,
       opts,
     ) => {
       const numericUserId = parseNumericUserId(userId)
