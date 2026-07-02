@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@axiom/core": "*",
-    "@earendil-works/pi-ai": "0.78.0",
+    "@earendil-works/pi-ai": "0.79.10",
     "adm-zip": "^0.5.16",
     "bcrypt": "^6.0.0",
     "express": "^5.1.0",
