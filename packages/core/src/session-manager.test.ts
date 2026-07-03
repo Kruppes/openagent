@@ -203,7 +203,7 @@ describe('SessionManager', () => {
 
         const timerSetLogs = logSpy.mock.calls
           .map(args => String(args[0] ?? ''))
-          .filter(line => line.includes('Timer set for user user1'))
+          .filter(line => line.includes('Timer set for user1'))
 
         expect(timerSetLogs).toHaveLength(1)
       }

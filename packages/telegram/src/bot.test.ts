@@ -1089,6 +1089,7 @@ describe('TelegramBot', () => {
         '<reply-context>The capital of France is Paris.</reply-context>\ncan you explain?',
         'telegram',
         undefined,
+        'main',
       )
     })
 
@@ -1114,6 +1115,7 @@ describe('TelegramBot', () => {
         "<reply-context>let's ship it</reply-context>\nagree",
         'telegram',
         undefined,
+        'main',
       )
     })
 
@@ -1132,6 +1134,7 @@ describe('TelegramBot', () => {
         'hi',
         'telegram',
         undefined,
+        'main',
       )
     })
 
@@ -1180,6 +1183,7 @@ describe('TelegramBot', () => {
         '<reply-context>sunset over the mountains</reply-context>\nnice pic',
         'telegram',
         undefined,
+        'main',
       )
     })
 
@@ -1205,6 +1209,7 @@ describe('TelegramBot', () => {
         'lol',
         'telegram',
         undefined,
+        'main',
       )
     })
 
