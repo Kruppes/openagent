@@ -1,7 +1,53 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { Type } from '@earendil-works/pi-ai'
 import type { Database } from './database.js'
-import { searchMemories } from './memories-store.js'
+import { searchMemories, getMemoryById } from './memories-store.js'
+import type { MemoryFact } from './memories-store.js'
+import { searchMemoriesByEmbedding } from './memory-embeddings.js'
+
+/**
+ * Hybrid retrieval: lexical FTS5 hits + semantic embedding hits merged via
+ * Reciprocal Rank Fusion. Degrades to pure FTS when embeddings are disabled
+ * or the endpoint is unreachable (semantic list is simply empty).
+ */
+async function searchMemoriesHybrid(
+  db: Database,
+  query: string,
+  options: { userId?: number; limit: number },
+): Promise<{ facts: MemoryFact[]; semantic: boolean }> {
+  // Overfetch both lists so fusion has material to work with.
+  const poolSize = Math.min(options.limit * 3, 50)
+  const ftsFacts = searchMemories(db, query, { userId: options.userId, limit: poolSize })
+
+  let embeddingHits: Array<{ id: number }> = []
+  try {
+    embeddingHits = (await searchMemoriesByEmbedding(db, query, {
+      userId: options.userId,
+      limit: poolSize,
+    })) ?? []
+  } catch {
+    // semantic path is strictly best-effort
+  }
+
+  if (embeddingHits.length === 0) {
+    return { facts: ftsFacts.slice(0, options.limit), semantic: false }
+  }
+
+  // RRF: score(id) = Σ 1 / (60 + rank) over both rankings.
+  const K = 60
+  const scores = new Map<number, number>()
+  ftsFacts.forEach((fact, rank) => scores.set(fact.id, (scores.get(fact.id) ?? 0) + 1 / (K + rank)))
+  embeddingHits.forEach((hit, rank) => scores.set(hit.id, (scores.get(hit.id) ?? 0) + 1 / (K + rank)))
+
+  const factById = new Map<number, MemoryFact>(ftsFacts.map((f) => [f.id, f]))
+  const merged: MemoryFact[] = []
+  for (const [id] of [...scores.entries()].sort((a, b) => b[1] - a[1])) {
+    const fact = factById.get(id) ?? getMemoryById(db, id) ?? undefined
+    if (fact) merged.push(fact)
+    if (merged.length >= options.limit) break
+  }
+  return { facts: merged, semantic: true }
+}
 
 export interface SearchMemoriesToolOptions {
   db: Database
@@ -48,7 +94,7 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
       try {
         const limit = Math.min(Math.max(Math.floor(rawLimit ?? 10), 1), 50)
         const userId = options.getCurrentUserId?.()
-        const facts = searchMemories(options.db, query, {
+        const { facts, semantic } = await searchMemoriesHybrid(options.db, query, {
           userId,
           limit,
         })
@@ -78,6 +124,7 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
             query,
             limit,
             userId,
+            semantic,
             facts,
           },
         }

@@ -1,5 +1,6 @@
 import {
   AgentCore,
+  backfillMemoryEmbeddings,
   AgentHeartbeatService,
   buildModel,
   createBaseAgentTools,
@@ -1597,6 +1598,15 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   }
 
   await initOrUpdateAgentCore()
+
+  // Backfill semantic vectors for memory rows that don't have one yet
+  // (no-op when memoryEmbeddings is disabled). Fire-and-forget — lexical
+  // search works regardless.
+  backfillMemoryEmbeddings(db)
+    .then((embedded) => {
+      if (embedded > 0) logger.log(`[axiom] Memory embeddings: backfilled ${embedded} rows`)
+    })
+    .catch((err) => logger.warn('[axiom] Memory embedding backfill failed:', err))
 
   // Recover tasks interrupted by the restart: running tasks are re-started
   // with a progress summary built from their stored tool calls; paused ones

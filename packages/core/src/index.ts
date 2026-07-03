@@ -290,6 +290,13 @@ export {
 } from './memories-store.js'
 export type { MemoryFact, SearchMemoriesOptions, ListMemoriesOptions } from './memories-store.js'
 export {
+  loadMemoryEmbeddingSettings,
+  embedTexts,
+  searchMemoriesByEmbedding,
+  backfillMemoryEmbeddings,
+} from './memory-embeddings.js'
+export type { MemoryEmbeddingSettings, EmbeddingSearchHit } from './memory-embeddings.js'
+export {
   parseFactLines,
   isDuplicateFact,
   storeFact,

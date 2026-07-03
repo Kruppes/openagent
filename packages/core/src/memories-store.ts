@@ -1,6 +1,7 @@
 import type { Database } from './database.js'
 import { normalizeFtsQuery } from './fts-utils.js'
 import { NotFoundError, InvalidInputError } from './errors.js'
+import { embedMemoryBestEffort } from './memory-embeddings.js'
 
 export interface MemoryFact {
   id: number
@@ -206,14 +207,20 @@ export function createMemory(
     'INSERT INTO memories (user_id, session_id, content, source) VALUES (?, ?, ?, ?)'
   ).run(userId, sessionId, content, source)
 
-  return Number(result.lastInsertRowid)
+  const id = Number(result.lastInsertRowid)
+  // Best-effort semantic vector (no-op when memoryEmbeddings is disabled).
+  embedMemoryBestEffort(db, id, content)
+  return id
 }
 
 export function updateMemory(db: Database, id: number, content: string): void {
-  const result = db.prepare('UPDATE memories SET content = ? WHERE id = ?').run(content, id)
+  // A stale vector must not survive a content change — cleared synchronously,
+  // re-embedded best-effort.
+  const result = db.prepare('UPDATE memories SET content = ?, embedding = NULL WHERE id = ?').run(content, id)
   if (result.changes === 0) {
     throw new NotFoundError(`Memory not found: ${id}`)
   }
+  embedMemoryBestEffort(db, id, content)
 }
 
 export function deleteMemory(db: Database, id: number): void {
