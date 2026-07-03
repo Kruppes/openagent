@@ -604,7 +604,11 @@ export class SessionManager {
       status: 'success',
     })
 
-    this.resetTimer(key)
+    // No resetTimer here: every interactive entry point calls recordMessage
+    // (which resets the timer) right after session resolution — resetting
+    // here too double-arms the timer for every first message (regression
+    // guarded by session-manager.test "sets the inactivity timer exactly
+    // once per incoming user message").
     return session
   }
 
