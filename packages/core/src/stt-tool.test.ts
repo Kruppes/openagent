@@ -4,6 +4,7 @@ import nodePath from 'node:path'
 
 // Mock modules before importing the tool
 vi.mock('./config.js', () => ({
+  loadMultiPersonaSettings: vi.fn(() => ({ enabled: false, defaultAgentId: 'main' })),
   loadConfig: vi.fn(),
   ensureConfigTemplates: vi.fn(),
 }))

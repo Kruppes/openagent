@@ -13,6 +13,7 @@ vi.mock('./memory.js', () => ({
 }))
 
 vi.mock('./config.js', () => ({
+  loadMultiPersonaSettings: vi.fn(() => ({ enabled: false, defaultAgentId: 'main' })),
   ensureConfigTemplates: vi.fn(),
   loadConfig: vi.fn(() => ({})),
   getConfigDir: vi.fn(() => '/tmp/test-config'),

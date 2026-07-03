@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // Mock config module before importing stt
 vi.mock('./config.js', () => ({
+  loadMultiPersonaSettings: vi.fn(() => ({ enabled: false, defaultAgentId: 'main' })),
   loadConfig: vi.fn(),
   ensureConfigTemplates: vi.fn(),
 }))

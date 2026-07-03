@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // without touching the real on-disk settings.json. We override the return
 // values per test via `loadConfigMock.mockReturnValueOnce(...)` below.
 vi.mock('./config.js', () => ({
+  loadMultiPersonaSettings: vi.fn(() => ({ enabled: false, defaultAgentId: 'main' })),
   ensureConfigTemplates: vi.fn(),
   loadConfig: vi.fn(),
 }))

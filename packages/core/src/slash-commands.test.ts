@@ -176,7 +176,17 @@ describe('built-in slash commands', () => {
     expect(names).toContain('cronjobs')
     expect(names).toContain('model')
     expect(names).toContain('thinking')
-    expect(registry.list('telegram').map((c) => c.name)).toEqual(names)
+    expect(names).toContain('offline')
+    expect(names).toContain('online')
+    // Telegram is a superset: every web command plus the telegram-only
+    // model-task prefix commands (/fable, /opus, /sonnet).
+    const telegramNames = registry.list('telegram').map((c) => c.name)
+    for (const name of names) {
+      expect(telegramNames).toContain(name)
+    }
+    expect(telegramNames).toContain('fable')
+    expect(telegramNames).toContain('opus')
+    expect(telegramNames).toContain('sonnet')
   })
 
   it('exposes /provider as an alias of /model and does not register /settings', () => {
