@@ -592,7 +592,10 @@ export class TaskRunner {
     taskProvider: ProviderConfig | null,
   ): Promise<{ status: TaskResultStatus; summary: string } | null> {
     const cfg = this.options.verification
-    if (cfg && cfg.enabled === false) return null
+    // Default ON in production; default OFF under vitest so completion tests
+    // don't fire real reviewer HTTP calls (suites opt in via explicit cfg).
+    const enabled = cfg?.enabled ?? !process.env.VITEST
+    if (!enabled) return null
 
     const task = this.store.getById(taskId)
     if (!task) return null

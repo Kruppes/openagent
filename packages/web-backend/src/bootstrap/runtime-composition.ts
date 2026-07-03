@@ -1598,6 +1598,24 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
   await initOrUpdateAgentCore()
 
+  // Recover tasks interrupted by the restart: running tasks are re-started
+  // with a progress summary built from their stored tool calls; paused ones
+  // are closed. (The recovery machinery existed in the runner but was never
+  // wired — without this call, interrupted work was silently lost.)
+  try {
+    if (getActiveProvider()) {
+      const recovery = await taskRuntime.tasks.recover(
+        (name: string) => resolveProvider(name),
+        getTaskDefaultProvider(),
+      )
+      if (recovery.resumed > 0 || recovery.failed > 0) {
+        logger.log(`[axiom] Task recovery: ${recovery.resumed} resumed, ${recovery.failed} closed`)
+      }
+    }
+  } catch (err) {
+    logger.error('[axiom] Task recovery failed:', err)
+  }
+
   return {
     db,
     runtimeMetrics,

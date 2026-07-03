@@ -52,6 +52,7 @@ export async function startHttpBoundary(
     runtimeComposition.getAgentCore,
     runtimeComposition.runtimeMetrics,
     runtimeComposition.chatEventBus,
+    runtimeComposition.onActiveProviderChanged,
   )
   runtimeComposition.setWebSocketChatPresenceChecker(wsChat)
 

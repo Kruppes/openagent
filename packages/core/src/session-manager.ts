@@ -121,6 +121,13 @@ export class SessionManager {
   /** Pending fact injection text to be included in the next response, keyed by sessionKey */
   private pendingFactInjection: Map<string, string> = new Map()
   /**
+   * Raw tail of the previous session's conversation, injected into the first
+   * prompt of a fresh session. A summary alone loses the mid-thought state
+   * (open questions, "das von vorhin" references) — the verbatim tail keeps
+   * continuity across topic-shift and timeout cuts.
+   */
+  private pendingSessionTail: Map<string, string> = new Map()
+  /**
    * Tracks pending background summary jobs spawned by
    * `handleNewCommandAsync` so `dispose()` can drain them on shutdown
    * and tests can deterministically await completion via
@@ -566,6 +573,10 @@ export class SessionManager {
     const id = generateSessionId()
     const key = this.sessionKey(userId, agentId)
 
+    // Carry a verbatim tail of the previous session (if recent) into the
+    // first prompt of this one — consumed via consumeFactInjection.
+    this.prepareSessionTail(key, userId, agentId)
+
     const session: SessionInfo = {
       id,
       userId,
@@ -624,16 +635,68 @@ export class SessionManager {
   }
 
   /**
-   * Consume and clear any pending fact injection for a (user, agent).
+   * Store a compact verbatim tail of the user's PREVIOUS interactive session
+   * so the fresh session doesn't start with hard amnesia. Only when the
+   * previous session was recently active (stale tails are noise).
+   */
+  private prepareSessionTail(key: string, userId: string, agentId: string): void {
+    try {
+      const prev = this.db.prepare(
+        `SELECT id, last_activity FROM sessions
+         WHERE session_user = ? AND agent_id = ? AND type = 'interactive'
+         ORDER BY started_at DESC LIMIT 1`
+      ).get(userId, agentId) as { id: string; last_activity: string | null } | undefined
+      if (!prev) return
+
+      // Freshness window: 12h. `last_activity` is stored as UTC datetime text.
+      if (prev.last_activity) {
+        const lastMs = new Date(prev.last_activity.replace(' ', 'T') + 'Z').getTime()
+        if (Number.isFinite(lastMs) && Date.now() - lastMs > 12 * 3600_000) return
+      }
+
+      const rows = this.db.prepare(
+        `SELECT role, content FROM chat_messages
+         WHERE session_id = ? AND role IN ('user','assistant') AND content != ''
+         ORDER BY id DESC LIMIT 5`
+      ).all(prev.id) as Array<{ role: string; content: string }>
+      if (rows.length === 0) return
+
+      const lines = rows
+        .map((row) => {
+          const text = row.content.length > 400 ? `${row.content.slice(0, 400)}…` : row.content
+          return `${row.role === 'user' ? 'User' : 'You'}: ${text}`
+        })
+        .reverse()
+
+      this.pendingSessionTail.set(key, [
+        '<previous_session_tail>',
+        'Last messages of the previous session (a summary of it is in your memory). Use this only to resolve references — the user may have moved on to a new topic:',
+        ...lines,
+        '</previous_session_tail>',
+      ].join('\n'))
+    } catch (err) {
+      console.error('[session] Session-tail carryover error:', err)
+    }
+  }
+
+  /**
+   * Consume and clear any pending injection (previous-session tail and/or
+   * fact injection) for a (user, agent).
    */
   consumeFactInjection(userId: string, agentId: string = 'main'): string | null {
     const key = this.sessionKey(userId, agentId)
+    const parts: string[] = []
+    const tail = this.pendingSessionTail.get(key)
+    if (tail) {
+      this.pendingSessionTail.delete(key)
+      parts.push(tail)
+    }
     const injection = this.pendingFactInjection.get(key)
     if (injection) {
       this.pendingFactInjection.delete(key)
-      return injection
+      parts.push(injection)
     }
-    return null
+    return parts.length > 0 ? parts.join('\n\n') : null
   }
 
   /**

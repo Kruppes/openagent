@@ -125,6 +125,7 @@ export function setupWebSocketChat(
   getAgentCore: (() => AgentCore | null) | AgentCore | null,
   runtimeMetrics?: RuntimeMetrics,
   chatEventBus?: ChatEventBus,
+  onActiveProviderChanged?: () => void,
 ): WebSocketChatResult {
   // Support both getter function and direct reference (backward compat)
   const resolveAgentCore = typeof getAgentCore === 'function' ? getAgentCore : () => getAgentCore
@@ -238,6 +239,9 @@ export function setupWebSocketChat(
           db,
           taskStore,
           scheduledTaskStore,
+          // Provider switches (/model, /offline, /online) must rebuild the
+          // agent core — the running agent is bound to the previous model.
+          onActiveProviderChanged,
           onThinkingLevelChanged: (level) => resolveAgentCore()?.setThinkingLevel(level),
         })
         if (dispatch.kind === 'handled') {

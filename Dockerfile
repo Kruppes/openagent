@@ -53,6 +53,13 @@ COPY . .
 # Build all packages
 RUN npm run build
 
+# Test gate: the image build is the only environment where the native
+# modules (better-sqlite3, oxc-parser) exist, so the full vitest suite runs
+# HERE — a red suite fails the build and therefore blocks the deploy.
+# Escape hatch for emergency deploys: --build-arg RUN_TESTS=0
+ARG RUN_TESTS=1
+RUN if [ "$RUN_TESTS" = "1" ]; then npm test; fi
+
 # Configure npm global prefix to persist packages in /data volume
 ENV NPM_CONFIG_PREFIX=/data/npm-global
 ENV PATH="/data/npm-global/bin:${PATH}"
