@@ -333,6 +333,15 @@ export function initDatabase(dbPath?: string): Database {
     db.exec("CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_agent_id ON scheduled_tasks(agent_id)")
   }
 
+  // Fork: add agent_id column to tasks for multi-persona task routing.
+  // (Also done in initTasksTable for store-level callers — this covers the
+  // initDatabase path used by the app bootstrap and tests.)
+  const taskCols = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[]
+  if (!taskCols.find(c => c.name === 'agent_id')) {
+    db.exec("ALTER TABLE tasks ADD COLUMN agent_id TEXT DEFAULT NULL")
+    db.exec("CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON tasks(agent_id)")
+  }
+
   // Migration: add 'paused' to tasks status CHECK constraint
   // Test by inserting a paused row — if CHECK fails, recreate the table
   try {
