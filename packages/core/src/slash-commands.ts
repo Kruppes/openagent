@@ -419,7 +419,10 @@ function handleOnlineCommand(ctx: SlashCommandContext): string {
     return 'No previous provider stored — nothing to restore. Use /model to pick one.'
   }
 
-  const [providerId, modelId] = offline.previousProvider.split(':')
+  // Split at the FIRST colon only — model ids may contain colons (qwen3:30b)
+  const colonIdx = offline.previousProvider.indexOf(':')
+  const providerId = colonIdx === -1 ? offline.previousProvider : offline.previousProvider.slice(0, colonIdx)
+  const modelId = colonIdx === -1 ? undefined : offline.previousProvider.slice(colonIdx + 1) || undefined
   let file
   try {
     file = loadProviders()
