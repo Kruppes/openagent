@@ -296,6 +296,7 @@ export {
   backfillMemoryEmbeddings,
 } from './memory-embeddings.js'
 export type { MemoryEmbeddingSettings, EmbeddingSearchHit } from './memory-embeddings.js'
+export { withTimeout } from './promise-utils.js'
 export {
   parseFactLines,
   isDuplicateFact,

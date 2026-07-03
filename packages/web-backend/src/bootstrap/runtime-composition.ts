@@ -1,6 +1,7 @@
 import {
   AgentCore,
   backfillMemoryEmbeddings,
+  withTimeout,
   AgentHeartbeatService,
   buildModel,
   createBaseAgentTools,
@@ -1057,7 +1058,10 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     const apiKey = await getApiKeyForProvider(provider)
     const contextBlock = input.userId ? buildChatContextBlock(String(input.userId), input.agentId, 8, 2000) : null
 
-    const response = await completeSimple(model, {
+    // Hard timeout: the user is actively waiting for the ✅/❌ buttons, and
+    // a dead local endpoint would otherwise hang this forever (the caller
+    // falls back to a direct start on error).
+    const response = await withTimeout(completeSimple(model, {
       systemPrompt:
         'You draft execution plans for autonomous background tasks. ' +
         'Produce a concise plan: max 6 short bullet points, concrete steps, no preamble, no closing remarks. ' +
@@ -1070,7 +1074,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     }, {
       apiKey,
       temperature: 0,
-    })
+    }), 60_000, 'Task plan draft')
 
     const text = response.content
       .filter((item) => item.type === 'text')

@@ -1028,8 +1028,14 @@ export class SessionManager {
       this.onSessionEnd(session, summary)
     }
 
-    // Remove from active sessions
-    this.sessions.delete(key)
+    // Remove from active sessions — but ONLY if the map still holds THIS
+    // session. On topic shift, endSession runs fire-and-forget while
+    // createFreshSession has already put the NEW session under the same
+    // key; an unconditional delete would evict the fresh session once the
+    // (slow) summary finally lands.
+    if (this.sessions.get(key) === session) {
+      this.sessions.delete(key)
+    }
 
     return summary
   }

@@ -18,6 +18,7 @@ import { createAgentRuntime } from './agent-runtime.js'
 import type { AgentRuntimeBoundary, AgentRuntimePiAgentAccess } from './agent-runtime.js'
 import type { AgentRuntimeStateSnapshot, ResponseChunk } from './agent-runtime-types.js'
 import { resolveBackgroundReasoning } from './thinking-level.js'
+import { withTimeout } from './promise-utils.js'
 
 export type { ResponseChunk } from './agent-runtime-types.js'
 export { createYoloTools, isRetryablePreStreamError } from './agent-runtime.js'
@@ -596,7 +597,10 @@ export class AgentCore {
 
     try {
       // Session summary is a background job — use the background thinking level.
-      const response = await completeSimple(summaryModel, {
+      // HARD timeout: a summary call on a dead connection (e.g. local Ollama
+      // restarted mid-request) never settles, and /new AWAITS the summary in
+      // the sequential message queue — without this cap the whole chat hangs.
+      const response = await withTimeout(completeSimple(summaryModel, {
         systemPrompt: `You are writing a chronological activity log entry for this session. Your output will be stored in a daily file under a "## HH:MM" timestamp heading that the surrounding code adds automatically. Other sessions will read this entry to recall what happened (e.g. "yesterday at 14:30 we discussed X and you asked me to do Y").
 
 ## Output format (strict)
@@ -637,7 +641,7 @@ Do NOT add this section if everything discussed was resolved or if there is noth
           ? resolveModelTemperature(summaryProviderForTemp, summaryModel.id, 0)
           : 0,
         reasoning: resolveBackgroundReasoning(),
-      })
+      }), 180_000, 'Session summary')
 
       const textContent = response.content.filter(c => c.type === 'text')
 

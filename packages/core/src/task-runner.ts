@@ -11,6 +11,7 @@ import { getSkill } from './skill-config.js'
 import { readTasksGuidelinesFile } from './memory.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
 import { readBackgroundThinkingLevelFromConfig, resolveBackgroundReasoning } from './thinking-level.js'
+import { withTimeout } from './promise-utils.js'
 import { TaskStore } from './task-store.js'
 import type { Task, TaskResultStatus, TaskTriggerType } from './task-store.js'
 import type { SessionManager, SessionType } from './session-manager.js'
@@ -612,7 +613,7 @@ export class TaskRunner {
       const promptExcerpt = task.prompt.length > 4000 ? `${task.prompt.slice(0, 4000)}…` : task.prompt
       const resultExcerpt = resultText.length > 6000 ? `${resultText.slice(0, 6000)}…` : resultText
 
-      const response = await completeSimple(model, {
+      const response = await withTimeout(completeSimple(model, {
         systemPrompt:
           'You are a strict reviewer for results of autonomous background tasks. ' +
           'Judge ONLY whether the reported result actually fulfills the task: are the claims concrete and backed by the described work, is anything essential missing, does it answer what was asked? ' +
@@ -627,7 +628,7 @@ export class TaskRunner {
         apiKey,
         temperature: 0,
         reasoning: resolveBackgroundReasoning(),
-      })
+      }), 120_000, 'Task result verification')
 
       const verdictText = response.content
         .filter((item) => item.type === 'text')
