@@ -19,6 +19,7 @@ import {
   ensureConfigStructure,
   ensureConfigTemplates,
   ensureMemoryStructure,
+  getMemoryDir,
   getActiveModelId,
   getActiveProvider,
   getApiKeyForProvider,
@@ -717,6 +718,10 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       getApiKey: getApiKeyForProvider,
       sessionManager: backgroundSessions,
       tools: backgroundTaskTools,
+      // Absolute memory location in every task agent's system prompt —
+      // without this, weaker models resolve `memory/...` relative to
+      // /workspace and read nothing (nightly consolidation no-op incident).
+      memoryDir: getMemoryDir(),
       onTaskComplete: (taskId: string, injection: string, agentId: string | null) => {
         handleTaskNotification(taskId, injection, taskRuntime.tasks, agentId)
       },
