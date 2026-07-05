@@ -90,6 +90,8 @@ export interface AgentRuntimeBoundary {
   getCurrentTimeContext(): string
   swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string): void
   getProviderManager(): ProviderManager | undefined
+  /** Replace the ProviderManager (hot provider switch keeps fallback machinery intact). */
+  setProviderManager(manager: ProviderManager | undefined): void
   clearMessages(): void
   abort(): void
   getStateSnapshot(): AgentRuntimeStateSnapshot
@@ -628,6 +630,10 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
   getProviderManager(): ProviderManager | undefined {
     return this.providerManager
+  }
+
+  setProviderManager(manager: ProviderManager | undefined): void {
+    this.providerManager = manager
   }
 
   clearMessages(): void {

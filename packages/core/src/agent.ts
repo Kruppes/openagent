@@ -195,6 +195,17 @@ export class AgentCore {
   }
 
   /**
+   * Replace the ProviderManager on all runtimes (used by the hot provider
+   * switch so the mid-stream fallback machinery tracks the NEW primary).
+   */
+  setProviderManager(manager: ProviderManager | undefined): void {
+    this.runtimeOptions = { ...this.runtimeOptions, providerManager: manager }
+    for (const runtime of this.runtimes.values()) {
+      runtime.setProviderManager(manager)
+    }
+  }
+
+  /**
    * Get the ProviderManager reference (if configured). Canonical source is the
    * 'main' runtime.
    */

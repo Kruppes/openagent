@@ -1511,11 +1511,75 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     }
   }
 
+  /**
+   * Wire fallback/recovery listeners onto a (new) ProviderManager. The
+   * `providerManager !== manager` guard makes listeners of superseded
+   * managers inert after a later hot-swap.
+   */
+  function registerProviderManagerListeners(manager: ProviderManager): void {
+    manager.on('mode:fallback', async () => {
+      if (!agentCore || providerManager !== manager) return
+      const effectiveProvider = manager.getEffectiveProvider()
+      if (!effectiveProvider) return
+
+      try {
+        const fbModelId = getFallbackModelId()
+        const key = await getApiKeyForProvider(effectiveProvider)
+        agentCore.swapProvider(effectiveProvider, key, fbModelId ?? undefined)
+        logger.log(`[axiom] Swapped to fallback provider: ${effectiveProvider.name} (${fbModelId ?? getProviderDefaultModel(effectiveProvider)})`)
+      } catch (err) {
+        logger.error('[axiom] Failed to swap to fallback provider:', err)
+      }
+    })
+
+    manager.on('mode:normal', async () => {
+      if (!agentCore || providerManager !== manager) return
+      const effectiveProvider = manager.getEffectiveProvider()
+      if (!effectiveProvider) return
+
+      try {
+        const actModelId = getActiveModelId()
+        const key = await getApiKeyForProvider(effectiveProvider)
+        agentCore.swapProvider(effectiveProvider, key, actModelId ?? undefined)
+        logger.log(`[axiom] Swapped back to primary provider: ${effectiveProvider.name} (${actModelId ?? getProviderDefaultModel(effectiveProvider)})`)
+      } catch (err) {
+        logger.error('[axiom] Failed to swap to primary provider:', err)
+      }
+    })
+  }
+
   async function initOrUpdateAgentCore(): Promise<void> {
     const provider = getActiveProvider()
     if (!provider) {
       logger.warn('[axiom] No provider configured — chat will be unavailable. Configure a provider in Settings.')
       return
+    }
+
+    // HOT SWAP: when an agent core already exists, a provider/model change
+    // must NOT end sessions, wipe conversations, or restart the Telegram
+    // bots. swapProvider is the same conversation-preserving mechanism the
+    // fallback machinery uses mid-stream. Falls back to a full rebuild on
+    // any error.
+    if (agentCore) {
+      try {
+        const activeModelId = getActiveModelId()
+        const apiKey = await getApiKeyForProvider(provider)
+        const fallbackProvider = getFallbackProvider()
+
+        const manager = new ProviderManager(provider, fallbackProvider)
+        registerProviderManagerListeners(manager)
+        providerManager = manager
+        healthMonitorService.setProviderManager(manager)
+
+        agentCore.setProviderManager(manager)
+        agentCore.swapProvider(provider, apiKey, activeModelId ?? undefined)
+        agentCore.refreshSystemPrompt()
+
+        logger.log(`[axiom] Provider hot-swapped to ${provider.name} (${activeModelId ?? getProviderDefaultModel(provider)}) — sessions preserved`)
+        return
+      } catch (err) {
+        logger.error('[axiom] Provider hot-swap failed — falling back to full rebuild:', err)
+      }
     }
 
     const previousAgentCore = agentCore
@@ -1555,35 +1619,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         sessionTimeoutMinutes,
       })
 
-      providerManager.on('mode:fallback', async () => {
-        if (!agentCore || !providerManager) return
-        const effectiveProvider = providerManager.getEffectiveProvider()
-        if (!effectiveProvider) return
-
-        try {
-          const fbModelId = getFallbackModelId()
-          const key = await getApiKeyForProvider(effectiveProvider)
-          agentCore.swapProvider(effectiveProvider, key, fbModelId ?? undefined)
-          logger.log(`[axiom] Swapped to fallback provider: ${effectiveProvider.name} (${fbModelId ?? getProviderDefaultModel(effectiveProvider)})`)
-        } catch (err) {
-          logger.error('[axiom] Failed to swap to fallback provider:', err)
-        }
-      })
-
-      providerManager.on('mode:normal', async () => {
-        if (!agentCore || !providerManager) return
-        const effectiveProvider = providerManager.getEffectiveProvider()
-        if (!effectiveProvider) return
-
-        try {
-          const actModelId = getActiveModelId()
-          const key = await getApiKeyForProvider(effectiveProvider)
-          agentCore.swapProvider(effectiveProvider, key, actModelId ?? undefined)
-          logger.log(`[axiom] Swapped back to primary provider: ${effectiveProvider.name} (${actModelId ?? getProviderDefaultModel(effectiveProvider)})`)
-        } catch (err) {
-          logger.error('[axiom] Failed to swap to primary provider:', err)
-        }
-      })
+      registerProviderManagerListeners(providerManager)
 
       healthMonitorService.setProviderManager(providerManager)
       consolidationScheduler.setAgentCore(agentCore)
