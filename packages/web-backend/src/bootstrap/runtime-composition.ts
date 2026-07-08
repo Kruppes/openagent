@@ -34,6 +34,7 @@ import {
   storeFact,
   loadMultiPersonaSettings,
   loadProvidersDecrypted,
+  syncNewCatalogModels,
   resolveProviderModelInput,
   logToolCall,
   parseProviderModelId,
@@ -329,6 +330,14 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
   logger.log('[axiom] Ensuring config templates...')
   ensureConfigTemplates()
+
+  try {
+    for (const sync of syncNewCatalogModels()) {
+      logger.log(`[axiom] Provider "${sync.providerName}": auto-enabled new catalog models: ${sync.added.join(', ')}`)
+    }
+  } catch (error) {
+    logger.warn('[axiom] Catalog model sync failed:', error)
+  }
 
   logger.log('[axiom] Ensuring memory structure...')
   ensureMemoryStructure()

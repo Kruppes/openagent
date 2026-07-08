@@ -8,6 +8,7 @@ import {
   setFallbackProvider,
   clearFallbackProvider,
   getAvailableModels,
+  syncNewCatalogModels,
   buildModel,
   estimateCost,
   resolveModelTemperature,
@@ -1325,5 +1326,120 @@ describe('OpenCode Zen/Go catalog presets (sourced from pi-ai)', () => {
     const model = buildModel(provider)
     expect(model.api).toBe('openai-completions')
     expect(model.baseUrl).toBe('https://api.openai.com/v1')
+  })
+})
+
+describe('syncNewCatalogModels', () => {
+  let tmpDir: string
+  const originalDataDir = process.env.DATA_DIR
+
+  afterEach(() => {
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true })
+    if (originalDataDir !== undefined) process.env.DATA_DIR = originalDataDir
+    else delete process.env.DATA_DIR
+  })
+
+  function setup(providers: object[]): void {
+    tmpDir = path.join(os.tmpdir(), `axiom-catalog-sync-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const configDir = path.join(tmpDir, 'config')
+    fs.mkdirSync(configDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(configDir, 'providers.json'),
+      JSON.stringify({ providers }, null, 2),
+      'utf-8',
+    )
+    process.env.DATA_DIR = tmpDir
+  }
+
+  function anthropicProvider(overrides: object = {}): object {
+    return {
+      id: 'anth-1',
+      name: 'Anthropic',
+      type: 'anthropic-messages',
+      providerType: 'anthropic',
+      provider: 'anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      apiKey: '',
+      enabledModels: ['claude-opus-4-8'],
+      ...overrides,
+    }
+  }
+
+  it('first run records the catalog baseline without enabling anything', () => {
+    setup([anthropicProvider()])
+    const results = syncNewCatalogModels()
+    expect(results).toEqual([])
+
+    const saved = loadProviders().providers[0]
+    expect(saved.enabledModels).toEqual(['claude-opus-4-8'])
+    const catalogIds = getAvailableModels('anthropic').map(m => m.id)
+    expect(saved.knownModels).toEqual(catalogIds)
+    expect(catalogIds.length).toBeGreaterThan(0)
+  })
+
+  it('appends catalog models missing from knownModels to the end of enabledModels', () => {
+    const catalogIds = getAvailableModels('anthropic').map(m => m.id)
+    const newModel = catalogIds[catalogIds.length - 1]
+    setup([anthropicProvider({ knownModels: catalogIds.filter(id => id !== newModel) })])
+
+    const results = syncNewCatalogModels()
+    expect(results).toEqual([
+      { providerId: 'anth-1', providerName: 'Anthropic', added: [newModel] },
+    ])
+
+    const saved = loadProviders().providers[0]
+    expect(saved.enabledModels).toEqual(['claude-opus-4-8', newModel])
+    expect(saved.enabledModels?.[0]).toBe('claude-opus-4-8')
+    expect(saved.knownModels).toContain(newModel)
+  })
+
+  it('leaves user-unchecked models alone once they are known', () => {
+    const catalogIds = getAvailableModels('anthropic').map(m => m.id)
+    setup([anthropicProvider({ knownModels: catalogIds })])
+
+    const results = syncNewCatalogModels()
+    expect(results).toEqual([])
+    expect(loadProviders().providers[0].enabledModels).toEqual(['claude-opus-4-8'])
+  })
+
+  it('does not re-add a new model the user already enabled manually', () => {
+    const catalogIds = getAvailableModels('anthropic').map(m => m.id)
+    const newModel = catalogIds[catalogIds.length - 1]
+    setup([anthropicProvider({
+      enabledModels: ['claude-opus-4-8', newModel],
+      knownModels: catalogIds.filter(id => id !== newModel),
+    })])
+
+    const results = syncNewCatalogModels()
+    expect(results).toEqual([])
+    expect(loadProviders().providers[0].enabledModels).toEqual(['claude-opus-4-8', newModel])
+    expect(loadProviders().providers[0].knownModels).toContain(newModel)
+  })
+
+  it('keeps vanished catalog models in knownModels (grow-only union)', () => {
+    const catalogIds = getAvailableModels('anthropic').map(m => m.id)
+    setup([anthropicProvider({ knownModels: [...catalogIds, 'claude-legacy-gone'] })])
+
+    syncNewCatalogModels()
+    expect(loadProviders().providers[0].knownModels).toContain('claude-legacy-gone')
+  })
+
+  it('skips providers without a pi-ai catalog', () => {
+    setup([{
+      id: 'oll-1',
+      name: 'ollama',
+      type: 'openai-completions',
+      providerType: 'ollama',
+      provider: 'ollama',
+      baseUrl: 'http://localhost:11434/v1',
+      apiKey: '',
+      enabledModels: ['qwen3:30b'],
+    }])
+
+    const results = syncNewCatalogModels()
+    expect(results).toEqual([])
+    const saved = loadProviders().providers[0]
+    expect(saved.knownModels).toBeUndefined()
+    expect(saved.enabledModels).toEqual(['qwen3:30b'])
   })
 })

@@ -81,6 +81,7 @@ export {
   clearFallbackProvider,
   getApiKeyForProvider,
   getAvailableModels,
+  syncNewCatalogModels,
   addOAuthProvider,
   updateOAuthCredentials,
   encryptOAuthCredentials,

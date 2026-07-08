@@ -506,6 +506,62 @@ export function getAvailableModels(providerType: ProviderType): AvailableModel[]
   return Array.from(merged.values())
 }
 
+export interface CatalogSyncResult {
+  providerId: string
+  providerName: string
+  added: string[]
+}
+
+/**
+ * Auto-enable models that newly appeared in the pi-ai catalog since the last
+ * sync. The catalog only changes with a pi-ai version bump (i.e. a new image),
+ * so running this once at startup covers every way new models can arrive.
+ *
+ * Per configured provider whose type has a real pi-ai catalog:
+ * - no `knownModels` yet → record the current catalog as baseline, enable
+ *   nothing (first run after upgrade must not flood enabledModels)
+ * - otherwise → append catalog ids not in `knownModels` to the END of
+ *   `enabledModels` (index 0 stays the default model) and refresh the snapshot.
+ *   Ids already known but unchecked by the user are left alone.
+ */
+export function syncNewCatalogModels(): CatalogSyncResult[] {
+  const file = loadProviders()
+  const results: CatalogSyncResult[] = []
+  let changed = false
+
+  for (const provider of file.providers) {
+    const preset = PROVIDER_TYPE_PRESETS[provider.providerType]
+    if (!preset?.piAiProvider) continue
+    const catalogIds = getAvailableModels(provider.providerType).map(m => m.id)
+    if (catalogIds.length === 0) continue
+
+    if (!provider.knownModels) {
+      provider.knownModels = catalogIds
+      changed = true
+      continue
+    }
+
+    const known = new Set(provider.knownModels)
+    const fresh = catalogIds.filter(id => !known.has(id))
+    if (fresh.length === 0) continue
+
+    const enabled = provider.enabledModels ?? []
+    const enabledSet = new Set(enabled)
+    const toAdd = fresh.filter(id => !enabledSet.has(id))
+    if (toAdd.length > 0) {
+      provider.enabledModels = [...enabled, ...toAdd]
+      results.push({ providerId: provider.id, providerName: provider.name, added: toAdd })
+    }
+    // Union, not snapshot: a model that leaves the catalog and later returns
+    // must not be treated as new again (the user may have unchecked it).
+    provider.knownModels = [...provider.knownModels, ...fresh]
+    changed = true
+  }
+
+  if (changed) saveProviders(file)
+  return results
+}
+
 /**
  * Look up an override model config by provider type and model id, if any.
  */
@@ -591,6 +647,14 @@ export interface ProviderConfig {
    * Values for fields declared `secret` are encrypted at rest.
    */
   extraFields?: Record<string, string>
+  /**
+   * Every pi-ai catalog model id ever seen by `syncNewCatalogModels()`
+   * (grow-only union). Absence means "never synced": the next sync only
+   * records the baseline and must NOT auto-enable anything, otherwise the
+   * whole catalog would flood enabledModels on upgrade. Models the user
+   * deliberately unchecked stay in this list, so they are never re-added.
+   */
+  knownModels?: string[]
 }
 
 /**
