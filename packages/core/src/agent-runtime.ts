@@ -121,6 +121,18 @@ function resolveWorkspacePath(filePath: string): string {
 
 const SHELL_MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 
+/**
+ * Inactivity guard for a running turn: if neither the model stream nor a tool
+ * produces any agent event for this long, the turn is considered stuck (e.g.
+ * a completion promise on a dead connection that never settles — incident
+ * 2026-07-19) and gets aborted. Must comfortably exceed the longest silent
+ * window a legitimate turn can have, i.e. a single long-running tool call.
+ */
+const TURN_INACTIVITY_MS = (() => {
+  const raw = Number(process.env.AXIOM_TURN_INACTIVITY_MS)
+  return Number.isFinite(raw) && raw > 0 ? raw : 10 * 60_000
+})()
+
 interface ShellResult {
   output: string
   exitCode: number
@@ -866,14 +878,42 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
         if (done && eventQueue.length === 0) break
 
-        // Wait for more events
-        await new Promise<void>(resolve => {
-          resolveWaiting = resolve
+        // Wait for more events — bounded by the inactivity watchdog so a
+        // completion whose promise never settles cannot hang the turn (and
+        // with it the sequential message queue) forever.
+        const outcome = await new Promise<'event' | 'inactivity'>(resolve => {
+          const timer = setTimeout(() => resolve('inactivity'), TURN_INACTIVITY_MS)
+          if (typeof timer === 'object' && 'unref' in timer) timer.unref()
+          resolveWaiting = () => {
+            clearTimeout(timer)
+            resolve('event')
+          }
         })
+        resolveWaiting = null
+
+        if (outcome === 'inactivity') {
+          console.error(`[agent-runtime] Turn watchdog: no agent events for ${Math.round(TURN_INACTIVITY_MS / 1000)}s — aborting turn (session ${sessionId})`)
+          try {
+            this.agent.abort()
+          } catch {
+            // best effort — the turn is abandoned either way
+          }
+          midStreamError = new Error(`Keine Aktivität für ${Math.round(TURN_INACTIVITY_MS / 60_000)} Minuten — Turn abgebrochen. Bitte Nachricht erneut senden.`)
+          break
+        }
       }
     } finally {
       unsubscribe()
-      await promptPromise
+      // Normally settled once `done` is set; after a watchdog abort it may
+      // never settle (that's the failure mode we're guarding against), so
+      // never await it unbounded.
+      await Promise.race([
+        promptPromise,
+        new Promise<void>(resolve => {
+          const t = setTimeout(resolve, 10_000)
+          if (typeof t === 'object' && 'unref' in t) t.unref()
+        }),
+      ])
     }
 
     // Surface mid-stream errors (e.g. context window exceeded after tool calls)

@@ -643,11 +643,23 @@ export class TaskRunner {
       console.log(`[task-runner] Verifier requested revision for task ${taskId}`)
       this.emitStatusChange(taskId, 'running', 'Result verification requested improvements — running one revision round')
 
-      await agent.prompt(
-        'An independent reviewer checked your reported result against the original task and found gaps:\n\n' +
-        `${critique}\n\n` +
-        'Address these points (do additional work with your tools if needed), then report your final result again in the required STATUS/SUMMARY format.'
-      )
+      // Bounded like every other plumbing call: a revision round whose
+      // completion never settles must not zombify the task (fail-open keeps
+      // the original result via the outer catch).
+      try {
+        await withTimeout(agent.prompt(
+          'An independent reviewer checked your reported result against the original task and found gaps:\n\n' +
+          `${critique}\n\n` +
+          'Address these points (do additional work with your tools if needed), then report your final result again in the required STATUS/SUMMARY format.'
+        ), 600_000, 'Task revision round')
+      } catch (err) {
+        try {
+          agent.abort()
+        } catch {
+          // best effort — revision agent is abandoned either way
+        }
+        throw err
+      }
 
       const revisedText = extractAgentResultText(agent)
       const parsed = parseTaskOutput(revisedText)

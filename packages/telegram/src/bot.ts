@@ -20,6 +20,7 @@ import {
   transcribeAudio,
   extractUploadsFromToolResult,
   synthesizeTts,
+  withTimeout,
   SlashCommandRegistry as SlashCommandRegistryCtor,
   registerBuiltInSlashCommands,
   MODEL_TASK_COMMANDS,
@@ -1100,7 +1101,9 @@ export class TelegramBot {
 
     let result
     try {
-      result = await synthesizeTts(stripped)
+      // Bounded: the TTS HTTP call has no own timeout, and a hang here would
+      // wedge this chat's message loop (same failure class as 2026-07-19).
+      result = await withTimeout(synthesizeTts(stripped), 60_000, 'TTS voice reply')
     } catch (err) {
       console.warn(`[telegram] Voice reply skipped: ${(err as Error).message}`)
       return
@@ -1361,6 +1364,12 @@ export class TelegramBot {
 
           if (chunk.type === 'text' && chunk.text) {
             fullResponse += chunk.text
+          }
+
+          // Surface turn-level errors (e.g. inactivity watchdog abort) —
+          // without this the turn would end silently on Telegram.
+          if (chunk.type === 'error' && chunk.error) {
+            fullResponse += (fullResponse.trim() ? '\n\n' : '') + `⚠️ ${chunk.error}`
           }
 
           // Track tool call start

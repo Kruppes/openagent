@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { MessageQueue } from './message-queue.js'
+import { describe, it, expect, vi } from 'vitest'
+import { MessageQueue, QueueTurnTimeoutError } from './message-queue.js'
 import type { QueuedMessage } from './message-queue.js'
 
 describe('MessageQueue', () => {
@@ -158,6 +158,115 @@ describe('MessageQueue', () => {
       expect(enqueued).toHaveLength(1)
       expect(enqueued[0].payload.text).toBe('hello')
       expect(enqueued[0].type).toBe('user_message')
+    })
+  })
+
+  describe('turn watchdog', () => {
+    it('force-releases the lock when a turn hangs forever', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const queue = new MessageQueue({ maxTurnMs: 50 })
+      const timeouts: QueuedMessage[] = []
+      queue.on('turn-timeout', (msg: QueuedMessage) => timeouts.push(msg))
+
+      // Simulates the 2026-07-19 incident: a completion promise that never
+      // settles, before the first chunk is ever yielded.
+      const stuckProcessor = () => {
+        return (async function* () {
+          await new Promise(() => { /* never settles */ })
+          yield 'unreachable'
+        })()
+      }
+      const okProcessor = () => (async function* () { yield 'ok' })()
+
+      const p1 = queue.enqueue('user_message', 'u', 'stuck', 'telegram', stuckProcessor)
+      const p2 = queue.enqueue('user_message', 'u', 'next', 'telegram', okProcessor)
+
+      // The stuck turn's consumer is woken up with the watchdog error…
+      const iter1 = await p1
+      await expect(async () => {
+        for await (const _ of iter1) { /* consume */ }
+      }).rejects.toThrow(QueueTurnTimeoutError)
+
+      // …and the queued message behind it proceeds normally.
+      const chunks: string[] = []
+      for await (const chunk of await p2) chunks.push(chunk as string)
+      expect(chunks).toEqual(['ok'])
+      expect(timeouts).toHaveLength(1)
+      expect(timeouts[0].payload.text).toBe('stuck')
+      vi.restoreAllMocks()
+    })
+
+    it('force-releases the lock even when nobody consumes the stuck turn', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const queue = new MessageQueue({ maxTurnMs: 50 })
+
+      const stuckProcessor = () => {
+        return (async function* () {
+          await new Promise(() => { /* never settles */ })
+          yield 'unreachable'
+        })()
+      }
+      const okProcessor = () => (async function* () { yield 'ok' })()
+
+      // Acquire the lock but never iterate the returned iterable (dead consumer).
+      await queue.enqueue('user_message', 'u', 'stuck', 'web', stuckProcessor)
+
+      const chunks: string[] = []
+      for await (const chunk of await queue.enqueue('user_message', 'u', 'next', 'web', okProcessor)) {
+        chunks.push(chunk as string)
+      }
+      expect(chunks).toEqual(['ok'])
+      vi.restoreAllMocks()
+    })
+
+    it('does not interfere with turns that finish in time', async () => {
+      const queue = new MessageQueue({ maxTurnMs: 1000 })
+      const processor = () => {
+        return (async function* () {
+          await new Promise(resolve => setTimeout(resolve, 20))
+          yield 'done'
+        })()
+      }
+
+      const chunks: string[] = []
+      for await (const chunk of await queue.enqueue('user_message', 'u', 'm', 'web', processor)) {
+        chunks.push(chunk as string)
+      }
+      expect(chunks).toEqual(['done'])
+
+      // Watchdog from the finished turn must not fire afterwards.
+      await new Promise(resolve => setTimeout(resolve, 60))
+      const again: string[] = []
+      for await (const chunk of await queue.enqueue('user_message', 'u', 'm2', 'web', processor)) {
+        again.push(chunk as string)
+      }
+      expect(again).toEqual(['done'])
+    })
+
+    it('throws mid-stream when a turn hangs after yielding some chunks', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      const queue = new MessageQueue({ maxTurnMs: 50 })
+
+      const processor = () => {
+        return (async function* () {
+          yield 'first'
+          await new Promise(() => { /* never settles */ })
+          yield 'unreachable'
+        })()
+      }
+
+      const received: string[] = []
+      let caught: unknown
+      try {
+        for await (const chunk of await queue.enqueue('user_message', 'u', 'm', 'telegram', processor)) {
+          received.push(chunk as string)
+        }
+      } catch (err) {
+        caught = err
+      }
+      expect(received).toEqual(['first'])
+      expect(caught).toBeInstanceOf(QueueTurnTimeoutError)
+      vi.restoreAllMocks()
     })
   })
 
