@@ -1181,7 +1181,8 @@ describe('getAvailableModels', () => {
   it('returns Moonshot platform models for kimi (local override, not pi-ai)', () => {
     const models = getAvailableModels('kimi')
     const ids = models.map(m => m.id)
-    // The newly tracked K2 family must be present
+    // K3 (pay-per-token platform) plus the tracked K2 family must be present
+    expect(ids).toContain('kimi-k3')
     expect(ids).toContain('kimi-k2.6')
     expect(ids).toContain('kimi-k2.5')
     expect(ids).toContain('kimi-k2-0905-preview')
@@ -1191,6 +1192,22 @@ describe('getAvailableModels', () => {
     expect(ids).toContain('kimi-k2-thinking-turbo')
     // pi-ai's kimi-coding-only ids must NOT leak through
     expect(ids).not.toContain('kimi-for-coding')
+  })
+
+  it('kimi-k3 is a reasoning model WITHOUT the K2 temperature=1 constraint', () => {
+    const provider = { providerType: 'kimi' as const }
+    // K2 thinking models force 1; K3 must pass the requested value through.
+    expect(resolveModelTemperature(provider, 'kimi-k2-thinking', 0.3)).toBe(1)
+    expect(resolveModelTemperature(provider, 'kimi-k3', 0.3)).toBe(0.3)
+  })
+
+  it('exposes the kimi-coding subscription preset backed by the pi-ai catalog', () => {
+    // Distinct api-key provider (Anthropic-messages endpoint), NOT OAuth —
+    // Moonshot has no OAuth flow. Models resolve from pi-ai's kimi-coding catalog.
+    const models = getAvailableModels('kimi-coding')
+    const ids = models.map(m => m.id)
+    expect(ids).toContain('k3')
+    expect(models.length).toBeGreaterThan(0)
   })
 
   it('resolveModelTemperature forces temperature=1 for Kimi K2 thinking models', () => {

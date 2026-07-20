@@ -21,7 +21,7 @@ export const CLAUDE_CODE_VERSION = '2.1.96'
  * Supported provider types with presets
  */
 export type ProviderType =
-  | 'openai' | 'anthropic' | 'mistral' | 'ollama' | 'openrouter' | 'deepseek' | 'kimi' | 'minimax' | 'zai' | 'zai-coding' | 'xai' | 'opencode-go' | 'opencode-zen' | 'openai-compatible' | 'google'
+  | 'openai' | 'anthropic' | 'mistral' | 'ollama' | 'openrouter' | 'deepseek' | 'kimi' | 'kimi-coding' | 'minimax' | 'zai' | 'zai-coding' | 'xai' | 'opencode-go' | 'opencode-zen' | 'openai-compatible' | 'google'
   // Legacy aliases kept for migration
   | 'ollama-local' | 'ollama-cloud'
   | 'openai-codex' | 'github-copilot' | 'anthropic-oauth'
@@ -191,6 +191,25 @@ export const PROVIDER_TYPE_PRESETS: Record<ProviderType, ProviderTypePreset> = {
     urlEditable: false,
     piAiProvider: null,
     authMethod: 'api-key',
+  },
+  // Kimi Coding plan (subscription). NOTE: despite being a "subscription",
+  // Moonshot exposes NO OAuth flow — access is a plan-scoped API key against
+  // the dedicated coding endpoint (Anthropic-messages wire API), distinct
+  // from the pay-per-token Moonshot Platform (`kimi` preset above). Models
+  // (incl. Kimi K3) come from pi-ai's maintained `kimi-coding` catalog.
+  'kimi-coding': {
+    type: 'kimi-coding',
+    label: 'Kimi Coding (Subscription)',
+    description: 'Flat-rate Kimi coding plan — enter your plan API key',
+    apiType: 'anthropic-messages',
+    providerName: 'kimi-coding',
+    baseUrl: 'https://api.kimi.com/coding',
+    requiresApiKey: true,
+    urlEditable: false,
+    piAiProvider: 'kimi-coding',
+    authMethod: 'api-key',
+    resolveModelsFromCatalog: true,
+    subscription: true,
   },
   minimax: {
     type: 'minimax',
@@ -364,6 +383,12 @@ export const PROVIDER_TYPE_MODEL_OVERRIDES: Partial<Record<ProviderType, Provide
   // Moonshot Platform API (https://platform.moonshot.ai)
   // Confirmed via GET https://api.moonshot.ai/v1/models and official pricing docs.
   kimi: [
+    // K3 — 1M context, adaptive thinking (NOT the K2 `temperature: 1`
+    // constraint; the `^kimi-k2` temperature guard deliberately excludes it).
+    // Metadata mirrors pi-ai's maintained `moonshotai` catalog.
+    { id: 'kimi-k3', name: 'Kimi K3', contextWindow: 1_048_576, maxTokens: 131_072, reasoning: true,
+      cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 } },
+
     // Current K2 family
     // Note: K2 reasoning models only accept `temperature: 1` (the upstream API
     // returns "invalid temperature: only 1 is allowed for this model" otherwise).
