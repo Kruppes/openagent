@@ -1172,8 +1172,10 @@ describe('getAvailableModels', () => {
     // assert on stable family ids rather than a frozen list.
     expect(models.every(m => m.id.startsWith('grok-'))).toBe(true)
     const ids = models.map(m => m.id)
-    expect(ids).toContain('grok-3')
+    // pi-ai 0.80.8 trimmed the xAI catalog (grok-3 family removed, default
+    // grok-4.5) — assert on the current stable ids.
     expect(ids).toContain('grok-4.3')
+    expect(ids).toContain('grok-4.5')
   })
 
   it('returns Moonshot platform models for kimi (local override, not pi-ai)', () => {
