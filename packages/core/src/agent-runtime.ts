@@ -510,6 +510,17 @@ export function isCorruptedContextError(err: unknown): boolean {
 }
 
 /**
+ * pi-agent rejects `prompt()` synchronously when a previous run is still marked
+ * active ("Agent is already processing a prompt"). When a prior turn was
+ * abandoned but its run never settled, this leaks into the NEXT turn even
+ * though nothing is really running — recoverable by force-clearing the stale run.
+ */
+export function isAgentBusyError(err: unknown): boolean {
+  const message = (err instanceof Error ? err.message : String(err ?? '')).toLowerCase()
+  return message.includes('already processing')
+}
+
+/**
  * Load active skill entries for system prompt injection.
  */
 function getActiveSkillEntries(): SkillPromptEntry[] {
@@ -669,6 +680,30 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
   clearMessages(): void {
     this.agent.state.messages = []
+  }
+
+  /**
+   * Force pi-agent back to an idle state after a run has been abandoned but its
+   * promise never settled. pi-agent only clears `activeRun` in the private
+   * `finishRun()` (runs when the executor settles) — neither `abort()` nor
+   * `reset()` clears it — so a wedged run leaves `activeRun` set forever and
+   * every subsequent `prompt()` throws "Agent is already processing".
+   *
+   * We clear it directly (it's a runtime-owned field, not transcript state) so
+   * the next turn can proceed. The abandoned executor, if it ever settles, will
+   * call `finishRun()` on an already-cleared run, which is a no-op.
+   */
+  private forceClearStuckRun(sessionId: string): void {
+    const internal = this.agent as unknown as { activeRun?: unknown; state: { isStreaming?: boolean } }
+    if (internal.activeRun) {
+      console.error(`[agent-runtime] Force-clearing stuck activeRun so the runtime accepts new turns (session ${sessionId})`)
+      internal.activeRun = undefined
+      try {
+        internal.state.isStreaming = false
+      } catch {
+        // best effort — isStreaming is cosmetic once activeRun is cleared
+      }
+    }
   }
 
   abort(): void {
@@ -955,7 +990,11 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       ])
       // If the run is STILL active after the bounded wait, the generator is
       // closing while pi-agent believes it is processing — the next prompt()
-      // would then throw "Agent is already processing". Kill the orphan.
+      // would then throw "Agent is already processing". Abort, give the abort a
+      // brief chance to unwind gracefully, then FORCE-clear: pi-agent's abort()
+      // only signals the AbortController and its reset() leaves `activeRun`
+      // set, so a run that ignores the signal / never settles would otherwise
+      // wedge every future turn (incident 2026-07-20, kimi-k3 20-min hang).
       if (!done) {
         console.error(`[agent-runtime] Turn generator closing with run still active (session ${sessionId}) — aborting orphaned run`)
         try {
@@ -963,6 +1002,14 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         } catch {
           // best effort
         }
+        await Promise.race([
+          this.agent.waitForIdle().catch(() => {}),
+          new Promise<void>(resolve => {
+            const t = setTimeout(resolve, 2_000)
+            if (typeof t === 'object' && 'unref' in t) t.unref()
+          }),
+        ])
+        this.forceClearStuckRun(sessionId)
       }
     }
 
@@ -1005,6 +1052,17 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     // Handle pre-stream error with fallback retry
     if (preStreamError) {
+      // A leftover wedged run from a PRIOR turn makes prompt() reject
+      // immediately with "Agent is already processing". The current turn never
+      // started, so force-clear the stale run and retry it once on the same
+      // provider — this self-heals the wedge instead of surfacing it to the user.
+      if (!isRetry && isAgentBusyError(preStreamError)) {
+        console.error(`[agent-runtime] prompt() rejected as busy (session ${sessionId}) — force-clearing stale run and retrying once`)
+        this.forceClearStuckRun(sessionId)
+        yield* this.executePromptWithRetry(text, sessionId, true, images)
+        return
+      }
+
       const canRetry = !isRetry
         && this.providerManager
         && this.providerManager.getOperatingMode() === 'normal'

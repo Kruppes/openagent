@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isCorruptedContextError } from './agent-runtime.js'
+import { isCorruptedContextError, isAgentBusyError } from './agent-runtime.js'
 
 describe('isCorruptedContextError', () => {
   it('matches the Anthropic dangling-tool_use phrasing', () => {
@@ -23,5 +23,18 @@ describe('isCorruptedContextError', () => {
     expect(isCorruptedContextError('')).toBe(false)
     expect(isCorruptedContextError(undefined)).toBe(false)
     expect(isCorruptedContextError(null)).toBe(false)
+  })
+})
+
+describe('isAgentBusyError', () => {
+  it('matches the pi-agent "already processing" rejection', () => {
+    expect(isAgentBusyError(new Error('Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.'))).toBe(true)
+    expect(isAgentBusyError('Agent is already processing.')).toBe(true)
+  })
+
+  it('does not match unrelated errors', () => {
+    expect(isAgentBusyError('429 rate limit')).toBe(false)
+    expect(isAgentBusyError('tool_use_id not found')).toBe(false)
+    expect(isAgentBusyError(undefined)).toBe(false)
   })
 })
