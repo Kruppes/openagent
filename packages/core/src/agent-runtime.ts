@@ -491,6 +491,25 @@ export function isRetryablePreStreamError(err: unknown): boolean {
 }
 
 /**
+ * Detect the "poisoned context" error class: the in-memory message history has
+ * a tool_result with no matching tool_use (or vice-versa), typically left by a
+ * turn that errored/was refused mid-tool-execution or by a bad compaction
+ * boundary. EVERY provider rejects such history, so the session wedges on every
+ * subsequent turn until the context is cleared (incident 2026-07-20).
+ *
+ * Matches both Anthropic ("unexpected `tool_use_id` found in `tool_result`
+ * blocks … must have a corresponding `tool_use` block") and OpenAI-style
+ * ("tool_call_id … is not found") phrasings.
+ */
+export function isCorruptedContextError(err: unknown): boolean {
+  const message = (err instanceof Error ? err.message : String(err ?? '')).toLowerCase()
+  if (!message) return false
+  return message.includes('tool_use_id')
+    || message.includes('tool_call_id')
+    || (message.includes('tool_result') && message.includes('tool_use'))
+}
+
+/**
  * Load active skill entries for system prompt injection.
  */
 function getActiveSkillEntries(): SkillPromptEntry[] {
@@ -870,6 +889,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     let thinkingChars = 0
     let toolCalls = 0
     let errorChunks = 0
+    let corruptedContext = false
 
     try {
       while (true) {
@@ -882,7 +902,15 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             if (chunk.type === 'text') textChars += chunk.text?.length ?? 0
             if (chunk.type === 'thinking') thinkingChars += chunk.thinking?.length ?? 0
             if (chunk.type === 'tool_call_start') toolCalls++
-            if (chunk.type === 'error') errorChunks++
+            if (chunk.type === 'error') {
+              // Suppress the raw provider corruption error (ugly, and we emit a
+              // friendly recovery notice after auto-clearing below).
+              if (isCorruptedContextError(chunk.error)) {
+                corruptedContext = true
+                continue
+              }
+              errorChunks++
+            }
             yield chunk
           }
         }
@@ -940,8 +968,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     // One line per turn — this is the primary forensic breadcrumb for
     // "bot went silent" reports: it shows exactly what the model returned.
-    console.log(`[agent-runtime] Turn end (session ${sessionId}): text=${textChars} thinking=${thinkingChars} tools=${toolCalls} errors=${errorChunks}${midStreamError ? ' midStreamError' : ''}${preStreamError ? ' preStreamError' : ''}`)
-    if (textChars === 0 && toolCalls === 0 && errorChunks === 0 && !midStreamError && !preStreamError) {
+    console.log(`[agent-runtime] Turn end (session ${sessionId}): text=${textChars} thinking=${thinkingChars} tools=${toolCalls} errors=${errorChunks}${midStreamError ? ' midStreamError' : ''}${preStreamError ? ' preStreamError' : ''}${corruptedContext ? ' corruptedContext' : ''}`)
+    if (textChars === 0 && toolCalls === 0 && errorChunks === 0 && !midStreamError && !preStreamError && !corruptedContext) {
       console.warn(`[agent-runtime] EMPTY TURN (session ${sessionId}): model produced no text, no tool calls, no error — thinking=${thinkingChars} chars. Provider degradation?`)
     }
 
@@ -949,7 +977,24 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     if (midStreamError) {
       const errMsg = (midStreamError instanceof Error ? midStreamError.message : String(midStreamError)) || 'Unknown error'
       console.error('Agent mid-stream error surfaced to user:', errMsg)
+      if (isCorruptedContextError(midStreamError)) corruptedContext = true
       yield { type: 'error' as const, error: errMsg }
+    }
+    if (preStreamError && isCorruptedContextError(preStreamError)) corruptedContext = true
+
+    // Self-heal a poisoned context: a dangling tool_use/tool_result pair wedges
+    // EVERY provider on EVERY subsequent turn. Clear the in-memory history so
+    // the next message starts clean instead of requiring a manual /new or a
+    // container restart (incident 2026-07-20). The DB chat history is untouched;
+    // only the live agent context is reset.
+    if (corruptedContext) {
+      console.error(`[agent-runtime] Corrupted context detected (session ${sessionId}) — auto-clearing in-memory history to unwedge the session`)
+      try {
+        this.clearMessages()
+      } catch (err) {
+        console.error('[agent-runtime] Failed to auto-clear corrupted context:', err)
+      }
+      yield { type: 'error' as const, error: '⚠️ Der Gesprächskontext war beschädigt und wurde automatisch zurückgesetzt. Bitte sende deine letzte Nachricht noch einmal.' }
     }
 
     // Safety net: if no 'done' chunk was yielded (e.g. agent_end never fired),

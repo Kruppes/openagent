@@ -125,6 +125,7 @@ function createMockAgentCore(): AgentCore {
     sendMessage: vi.fn(),
     handleNewCommand: vi.fn(),
     resetSession: vi.fn(),
+    resetSessionAsync: vi.fn(),
     abort: vi.fn(),
     getSessionManager: vi.fn(() => mockSessionManager),
     refreshSystemPrompt: vi.fn(),
@@ -533,9 +534,9 @@ describe('TelegramBot', () => {
   })
 
   describe('/new command', () => {
-    it('delegates to agent core handleNewCommand', async () => {
-      vi.mocked(agentCore.handleNewCommand).mockResolvedValue('Session summary here')
-
+    it('resets via resetSessionAsync so the in-memory context is actually cleared', async () => {
+      // Must use resetSessionAsync (clears runtime messages), NOT handleNewCommand
+      // (only rotates the session id) — otherwise a poisoned context survives /new.
       const bot = new TelegramBot({ agentCore, config: defaultConfig })
       const underlying = bot.getBot() as unknown as MockBotInternals
       const handler = underlying._commandHandlers.get('new')!
@@ -543,25 +544,13 @@ describe('TelegramBot', () => {
       const ctx = createMockContext()
       await handler(ctx)
 
-      expect(agentCore.handleNewCommand).toHaveBeenCalledWith('telegram-12345')
-      expect(ctx.reply).toHaveBeenCalledWith('📝 Session summarized and saved. Starting fresh conversation!')
-    })
-
-    it('sends fresh conversation message when no summary', async () => {
-      vi.mocked(agentCore.handleNewCommand).mockResolvedValue(null)
-
-      const bot = new TelegramBot({ agentCore, config: defaultConfig })
-      const underlying = bot.getBot() as unknown as MockBotInternals
-      const handler = underlying._commandHandlers.get('new')!
-
-      const ctx = createMockContext()
-      await handler(ctx)
-
+      expect(agentCore.resetSessionAsync).toHaveBeenCalledWith('telegram-12345', 'telegram', 'main')
+      expect(agentCore.handleNewCommand).not.toHaveBeenCalled()
       expect(ctx.reply).toHaveBeenCalledWith('🔄 Starting fresh conversation!')
     })
 
     it('handles errors gracefully', async () => {
-      vi.mocked(agentCore.handleNewCommand).mockRejectedValue(new Error('db error'))
+      vi.mocked(agentCore.resetSessionAsync).mockImplementation(() => { throw new Error('reset failed') })
 
       const bot = new TelegramBot({ agentCore, config: defaultConfig })
       const underlying = bot.getBot() as unknown as MockBotInternals

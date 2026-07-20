@@ -550,13 +550,14 @@ export class TelegramBot {
       const userId = this.resolveUserId(ctx)
 
       try {
-        const summary = await this.agentCore.handleNewCommand(userId)
-
-        if (summary) {
-          await ctx.reply('📝 Session summarized and saved. Starting fresh conversation!')
-        } else {
-          await ctx.reply('🔄 Starting fresh conversation!')
-        }
+        // Use resetSessionAsync (NOT handleNewCommand): it synchronously calls
+        // runtime.clearMessages(), so a poisoned in-memory context (e.g. an
+        // orphaned tool_result that wedges every provider — incident
+        // 2026-07-20) is actually cleared. handleNewCommand only rotates the
+        // session id and would leave the corrupted context in place. The
+        // session summary still runs in the background via onSessionEnd.
+        this.agentCore.resetSessionAsync(userId, 'telegram', this.agentId)
+        await ctx.reply('🔄 Starting fresh conversation!')
       } catch (err) {
         console.error('Error handling /new command:', err)
         await ctx.reply('⚠️ Error resetting session. Please try again.')
