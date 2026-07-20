@@ -864,6 +864,13 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
     let yieldedDone = false
 
+    // Per-turn accounting so a turn that ends with zero visible output is
+    // diagnosable from the logs (incident 2026-07-20: silent empty turns).
+    let textChars = 0
+    let thinkingChars = 0
+    let toolCalls = 0
+    let errorChunks = 0
+
     try {
       while (true) {
         // Process all queued events
@@ -872,6 +879,10 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           const chunks = this.processEvent(event, sessionId)
           for (const chunk of chunks) {
             if (chunk.type === 'done') yieldedDone = true
+            if (chunk.type === 'text') textChars += chunk.text?.length ?? 0
+            if (chunk.type === 'thinking') thinkingChars += chunk.thinking?.length ?? 0
+            if (chunk.type === 'tool_call_start') toolCalls++
+            if (chunk.type === 'error') errorChunks++
             yield chunk
           }
         }
@@ -914,6 +925,24 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           if (typeof t === 'object' && 'unref' in t) t.unref()
         }),
       ])
+      // If the run is STILL active after the bounded wait, the generator is
+      // closing while pi-agent believes it is processing — the next prompt()
+      // would then throw "Agent is already processing". Kill the orphan.
+      if (!done) {
+        console.error(`[agent-runtime] Turn generator closing with run still active (session ${sessionId}) — aborting orphaned run`)
+        try {
+          this.agent.abort()
+        } catch {
+          // best effort
+        }
+      }
+    }
+
+    // One line per turn — this is the primary forensic breadcrumb for
+    // "bot went silent" reports: it shows exactly what the model returned.
+    console.log(`[agent-runtime] Turn end (session ${sessionId}): text=${textChars} thinking=${thinkingChars} tools=${toolCalls} errors=${errorChunks}${midStreamError ? ' midStreamError' : ''}${preStreamError ? ' preStreamError' : ''}`)
+    if (textChars === 0 && toolCalls === 0 && errorChunks === 0 && !midStreamError && !preStreamError) {
+      console.warn(`[agent-runtime] EMPTY TURN (session ${sessionId}): model produced no text, no tool calls, no error — thinking=${thinkingChars} chars. Provider degradation?`)
     }
 
     // Surface mid-stream errors (e.g. context window exceeded after tool calls)
@@ -1005,6 +1034,18 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             estimatedCost: finalCost,
             sessionId,
           })
+
+          // pi-agent-core swallows run failures (e.g. exhausted provider
+          // retries) into a synthetic assistant message with empty text and
+          // only `errorMessage`/`stopReason` set — the event sequence looks
+          // like a clean turn. Without surfacing this, the user gets pure
+          // silence (incident 2026-07-20, overnight empty turns).
+          const failure = assistantMsg as { stopReason?: string; errorMessage?: string }
+          if (failure.errorMessage || failure.stopReason === 'error') {
+            const errText = failure.errorMessage ?? 'Unknown model error'
+            console.error(`[agent-runtime] Assistant message carries error (stopReason=${failure.stopReason ?? 'n/a'}, session ${sessionId}): ${errText}`)
+            chunks.push({ type: 'error', error: `Modellfehler: ${errText}` })
+          }
         }
         break
       }

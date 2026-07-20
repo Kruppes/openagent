@@ -925,7 +925,10 @@ describe('TelegramBot', () => {
       expect(botApi.sendMessage).toHaveBeenCalledWith(67890, 'Hello human!', { parse_mode: 'HTML' })
     })
 
-    it('handles empty responses gracefully', async () => {
+    it('sends a fallback notice on empty responses instead of staying silent', async () => {
+      // Empty turns (e.g. pi-agent swallowing a run failure into an empty
+      // assistant message) must be surfaced to the user, not dropped —
+      // incident 2026-07-20.
       vi.mocked(agentCore.sendMessage).mockReturnValue(doneOnlyStream())
 
       const bot = new TelegramBot({ agentCore, config: defaultConfig })
@@ -936,7 +939,8 @@ describe('TelegramBot', () => {
       await handler(ctx)
       await vi.advanceTimersByTimeAsync(2500)
 
-      expect(ctx.reply).not.toHaveBeenCalled()
+      expect(ctx.reply).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(ctx.reply).mock.calls[0][0]).toContain('keine Antwort erzeugt')
     })
 
     it('handles agent errors gracefully', async () => {

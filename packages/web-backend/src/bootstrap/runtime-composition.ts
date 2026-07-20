@@ -1357,6 +1357,13 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         if (chunk.type === 'done') {
           const responseText = streamState.responseBuffer
 
+          // An empty injection response is dropped by design below — but it
+          // must never be INVISIBLE: log it so "task finished but user never
+          // heard about it" (incident 2026-07-20) is diagnosable.
+          if (!responseText) {
+            logger.warn(`[axiom] Task injection ${pendingMeta.taskId} produced an empty response — nothing delivered to user ${pendingMeta.userId}`)
+          }
+
           // Route the Telegram delivery to the persona's own bot.
           const resolvedBot = resolveTelegramBotForAgent(pendingMeta.agentId)
           if (resolvedBot && responseText) {

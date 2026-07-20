@@ -1444,6 +1444,13 @@ export class TelegramBot {
             console.warn('[telegram] Voice reply failed (text already sent):', (ttsErr as Error).message)
           }
         }
+      } else if (!state.abortRequested) {
+        // Empty turn: the model produced neither text nor uploads and no
+        // error chunk (which would have landed in fullResponse). Silence is
+        // never an acceptable reply to a direct user message — incident
+        // 2026-07-20 (overnight provider degradation → empty turns).
+        console.warn(`[telegram] Empty turn for chat ${chatKey} — sending fallback notice to user`)
+        await this.safeSendMessage(ctx, '⚠️ Ich habe zu deiner Nachricht keine Antwort erzeugt (leerer Modell-Turn). Bitte sende sie noch einmal.')
       }
 
       // Save assistant response to chat_messages (if linked to a web user).
