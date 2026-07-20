@@ -23,13 +23,18 @@ export class QueueTurnTimeoutError extends Error {
 }
 
 /**
- * Backstop for turns that never finish (e.g. an LLM call whose promise never
- * settles — incident 2026-07-19 wedged the queue for hours). Generous on
- * purpose: legitimate turns with long tool calls stay well under this.
+ * Last-resort backstop for turns that never finish (e.g. an LLM call whose
+ * promise never settles — incident 2026-07-19 wedged the queue for hours).
+ * This must sit ABOVE the agent-runtime inactivity guard (20 min) with a wide
+ * margin: a genuine hang is caught there first (and settles the run cleanly),
+ * so this only ever fires for a run that keeps emitting events for an hour
+ * straight (runaway) — NOT for legitimate long autonomous work. Releasing the
+ * queue lock while the agent run is still live desyncs the two, so keep this
+ * rare (incident 2026-07-20: a 20 min cap fired on a still-working Kimi turn).
  */
 const DEFAULT_MAX_TURN_MS = (() => {
   const raw = Number(process.env.AXIOM_QUEUE_TURN_MAX_MS)
-  return Number.isFinite(raw) && raw > 0 ? raw : 20 * 60_000
+  return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60_000
 })()
 
 /**
