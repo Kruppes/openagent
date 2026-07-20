@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import type { Api, KnownProvider, Model, Transport } from '@earendil-works/pi-ai'
+import type { Api, Model, Transport } from '@earendil-works/pi-ai'
 import { getModels as getPiAiModels, streamSimple } from '@earendil-works/pi-ai/compat'
 import { getOAuthProvider, getOAuthApiKey } from '@earendil-works/pi-ai/oauth'
 import type { OAuthCredentials } from '@earendil-works/pi-ai/oauth'
@@ -491,7 +491,7 @@ export function getAvailableModels(providerType: ProviderType): AvailableModel[]
   const catalogModels: AvailableModel[] = preset?.piAiProvider
     ? (() => {
         try {
-          return getPiAiModels(preset.piAiProvider as KnownProvider).map(m => ({ id: m.id, name: m.name }))
+          return getPiAiModels(preset.piAiProvider as Parameters<typeof getPiAiModels>[0]).map(m => ({ id: m.id, name: m.name }))
         } catch {
           return []
         }
@@ -576,7 +576,7 @@ function findPiAiCatalogModel(providerType: ProviderType | undefined, modelId: s
   const preset = PROVIDER_TYPE_PRESETS[providerType]
   if (!preset?.piAiProvider) return undefined
   try {
-    return (getPiAiModels(preset.piAiProvider as KnownProvider) as Model<Api>[]).find(m => m.id === modelId)
+    return (getPiAiModels(preset.piAiProvider as Parameters<typeof getPiAiModels>[0]) as Model<Api>[]).find(m => m.id === modelId)
   } catch {
     return undefined
   }
@@ -1581,7 +1581,7 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
   // (OpenCode Zen/Go) whose catalog spans multiple wire APIs under one entry.
   if (preset?.piAiProvider && (preset.authMethod === 'oauth' || preset.resolveModelsFromCatalog)) {
     try {
-      const piAiModels = getPiAiModels(preset.piAiProvider as KnownProvider)
+      const piAiModels = getPiAiModels(preset.piAiProvider as Parameters<typeof getPiAiModels>[0])
 
       // Let the OAuth provider modify models (e.g., set base URL for GitHub Copilot)
       let models: Model<Api>[] = piAiModels as Model<Api>[]

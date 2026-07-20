@@ -14,7 +14,6 @@ import type {
   ProvidersListResponseContract,
 } from '@axiom/core/contracts'
 import { getModels as getPiAiModels } from '@earendil-works/pi-ai/compat'
-import type { KnownProvider as PiAiKnownProvider } from '@earendil-works/pi-ai'
 import type { OllamaTagsResponse } from './types.js'
 
 function maskApiKey(apiKey: string): string {
@@ -43,7 +42,7 @@ function resolveModelCost(provider: ProviderConfig, modelId: string): { input: n
   }
 
   try {
-    const models = getPiAiModels(preset.piAiProvider as PiAiKnownProvider)
+    const models = getPiAiModels(preset.piAiProvider as Parameters<typeof getPiAiModels>[0])
     const match = models.find((entry) => entry.id === modelId)
     if (match && (match.cost.input > 0 || match.cost.output > 0)) {
       const cost: { input: number; output: number; cacheRead?: number; cacheWrite?: number } = {
