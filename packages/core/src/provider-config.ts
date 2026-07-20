@@ -1,10 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import type { Api, Model, Transport } from '@earendil-works/pi-ai'
-import { getModels as getPiAiModels, streamSimple } from '@earendil-works/pi-ai/compat'
-import { getOAuthProvider, getOAuthApiKey } from '@earendil-works/pi-ai/oauth'
+import type { Api, Model, ModelAuth, OAuthAuth, OAuthCredential, Transport } from '@earendil-works/pi-ai'
+import { streamSimple } from '@earendil-works/pi-ai/compat'
+import { getBuiltinModels as getPiAiModels } from '@earendil-works/pi-ai/providers/all'
 import type { OAuthCredentials } from '@earendil-works/pi-ai/oauth'
+import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic'
+import { githubCopilotProvider } from '@earendil-works/pi-ai/providers/github-copilot'
+import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
 import { getConfigDir, ensureConfigTemplates, loadConfig } from './config.js'
 import { encrypt, decrypt, isEncrypted, maskApiKey } from './encryption.js'
 
@@ -1504,6 +1507,38 @@ export function getActiveProvider(): ProviderConfig | null {
 }
 
 /**
+ * Resolve the pi-ai OAuthAuth implementation for one of our supported OAuth
+ * provider ids. Since pi-ai 0.80.8 the standalone oauth helper module
+ * (`getOAuthProvider`/`getOAuthApiKey`) is gone; each provider object now
+ * carries its auth flows under `provider.auth.oauth`.
+ */
+const PI_OAUTH_PROVIDER_FACTORIES: Record<string, () => { auth?: { oauth?: OAuthAuth } }> = {
+  'anthropic': anthropicProvider,
+  'github-copilot': githubCopilotProvider,
+  'openai-codex': openaiCodexProvider,
+}
+
+const piOAuthAuthCache = new Map<string, OAuthAuth | null>()
+
+export function getPiOAuthAuth(oauthProviderId: string): OAuthAuth | null {
+  let cached = piOAuthAuthCache.get(oauthProviderId)
+  if (cached === undefined) {
+    const factory = PI_OAUTH_PROVIDER_FACTORIES[oauthProviderId]
+    cached = factory ? factory().auth?.oauth ?? null : null
+    piOAuthAuthCache.set(oauthProviderId, cached)
+  }
+  return cached
+}
+
+/**
+ * Last request auth resolved per provider id. `OAuthAuth.toAuth()` may carry
+ * a per-credential `baseUrl` (GitHub Copilot proxy endpoint) that pi-ai
+ * < 0.80.8 applied via the now-removed `modifyModels`; `buildModel` (sync)
+ * picks it up from here after `getApiKeyForProvider` (async) resolved it.
+ */
+const lastResolvedModelAuth = new Map<string, ModelAuth>()
+
+/**
  * Get API key for a provider, handling OAuth token refresh
  */
 export async function getApiKeyForProvider(provider: ProviderConfig): Promise<string> {
@@ -1526,26 +1561,32 @@ export async function getApiKeyForProvider(provider: ProviderConfig): Promise<st
     return provider.apiKey
   }
 
+  const oauthAuth = getPiOAuthAuth(preset.oauthProviderId)
+  if (!oauthAuth) {
+    throw new Error(`Unknown OAuth provider: ${preset.oauthProviderId}`)
+  }
+
   // Convert stored credentials to pi-ai format
-  const oauthCreds = storedToOAuthCredentials(provider.oauthCredentials)
+  let creds: OAuthCredential = { type: 'oauth', ...storedToOAuthCredentials(provider.oauthCredentials) }
 
-  // Use pi-ai to get API key (auto-refreshes expired tokens)
-  const result = await getOAuthApiKey(
-    preset.oauthProviderId,
-    { [preset.oauthProviderId]: oauthCreds },
-  )
+  // Refresh when expired — same trigger the pre-0.80.8 helper used, but
+  // refresh() now surfaces the real failure cause (e.g. `invalid_grant` when
+  // the refresh token itself expired and a UI re-login is required) instead
+  // of a generic message.
+  if (Date.now() >= creds.expires) {
+    creds = await oauthAuth.refresh(creds)
+    const { type: _type, ...toStore } = creds
+    updateOAuthCredentials(provider.id, toStore as OAuthCredentials)
+  }
 
-  if (!result) {
+  const modelAuth = await oauthAuth.toAuth(creds)
+  lastResolvedModelAuth.set(provider.id, modelAuth)
+
+  if (!modelAuth.apiKey) {
     throw new Error(`Failed to get API key for OAuth provider ${provider.name}. Re-login may be required.`)
   }
 
-  // Save refreshed credentials if they changed
-  if (result.newCredentials.access !== oauthCreds.access ||
-      result.newCredentials.expires !== oauthCreds.expires) {
-    updateOAuthCredentials(provider.id, result.newCredentials)
-  }
-
-  return result.apiKey
+  return modelAuth.apiKey
 }
 
 /**
@@ -1582,19 +1623,19 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
   if (preset?.piAiProvider && (preset.authMethod === 'oauth' || preset.resolveModelsFromCatalog)) {
     try {
       const piAiModels = getPiAiModels(preset.piAiProvider as Parameters<typeof getPiAiModels>[0])
+      const models: Model<Api>[] = piAiModels as Model<Api>[]
 
-      // Let the OAuth provider modify models (e.g., set base URL for GitHub Copilot)
-      let models: Model<Api>[] = piAiModels as Model<Api>[]
-      if (preset.oauthProviderId && provider.oauthCredentials) {
-        const oauthProv = getOAuthProvider(preset.oauthProviderId)
-        if (oauthProv?.modifyModels) {
-          const creds = storedToOAuthCredentials(provider.oauthCredentials)
-          models = oauthProv.modifyModels([...models], creds) as Model<Api>[]
-        }
-      }
-
-      const piModel = models.find(m => m.id === id)
+      let piModel = models.find(m => m.id === id)
       if (piModel) {
+        // Per-credential endpoint rewriting (GitHub Copilot proxy baseUrl)
+        // moved from the removed `modifyModels` hook into `OAuthAuth.toAuth()`
+        // in pi-ai 0.80.8. Apply the last resolved request auth for this
+        // provider; `getApiKeyForProvider` populates it before any request.
+        const resolvedAuth = lastResolvedModelAuth.get(provider.id)
+        if (resolvedAuth?.baseUrl) {
+          piModel = { ...piModel, baseUrl: resolvedAuth.baseUrl }
+        }
+
         // For Anthropic OAuth, inject the Claude Code CLI user-agent header
         if (provider.providerType === 'anthropic-oauth') {
           return {

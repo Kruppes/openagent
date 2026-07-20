@@ -80,6 +80,7 @@ export {
   setFallbackProvider,
   clearFallbackProvider,
   getApiKeyForProvider,
+  getPiOAuthAuth,
   getAvailableModels,
   syncNewCatalogModels,
   addOAuthProvider,

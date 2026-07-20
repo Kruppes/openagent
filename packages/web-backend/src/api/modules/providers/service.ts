@@ -31,8 +31,21 @@ import type {
   ProviderOAuthLoginStartPayloadContract,
   ProviderUpdatePayloadContract,
 } from '@axiom/core/contracts'
-import { getOAuthProvider } from '@earendil-works/pi-ai/oauth'
+import { getPiOAuthAuth } from '@axiom/core'
 import type { OAuthCredentials } from '@earendil-works/pi-ai/oauth'
+
+/**
+ * Whether an OAuth flow binds a local callback server (with manual code
+ * paste as fallback). pi-ai < 0.80.8 exposed this as
+ * `OAuthProvider.usesCallbackServer`; the reworked `OAuthAuth` interface
+ * signals a manual-code step only mid-flow (via a `manual_code` prompt), so
+ * the values are pinned here for the upfront UI contract.
+ */
+const OAUTH_USES_CALLBACK_SERVER: Record<string, boolean> = {
+  'anthropic': true,
+  'openai-codex': true,
+  'github-copilot': false,
+}
 import {
   normalizeOllamaBaseUrl,
   OLLAMA_REQUEST_TIMEOUT_MS,
@@ -165,10 +178,11 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       throw new ProvidersValidationError('This provider type does not use OAuth')
     }
 
-    const oauthProvider = getOAuthProvider(preset.oauthProviderId)
-    if (!oauthProvider) {
+    const oauthAuth = getPiOAuthAuth(preset.oauthProviderId)
+    if (!oauthAuth) {
       throw new ProvidersValidationError(`OAuth provider "${preset.oauthProviderId}" not found`)
     }
+    const usesCallbackServer = OAUTH_USES_CALLBACK_SERVER[preset.oauthProviderId] ?? false
 
     // Resume an already-running login for the same target instead of starting
     // a second one. Callback-server flows (e.g. Anthropic) bind a fixed local
@@ -187,7 +201,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
           loginId: existingId,
           authUrl: existing.authUrl,
           instructions: existing.instructions,
-          usesCallbackServer: oauthProvider.usesCallbackServer ?? false,
+          usesCallbackServer,
         }
       }
       // Stale completed/errored entry for this target — drop it and start fresh.
@@ -214,34 +228,55 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       resolveAuthInfo = resolve
     })
 
-    oauthProvider
+    // pi-ai ≥ 0.80.8 AuthInteraction contract: flow events arrive via
+    // `notify()`, user input is pulled via `prompt()`. Mapping mirrors the
+    // pre-0.80.8 callback behavior exactly.
+    oauthAuth
       .login({
-        onAuth: (info) => {
-          loginState.authUrl = info.url
-          loginState.instructions = info.instructions
-          resolveAuthInfo(info)
+        notify: (event) => {
+          if (event.type === 'auth_url') {
+            loginState.authUrl = event.url
+            loginState.instructions = event.instructions
+            resolveAuthInfo({ url: event.url, instructions: event.instructions })
+          } else if (event.type === 'device_code') {
+            loginState.authUrl = event.verificationUri
+            loginState.instructions = event.userCode
+            resolveAuthInfo({ url: event.verificationUri, instructions: event.userCode })
+          }
+          // 'info'/'progress' events have no UI surface in this headless flow.
         },
-        onPrompt: async (prompt) => {
-          if (prompt.allowEmpty) return ''
-          return prompt.placeholder ?? ''
+        prompt: (prompt) => {
+          if (prompt.type === 'manual_code') {
+            // Resolved by submitOAuthCode() when the user pastes the code.
+            // Callback-server flows race this against the local redirect
+            // catcher; when the server wins, `prompt.signal` aborts and the
+            // rejection lets the flow continue with the server's code.
+            return new Promise<string>((resolve, reject) => {
+              loginState.resolveManualCode = resolve
+              prompt.signal?.addEventListener(
+                'abort',
+                () => {
+                  loginState.resolveManualCode = undefined
+                  reject(new Error('Manual code entry superseded'))
+                },
+                { once: true },
+              )
+            })
+          }
+          if (prompt.type === 'select') {
+            // No interactive selection surface — accept the provider default.
+            return Promise.resolve(prompt.options[0]?.id ?? '')
+          }
+          // text/secret prompts: same non-interactive default as before.
+          return Promise.resolve(prompt.placeholder ?? '')
         },
-        onProgress: () => {},
-        onDeviceCode: (info) => {
-          loginState.authUrl = info.verificationUri
-          loginState.instructions = info.userCode
-          resolveAuthInfo({ url: info.verificationUri, instructions: info.userCode })
-        },
-        onSelect: async () => undefined,
-        onManualCodeInput: oauthProvider.usesCallbackServer
-          ? () =>
-              new Promise<string>((resolve) => {
-                loginState.resolveManualCode = resolve
-              })
-          : undefined,
       })
-      .then((credentials: OAuthCredentials) => {
+      .then((credential) => {
         loginState.status = 'completed'
-        loginState.credentials = credentials
+        // Strip the credential-store type tag; openagent persists the raw
+        // token fields in its own encrypted store.
+        const { type: _type, ...credentials } = credential
+        loginState.credentials = credentials as OAuthCredentials
       })
       .catch((err: unknown) => {
         loginState.status = 'error'
@@ -261,7 +296,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       loginId,
       authUrl: authInfo.url,
       instructions: authInfo.instructions,
-      usesCallbackServer: oauthProvider.usesCallbackServer ?? false,
+      usesCallbackServer,
     }
   }
 
