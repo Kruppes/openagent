@@ -268,6 +268,29 @@ describe('MessageQueue', () => {
       expect(caught).toBeInstanceOf(QueueTurnTimeoutError)
       vi.restoreAllMocks()
     })
+
+    it('does NOT abandon a long turn that keeps producing output past the window', async () => {
+      // The watchdog is idle-based, not a total-runtime cap: a turn that yields
+      // a chunk every 20ms runs well past the 50ms window without being killed
+      // (models massive multi-hour agentic work that keeps streaming).
+      const queue = new MessageQueue({ maxTurnMs: 50 })
+      const processor = () => {
+        return (async function* () {
+          for (let i = 0; i < 10; i++) {
+            await new Promise(resolve => setTimeout(resolve, 20))
+            yield `chunk-${i}`
+          }
+        })()
+      }
+
+      const received: string[] = []
+      for await (const chunk of await queue.enqueue('user_message', 'u', 'm', 'web', processor)) {
+        received.push(chunk as string)
+      }
+      // 10 chunks over ~200ms (4× the 50ms window) all arrive — no timeout.
+      expect(received).toHaveLength(10)
+      expect(received[9]).toBe('chunk-9')
+    })
   })
 
   describe('error handling', () => {

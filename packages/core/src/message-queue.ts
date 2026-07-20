@@ -16,25 +16,26 @@ export interface QueuedMessage {
  * subsequent messages proceed normally.
  */
 export class QueueTurnTimeoutError extends Error {
-  constructor(maxTurnMs: number) {
-    super(`Turn exceeded the ${Math.round(maxTurnMs / 1000)}s queue watchdog and was abandoned`)
+  constructor(idleMs: number) {
+    super(`Turn produced no output for ${Math.round(idleMs / 1000)}s (queue idle watchdog) and was abandoned`)
     this.name = 'QueueTurnTimeoutError'
   }
 }
 
 /**
- * Last-resort backstop for turns that never finish (e.g. an LLM call whose
- * promise never settles — incident 2026-07-19 wedged the queue for hours).
- * This must sit ABOVE the agent-runtime inactivity guard (20 min) with a wide
- * margin: a genuine hang is caught there first (and settles the run cleanly),
- * so this only ever fires for a run that keeps emitting events for an hour
- * straight (runaway) — NOT for legitimate long autonomous work. Releasing the
- * queue lock while the agent run is still live desyncs the two, so keep this
- * rare (incident 2026-07-20: a 20 min cap fired on a still-working Kimi turn).
+ * Idle window for the queue-level backstop: a turn is abandoned only after this
+ * long with NO output flowing (no chunk yielded) — it is NOT a total-runtime
+ * cap. A turn that keeps streaming tokens / running tools re-arms it on every
+ * chunk and may run for hours (massive autonomous agentic coding). This sits
+ * ABOVE the agent-runtime inactivity guard (20 min) so that one fires first and
+ * settles the run cleanly; the queue backstop only matters if that mechanism
+ * itself wedges (incident 2026-07-20: a blind wall-clock cap wrongly killed a
+ * still-working Kimi turn). Raise via AXIOM_QUEUE_TURN_MAX_MS for workloads with
+ * single tool calls longer than the window (e.g. multi-hour builds).
  */
 const DEFAULT_MAX_TURN_MS = (() => {
   const raw = Number(process.env.AXIOM_QUEUE_TURN_MAX_MS)
-  return Number.isFinite(raw) && raw > 0 ? raw : 60 * 60_000
+  return Number.isFinite(raw) && raw > 0 ? raw : 30 * 60_000
 })()
 
 /**
@@ -45,11 +46,13 @@ const DEFAULT_MAX_TURN_MS = (() => {
  * Uses a simple mutex pattern: acquires a lock before processing,
  * releases it when the consumer finishes iterating the response.
  *
- * A per-turn watchdog force-releases the lock after `maxTurnMs` so a single
- * stuck turn (hung completion, dead consumer) can never wedge the queue
- * forever. The stuck turn's consumer receives a QueueTurnTimeoutError on its
- * next iteration step; the underlying processor is closed best-effort but
- * never awaited — it may be stuck on a promise that never settles.
+ * A progress-aware idle watchdog force-releases the lock after `maxTurnMs` of
+ * NO output (re-armed on every yielded chunk, so a turn actively streaming for
+ * hours is never abandoned) — only a genuinely stuck turn (hung completion,
+ * dead consumer) trips it. The stuck turn's consumer receives a
+ * QueueTurnTimeoutError on its next iteration step; the underlying processor is
+ * closed best-effort but never awaited — it may be stuck on a promise that
+ * never settles.
  */
 export class MessageQueue extends EventEmitter {
   private pendingCount = 0
@@ -104,16 +107,8 @@ export class MessageQueue extends EventEmitter {
     expiry.catch(() => {})
 
     let released = false
-    const maxTurnMs = this.maxTurnMs
-    const watchdog = setTimeout(() => {
-      if (released) return
-      const err = new QueueTurnTimeoutError(maxTurnMs)
-      console.error(`[message-queue] ${err.message} (type=${msg.type}, source=${msg.payload.source}) — force-releasing lock so queued messages proceed`)
-      this.emit('turn-timeout', msg)
-      releaseOnce()
-      expire!(err)
-    }, maxTurnMs)
-    if (typeof watchdog === 'object' && 'unref' in watchdog) watchdog.unref()
+    const idleMs = this.maxTurnMs
+    let watchdog: ReturnType<typeof setTimeout> | undefined
 
     const releaseOnce = (): void => {
       if (released) return
@@ -121,6 +116,26 @@ export class MessageQueue extends EventEmitter {
       clearTimeout(watchdog)
       releaseFn!()
     }
+
+    // Progress-aware watchdog: abandon the turn only after `idleMs` of NO output
+    // (no chunk yielded), NOT after a fixed wall-clock budget. A turn that keeps
+    // streaming tokens or running tools re-arms it on every chunk and can run
+    // for hours (massive autonomous agentic work). Only genuine silence — a run
+    // truly stuck with nothing coming through — trips it.
+    const arm = (): void => {
+      if (released) return
+      clearTimeout(watchdog)
+      watchdog = setTimeout(() => {
+        if (released) return
+        const err = new QueueTurnTimeoutError(idleMs)
+        console.error(`[message-queue] ${err.message} (type=${msg.type}, source=${msg.payload.source}) — force-releasing lock so queued messages proceed`)
+        this.emit('turn-timeout', msg)
+        releaseOnce()
+        expire!(err)
+      }, idleMs)
+      if (typeof watchdog === 'object' && 'unref' in watchdog) watchdog.unref()
+    }
+    arm()
 
     // We now have the lock — run the processor
     const iterable = processor(msg)
@@ -132,6 +147,7 @@ export class MessageQueue extends EventEmitter {
         while (true) {
           const res = await Promise.race([it.next(), expiry])
           if (res.done) break
+          arm() // progress — reset the idle timer
           yield res.value
         }
       } finally {
