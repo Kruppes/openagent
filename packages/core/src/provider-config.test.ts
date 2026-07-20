@@ -1178,27 +1178,32 @@ describe('getAvailableModels', () => {
     expect(ids).toContain('grok-4.5')
   })
 
-  it('returns Moonshot platform models for kimi (local override, not pi-ai)', () => {
+  it('returns the pi-ai maintained Moonshot Platform catalog for kimi (pay-as-you-go)', () => {
     const models = getAvailableModels('kimi')
     const ids = models.map(m => m.id)
-    // K3 (pay-per-token platform) plus the tracked K2 family must be present
+    // Sourced from pi-ai's `moonshotai` catalog (resolveModelsFromCatalog).
     expect(ids).toContain('kimi-k3')
     expect(ids).toContain('kimi-k2.6')
     expect(ids).toContain('kimi-k2.5')
-    expect(ids).toContain('kimi-k2-0905-preview')
-    expect(ids).toContain('kimi-k2-0711-preview')
-    expect(ids).toContain('kimi-k2-turbo-preview')
     expect(ids).toContain('kimi-k2-thinking')
-    expect(ids).toContain('kimi-k2-thinking-turbo')
-    // pi-ai's kimi-coding-only ids must NOT leak through
+    // Coding-plan-only ids must NOT leak into the platform catalog
     expect(ids).not.toContain('kimi-for-coding')
+    expect(ids).not.toContain('k3')
   })
 
-  it('kimi-k3 is a reasoning model WITHOUT the K2 temperature=1 constraint', () => {
-    const provider = { providerType: 'kimi' as const }
-    // K2 thinking models force 1; K3 must pass the requested value through.
-    expect(resolveModelTemperature(provider, 'kimi-k2-thinking', 0.3)).toBe(1)
-    expect(resolveModelTemperature(provider, 'kimi-k3', 0.3)).toBe(0.3)
+  it('forces temperature=1 for Kimi K3 (reasoning model, all endpoints)', () => {
+    // K3 rejects any temperature other than 1 (confirmed 400 from Moonshot).
+    // The rule is model-based, so it must hold for the dedicated preset AND for
+    // a hand-rolled openai-compatible Moonshot provider (the user's setup) AND
+    // the coding-plan short id.
+    expect(resolveModelTemperature({ providerType: 'kimi' }, 'kimi-k3', 0.3)).toBe(1)
+    expect(resolveModelTemperature({ providerType: 'openai-compatible' }, 'kimi-k3', 0.3)).toBe(1)
+    expect(resolveModelTemperature({ providerType: 'kimi-coding' }, 'k3', 0.7)).toBe(1)
+    // A per-provider fixedTemperature override still wins over the constraint.
+    expect(resolveModelTemperature(
+      { providerType: 'kimi', models: [{ id: 'kimi-k3', name: 'K3', fixedTemperature: 0.5 }] },
+      'kimi-k3', 0.3,
+    )).toBe(0.5)
   })
 
   it('exposes the kimi-coding subscription preset backed by the pi-ai catalog', () => {

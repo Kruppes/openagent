@@ -184,13 +184,18 @@ export const PROVIDER_TYPE_PRESETS: Record<ProviderType, ProviderTypePreset> = {
   kimi: {
     type: 'kimi',
     label: 'Kimi / Moonshot',
+    description: 'Moonshot Platform (pay-as-you-go) — enter your platform API key',
     apiType: 'openai-completions',
-    providerName: 'moonshot',
+    providerName: 'moonshotai',
     baseUrl: 'https://api.moonshot.ai/v1',
     requiresApiKey: true,
     urlEditable: false,
-    piAiProvider: null,
+    // First-class: use pi-ai's maintained `moonshotai` catalog so Kimi K3 gets
+    // correct thinking-level mapping, pricing, and auto-tracked new models —
+    // the same treatment as the coding-plan preset below.
+    piAiProvider: 'moonshotai',
     authMethod: 'api-key',
+    resolveModelsFromCatalog: true,
   },
   // Kimi Coding plan (subscription). NOTE: despite being a "subscription",
   // Moonshot exposes NO OAuth flow — access is a plan-scoped API key against
@@ -382,10 +387,13 @@ export const PROVIDER_TYPE_MODEL_OVERRIDES: Partial<Record<ProviderType, Provide
   ],
   // Moonshot Platform API (https://platform.moonshot.ai)
   // Confirmed via GET https://api.moonshot.ai/v1/models and official pricing docs.
+  // Fallback catalog only — the `kimi` preset now resolves its model list from
+  // pi-ai's maintained `moonshotai` catalog (resolveModelsFromCatalog). Kept for
+  // pricing fallback and as documentation of the platform line. The temperature=1
+  // constraint for reasoning models is enforced by `kimiModelRequiresTemperatureOne`,
+  // not per-entry `fixedTemperature`.
   kimi: [
-    // K3 — 1M context, adaptive thinking (NOT the K2 `temperature: 1`
-    // constraint; the `^kimi-k2` temperature guard deliberately excludes it).
-    // Metadata mirrors pi-ai's maintained `moonshotai` catalog.
+    // K3 — 1M context, requires temperature: 1 (like the K2 reasoning models).
     { id: 'kimi-k3', name: 'Kimi K3', contextWindow: 1_048_576, maxTokens: 131_072, reasoning: true,
       cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 } },
 
@@ -610,9 +618,31 @@ function findPiAiCatalogModel(providerType: ProviderType | undefined, modelId: s
   }
 }
 
+/**
+ * Moonshot's Kimi *reasoning* models reject any temperature other than 1
+ * (`400 invalid temperature: only 1 is allowed for this model`). This is a
+ * property of the MODEL, not the endpoint — so it must hold no matter how the
+ * provider is wired: our dedicated `kimi` / `kimi-coding` presets, a generic
+ * `openai-compatible` provider pointed at api.moonshot.ai, or the Anthropic-
+ * messages coding endpoint. Hence: match by model id, provider-agnostic.
+ *
+ * Matches the confirmed reasoning families (platform + coding-plan ids); the
+ * non-reasoning K2 variants (turbo/0905/0711 previews, `kimi-latest`, the
+ * legacy `moonshot-v1-*` line) accept arbitrary temperatures and are excluded.
+ */
+function kimiModelRequiresTemperatureOne(modelId: string): boolean {
+  const id = modelId.toLowerCase()
+  return id === 'kimi-k3' || /^kimi-k3[.-]/.test(id) || id === 'k3'   // K3 (platform + coding)
+    || /^kimi-k2-thinking/.test(id)                                    // K2 thinking (+turbo)
+    || id === 'kimi-k2.5' || id === 'kimi-k2.6'                        // K2.5 / K2.6 reasoning
+}
+
 function catalogModelRequiresTemperatureOne(providerType: ProviderType | undefined, modelId: string): boolean {
+  if (kimiModelRequiresTemperatureOne(modelId)) return true
+  // Autodetect future Kimi reasoning models from catalog metadata so a new
+  // `kimi-k*` reasoning id is covered before it's added to the list above.
   const catalogModel = findPiAiCatalogModel(providerType, modelId)
-  return Boolean(catalogModel?.reasoning && /^kimi-k2(?:[.-]|$)/.test(catalogModel.id))
+  return Boolean(catalogModel?.reasoning && /^kimi-k[0-9]/.test(catalogModel.id))
 }
 
 /**
