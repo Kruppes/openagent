@@ -26,6 +26,7 @@ import {
   buildStreamFn,
   presetSupportsTextVerbosity,
   presetSupportsTransport,
+  refreshOAuthCredentialsLocked,
 } from './provider-config.js'
 import { encrypt, decrypt, maskApiKey } from './encryption.js'
 import fs from 'node:fs'
@@ -1213,6 +1214,34 @@ describe('getAvailableModels', () => {
     const ids = models.map(m => m.id)
     expect(ids).toContain('k3')
     expect(models.length).toBeGreaterThan(0)
+  })
+
+  it('coalesces concurrent OAuth refreshes into one call (no rotating-token reuse)', async () => {
+    // Two turns hitting an expired token concurrently must NOT both call
+    // refresh() with the same rotated refresh token — that revokes the whole
+    // family on Anthropic (incident 2026-07-22).
+    // Point DATA_DIR at an empty dir so the re-read finds no stored provider
+    // and falls back to the passed creds.
+    process.env.DATA_DIR = path.join(os.tmpdir(), `axiom-oauth-coalesce-${Date.now()}`)
+    const expired = { type: 'oauth' as const, access: 'old', refresh: 'old-r', expires: Date.now() - 1000 }
+    const refresh = vi.fn(async (c: { expires: number }) => {
+      await new Promise(r => setTimeout(r, 20))
+      return { ...c, type: 'oauth' as const, access: 'new', refresh: 'new-r', expires: Date.now() + 3_600_000 }
+    })
+    const mockAuth = { name: 'test', refresh, toAuth: async () => ({ apiKey: 'x' }), login: async () => expired } as never
+
+    const [a, b] = await Promise.all([
+      refreshOAuthCredentialsLocked('missing-id', mockAuth, expired),
+      refreshOAuthCredentialsLocked('missing-id', mockAuth, expired),
+    ])
+
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(a.access).toBe('new')
+    expect(b.access).toBe('new')
+
+    // A later refresh (map cleared) triggers a fresh call.
+    await refreshOAuthCredentialsLocked('missing-id', mockAuth, expired)
+    expect(refresh).toHaveBeenCalledTimes(2)
   })
 
   it('resolveModelTemperature forces temperature=1 for Kimi K2 thinking models', () => {

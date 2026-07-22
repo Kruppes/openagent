@@ -1594,6 +1594,53 @@ export function getPiOAuthAuth(oauthProviderId: string): OAuthAuth | null {
 const lastResolvedModelAuth = new Map<string, ModelAuth>()
 
 /**
+ * In-flight OAuth refresh per provider id. Anthropic (and other providers with
+ * rotating refresh tokens) REVOKE the entire token family when an already-
+ * rotated refresh token is presented again — so two concurrent turns that both
+ * see an expired token and both call `refresh()` with the same stored refresh
+ * token trigger a reuse-revocation and lock the account out (incident
+ * 2026-07-22, surfaced under heavy parallel load). Coalescing concurrent
+ * refreshes into a single call — and re-reading the freshest stored credential
+ * inside it — guarantees each rotated refresh token is used exactly once.
+ */
+const inFlightOAuthRefresh = new Map<string, Promise<OAuthCredential>>()
+
+export async function refreshOAuthCredentialsLocked(
+  providerId: string,
+  oauthAuth: OAuthAuth,
+  fallbackCreds: OAuthCredential,
+): Promise<OAuthCredential> {
+  const existing = inFlightOAuthRefresh.get(providerId)
+  if (existing) return existing
+
+  const run = (async (): Promise<OAuthCredential> => {
+    // Re-read the freshest stored credential: a refresh that JUST completed (in
+    // this process) may already have rotated the token, in which case we must
+    // not refresh again with the now-stale one.
+    let base = fallbackCreds
+    try {
+      const file = loadProvidersDecrypted()
+      const p = file.providers.find(x => x.id === providerId)
+      if (p?.oauthCredentials) {
+        base = { type: 'oauth', ...storedToOAuthCredentials(p.oauthCredentials) }
+      }
+    } catch {
+      // fall back to the caller's credential
+    }
+    if (Date.now() < base.expires) return base
+
+    const rotated = await oauthAuth.refresh(base)
+    const { type: _type, ...toStore } = rotated
+    updateOAuthCredentials(providerId, toStore as OAuthCredentials)
+    return rotated
+  })()
+
+  inFlightOAuthRefresh.set(providerId, run)
+  void run.finally(() => inFlightOAuthRefresh.delete(providerId)).catch(() => {})
+  return run
+}
+
+/**
  * Get API key for a provider, handling OAuth token refresh
  */
 export async function getApiKeyForProvider(provider: ProviderConfig): Promise<string> {
@@ -1624,14 +1671,13 @@ export async function getApiKeyForProvider(provider: ProviderConfig): Promise<st
   // Convert stored credentials to pi-ai format
   let creds: OAuthCredential = { type: 'oauth', ...storedToOAuthCredentials(provider.oauthCredentials) }
 
-  // Refresh when expired — same trigger the pre-0.80.8 helper used, but
-  // refresh() now surfaces the real failure cause (e.g. `invalid_grant` when
-  // the refresh token itself expired and a UI re-login is required) instead
-  // of a generic message.
+  // Refresh when expired — serialized per provider so concurrent turns never
+  // present the same rotated refresh token twice (which revokes the whole
+  // family; incident 2026-07-22). refresh() surfaces the real failure cause
+  // (e.g. `invalid_grant` when the refresh token itself expired and a UI
+  // re-login is required) instead of a generic message.
   if (Date.now() >= creds.expires) {
-    creds = await oauthAuth.refresh(creds)
-    const { type: _type, ...toStore } = creds
-    updateOAuthCredentials(provider.id, toStore as OAuthCredentials)
+    creds = await refreshOAuthCredentialsLocked(provider.id, oauthAuth, creds)
   }
 
   const modelAuth = await oauthAuth.toAuth(creds)
