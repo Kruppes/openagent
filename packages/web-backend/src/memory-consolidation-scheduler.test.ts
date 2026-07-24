@@ -4,7 +4,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { initDatabase, TaskStore, initTasksTable } from '@axiom/core'
 import type { AgentCore, Database, Task, ProviderConfig } from '@axiom/core'
-import { MemoryConsolidationScheduler, DEFAULT_CONSOLIDATION_SETTINGS } from './memory-consolidation-scheduler.js'
+import {
+  MemoryConsolidationScheduler,
+  DEFAULT_CONSOLIDATION_SETTINGS,
+  buildConsolidationTaskPrompt,
+  listPersonaConsolidationTargets,
+} from './memory-consolidation-scheduler.js'
 
 let tempDataDir: string
 let previousDataDir: string | undefined
@@ -324,6 +329,145 @@ describe('MemoryConsolidationScheduler', () => {
       expect(rows.length).toBeGreaterThanOrEqual(1)
       expect(rows[0].session_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
     })
+  })
+
+  describe('scoped persona memory (RC5 multi-persona bleeding)', () => {
+    function makeTodayDailyContent(): { today: string; content: string } {
+      const today = new Date().toISOString().split('T')[0]
+      return {
+        today,
+        content: `# Daily Memory — ${today}\n\n## 09:00\n\nWarren scanned the portfolio.\n`,
+      }
+    }
+
+    it('buildConsolidationTaskPrompt scopes persona runs to their memory root', () => {
+      const prompt = buildConsolidationTaskPrompt(3, 'Be selective.', {
+        memoryDir: '/data/agents/warren/memory',
+        agentId: 'warren',
+      })
+      expect(prompt).toContain('persona agent "warren" ONLY')
+      expect(prompt).toContain('/data/agents/warren/memory/MEMORY.md')
+      expect(prompt).toContain("NEVER read from or write to the main agent's memory at /data/memory/")
+    })
+
+    it('buildConsolidationTaskPrompt adds the persona guard to the main run when scoped', () => {
+      const prompt = buildConsolidationTaskPrompt(3, 'Be selective.', { scopedPersonaGuard: true })
+      expect(prompt).toContain('NEVER read from or write to anything under /data/agents/')
+      expect(prompt).toContain('Do NOT promote persona-specific content')
+      expect(prompt).not.toContain('persona agent "')
+    })
+
+    it('buildConsolidationTaskPrompt is unchanged without scoping options', () => {
+      const prompt = buildConsolidationTaskPrompt(3, 'Be selective.')
+      expect(prompt).not.toContain('## Agent scope')
+      expect(prompt).not.toContain('/data/agents/')
+    })
+
+    it('listPersonaConsolidationTargets only returns personas with daily content', () => {
+      const agentsBaseDir = path.join(tempDataDir, 'agents')
+      const { today, content } = makeTodayDailyContent()
+      // warren: has content
+      fs.mkdirSync(path.join(agentsBaseDir, 'warren', 'memory', 'daily'), { recursive: true })
+      fs.writeFileSync(path.join(agentsBaseDir, 'warren', 'memory', 'daily', `${today}.md`), content, 'utf-8')
+      // bob: exists but no daily content
+      fs.mkdirSync(path.join(agentsBaseDir, 'bob'), { recursive: true })
+
+      const targets = listPersonaConsolidationTargets(3, { agentsBaseDir, scopedAgentMemory: true })
+      expect(targets).toEqual([
+        { agentId: 'warren', memoryDir: path.join(agentsBaseDir, 'warren', 'memory') },
+      ])
+
+      expect(listPersonaConsolidationTargets(3, { agentsBaseDir, scopedAgentMemory: false })).toEqual([])
+    })
+
+    it('runNow runs an additional agent-labeled consolidation task per persona with daily content', async () => {
+      writeConfig('settings.json', { multiPersona: { enabled: true } })
+      const { today, content } = makeTodayDailyContent()
+      const warrenDailyDir = path.join(tempDataDir, 'agents', 'warren', 'memory', 'daily')
+      fs.mkdirSync(warrenDailyDir, { recursive: true })
+      fs.writeFileSync(path.join(warrenDailyDir, `${today}.md`), content, 'utf-8')
+      // Persona without daily content is skipped
+      fs.mkdirSync(path.join(tempDataDir, 'agents', 'bob'), { recursive: true })
+
+      const taskStore = new TaskStore(db)
+      const taskRuntime = createMockTaskRuntime(taskStore)
+      const provider = makeProvider()
+
+      taskRuntime.setTaskCompletionCallback((taskId: string) => {
+        taskStore.update(taskId, {
+          status: 'completed',
+          resultStatus: 'silent',
+          resultSummary: 'Nothing to report.',
+          completedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+        })
+      })
+
+      const scheduler = new MemoryConsolidationScheduler({
+        db,
+        taskRuntime,
+        getDefaultProvider: () => provider,
+      })
+
+      const result = await scheduler.runNow()
+
+      expect(taskRuntime.create).toHaveBeenCalledTimes(2)
+      expect(taskRuntime.start).toHaveBeenCalledTimes(2)
+
+      const [mainRun, warrenRun] = taskRuntime.startedTasks
+
+      // Main run: unchanged root + guard note, no persona attribution
+      expect(mainRun.task.name).toBe('Nightly Memory Consolidation')
+      expect(mainRun.task.prompt).toContain(path.join(tempDataDir, 'memory'))
+      expect(mainRun.task.prompt).toContain('NEVER read from or write to anything under /data/agents/')
+      expect(mainRun.task.agentId ?? null).toBeNull()
+
+      // Persona run: warren's own memory root, agent-labeled task + session
+      expect(warrenRun.task.name).toBe('Nightly Memory Consolidation (warren)')
+      expect(warrenRun.task.agentId).toBe('warren')
+      expect(warrenRun.task.prompt).toContain(path.join(tempDataDir, 'agents', 'warren', 'memory'))
+      expect(warrenRun.task.prompt).toContain('persona agent "warren" ONLY')
+
+      const sessionRow = db.prepare('SELECT agent_id FROM sessions WHERE id = ?')
+        .get(warrenRun.task.sessionId) as { agent_id: string }
+      expect(sessionRow.agent_id).toBe('warren')
+
+      expect(result.personaRuns).toEqual([
+        { agentId: 'warren', updated: false, reason: 'Nothing to report.' },
+      ])
+    }, 30_000)
+
+    it('runNow skips persona runs when scoped memory is disabled', async () => {
+      writeConfig('settings.json', { multiPersona: { enabled: true, scopedMemory: false } })
+      const { today, content } = makeTodayDailyContent()
+      const warrenDailyDir = path.join(tempDataDir, 'agents', 'warren', 'memory', 'daily')
+      fs.mkdirSync(warrenDailyDir, { recursive: true })
+      fs.writeFileSync(path.join(warrenDailyDir, `${today}.md`), content, 'utf-8')
+
+      const taskStore = new TaskStore(db)
+      const taskRuntime = createMockTaskRuntime(taskStore)
+
+      taskRuntime.setTaskCompletionCallback((taskId: string) => {
+        taskStore.update(taskId, {
+          status: 'completed',
+          resultStatus: 'silent',
+          resultSummary: 'Nothing to report.',
+          completedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+        })
+      })
+
+      const scheduler = new MemoryConsolidationScheduler({
+        db,
+        taskRuntime,
+        getDefaultProvider: () => makeProvider(),
+      })
+
+      const result = await scheduler.runNow()
+
+      expect(taskRuntime.create).toHaveBeenCalledTimes(1)
+      expect(result.personaRuns).toBeUndefined()
+      // Legacy prompt: no guard note when scoping is off
+      expect(taskRuntime.startedTasks[0].task.prompt).not.toContain('## Agent scope')
+    }, 30_000)
   })
 
   describe('setters', () => {

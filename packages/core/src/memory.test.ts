@@ -24,7 +24,11 @@ import {
   parseProjectAliases,
   listWikiPages,
   listProjectNotes,
+  getAgentMemoryDir,
+  resolveAgentMemoryDir,
+  ensurePersonaMemoryRoots,
 } from './memory.js'
+import { clearPersonaCache } from './persona-loader.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -614,6 +618,150 @@ describe('memory', () => {
       })
 
       expect(prompt).not.toContain('<available_providers>')
+    })
+  })
+
+  describe('scoped agent memory (RC5 multi-persona bleeding)', () => {
+    afterEach(() => {
+      clearPersonaCache()
+    })
+
+    function makeScopedSetup() {
+      const base = makeTmpDir()
+      const mainMemoryDir = path.join(base, 'memory')
+      const agentsBaseDir = path.join(base, 'agents')
+      ensureMemoryStructure(mainMemoryDir)
+      fs.writeFileSync(
+        path.join(mainMemoryDir, 'MEMORY.md'),
+        '# Agent Memory\n\n- MAIN-SECRET: portfolio and private projects\n',
+        'utf-8',
+      )
+      appendToDailyFile('\n## 09:00\n\nMAIN-DAILY-NOTE about private stuff\n', undefined, mainMemoryDir)
+      fs.mkdirSync(path.join(agentsBaseDir, 'warren'), { recursive: true })
+      fs.writeFileSync(path.join(agentsBaseDir, 'warren', 'SOUL.md'), '# Warren Soul\n', 'utf-8')
+      return { mainMemoryDir, agentsBaseDir }
+    }
+
+    it('getAgentMemoryDir returns <agentsBase>/<id>/memory', () => {
+      expect(getAgentMemoryDir('warren', '/tmp/agents')).toBe(path.join('/tmp/agents', 'warren', 'memory'))
+    })
+
+    it('resolveAgentMemoryDir scopes personas and leaves main on the fallback', () => {
+      const fallback = '/custom/memory'
+      expect(
+        resolveAgentMemoryDir('warren', { fallbackMemoryDir: fallback, agentsBaseDir: '/tmp/agents', scopedAgentMemory: true }),
+      ).toBe(path.join('/tmp/agents', 'warren', 'memory'))
+      expect(
+        resolveAgentMemoryDir('main', { fallbackMemoryDir: fallback, agentsBaseDir: '/tmp/agents', scopedAgentMemory: true }),
+      ).toBe(fallback)
+      expect(
+        resolveAgentMemoryDir(undefined, { fallbackMemoryDir: fallback, scopedAgentMemory: true }),
+      ).toBe(fallback)
+      // Scoping disabled → legacy shared behavior for personas too
+      expect(
+        resolveAgentMemoryDir('warren', { fallbackMemoryDir: fallback, agentsBaseDir: '/tmp/agents', scopedAgentMemory: false }),
+      ).toBe(fallback)
+    })
+
+    it('ensurePersonaMemoryRoots bootstraps missing roots idempotently and never overwrites', () => {
+      const { agentsBaseDir } = makeScopedSetup()
+      fs.mkdirSync(path.join(agentsBaseDir, 'bob'), { recursive: true })
+
+      const roots = ensurePersonaMemoryRoots({ agentsBaseDir, scopedAgentMemory: true })
+      expect(roots).toEqual([
+        path.join(agentsBaseDir, 'bob', 'memory'),
+        path.join(agentsBaseDir, 'warren', 'memory'),
+      ])
+      for (const root of roots) {
+        expect(fs.existsSync(path.join(root, 'MEMORY.md'))).toBe(true)
+        expect(fs.existsSync(path.join(root, 'daily'))).toBe(true)
+      }
+
+      // Second run is a no-op and preserves user content
+      const warrenMemory = path.join(agentsBaseDir, 'warren', 'memory', 'MEMORY.md')
+      fs.writeFileSync(warrenMemory, '# Warren Memory\n\n- custom fact\n', 'utf-8')
+      const roots2 = ensurePersonaMemoryRoots({ agentsBaseDir, scopedAgentMemory: true })
+      expect(roots2).toEqual(roots)
+      expect(fs.readFileSync(warrenMemory, 'utf-8')).toContain('custom fact')
+
+      // Disabled → no-op
+      expect(ensurePersonaMemoryRoots({ agentsBaseDir, scopedAgentMemory: false })).toEqual([])
+    })
+
+    it('assembleSystemPrompt does NOT inject main MEMORY.md or main dailies into scoped personas', () => {
+      const { mainMemoryDir, agentsBaseDir } = makeScopedSetup()
+
+      const prompt = assembleSystemPrompt({
+        memoryDir: mainMemoryDir,
+        agentId: 'warren',
+        agentsBaseDir,
+        scopedAgentMemory: true,
+      })
+
+      // Main content must not bleed into the persona prompt
+      expect(prompt).not.toContain('MAIN-SECRET')
+      expect(prompt).not.toContain('MAIN-DAILY-NOTE')
+
+      // memory_paths must point the LLM at the persona's own root
+      const warrenRoot = path.join(agentsBaseDir, 'warren', 'memory')
+      expect(prompt).toContain(path.join(warrenRoot, 'MEMORY.md'))
+      expect(prompt).toContain(path.join(warrenRoot, 'daily/'))
+      expect(prompt).not.toContain(path.join(mainMemoryDir, 'MEMORY.md'))
+
+      // The persona memory root was bootstrapped as a side effect
+      expect(fs.existsSync(path.join(warrenRoot, 'MEMORY.md'))).toBe(true)
+      expect(fs.existsSync(path.join(warrenRoot, 'daily'))).toBe(true)
+    })
+
+    it('assembleSystemPrompt injects the persona\'s own MEMORY.md and dailies when scoped', () => {
+      const { mainMemoryDir, agentsBaseDir } = makeScopedSetup()
+      const warrenRoot = path.join(agentsBaseDir, 'warren', 'memory')
+      ensureMemoryStructure(warrenRoot)
+      fs.writeFileSync(path.join(warrenRoot, 'MEMORY.md'), '# Warren Memory\n\n- WARREN-ONLY-FACT\n', 'utf-8')
+      appendToDailyFile('\n## 10:00\n\nWARREN-DAILY-ENTRY\n', undefined, warrenRoot)
+
+      const prompt = assembleSystemPrompt({
+        memoryDir: mainMemoryDir,
+        agentId: 'warren',
+        agentsBaseDir,
+        scopedAgentMemory: true,
+      })
+
+      expect(prompt).toContain('WARREN-ONLY-FACT')
+      expect(prompt).toContain('WARREN-DAILY-ENTRY')
+      expect(prompt).not.toContain('MAIN-SECRET')
+      // Persona SOUL.md override still applies
+      expect(prompt).toContain('# Warren Soul')
+    })
+
+    it('assembleSystemPrompt keeps main unchanged when scoping is enabled', () => {
+      const { mainMemoryDir, agentsBaseDir } = makeScopedSetup()
+
+      const prompt = assembleSystemPrompt({
+        memoryDir: mainMemoryDir,
+        agentId: 'main',
+        agentsBaseDir,
+        scopedAgentMemory: true,
+      })
+
+      expect(prompt).toContain('MAIN-SECRET')
+      expect(prompt).toContain('MAIN-DAILY-NOTE')
+      expect(prompt).toContain(path.join(mainMemoryDir, 'MEMORY.md'))
+    })
+
+    it('assembleSystemPrompt falls back to shared memory for personas when scoping is disabled', () => {
+      const { mainMemoryDir, agentsBaseDir } = makeScopedSetup()
+
+      const prompt = assembleSystemPrompt({
+        memoryDir: mainMemoryDir,
+        agentId: 'warren',
+        agentsBaseDir,
+        scopedAgentMemory: false,
+      })
+
+      // Legacy behavior: shared memory is injected
+      expect(prompt).toContain('MAIN-SECRET')
+      expect(prompt).toContain(path.join(mainMemoryDir, 'MEMORY.md'))
     })
   })
 

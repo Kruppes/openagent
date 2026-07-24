@@ -335,6 +335,97 @@ describe('SessionManager', () => {
     })
   })
 
+  describe('scoped persona memory (RC5 multi-persona bleeding)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('writes persona session summaries to the persona memory root, not into main dailies', async () => {
+      const agentsBaseDir = path.join(tmpDir, 'agents')
+      fs.mkdirSync(path.join(agentsBaseDir, 'warren'), { recursive: true })
+      const onSummarize = vi.fn().mockResolvedValue('WARREN PORTFOLIO SUMMARY')
+      const manager = new SessionManager({
+        db,
+        memoryDir,
+        timeoutMinutes: 1,
+        onSummarize,
+        agentsBaseDir,
+        scopedAgentMemory: true,
+      })
+      await manager.init()
+
+      manager.getOrCreateSession('user1', 'telegram', 'warren')
+      manager.recordMessage('user1', 'warren')
+
+      await vi.advanceTimersByTimeAsync(61 * 1000)
+
+      expect(onSummarize).toHaveBeenCalled()
+
+      const today = new Date().toISOString().split('T')[0]
+      const personaDaily = path.join(agentsBaseDir, 'warren', 'memory', 'daily', `${today}.md`)
+      expect(fs.existsSync(personaDaily)).toBe(true)
+      expect(fs.readFileSync(personaDaily, 'utf-8')).toContain('WARREN PORTFOLIO SUMMARY')
+
+      const mainDaily = path.join(memoryDir, 'daily', `${today}.md`)
+      if (fs.existsSync(mainDaily)) {
+        expect(fs.readFileSync(mainDaily, 'utf-8')).not.toContain('WARREN PORTFOLIO SUMMARY')
+      }
+    })
+
+    it('keeps main session summaries in the shared memory dir when scoping is enabled', async () => {
+      const agentsBaseDir = path.join(tmpDir, 'agents')
+      const onSummarize = vi.fn().mockResolvedValue('MAIN SESSION SUMMARY')
+      const manager = new SessionManager({
+        db,
+        memoryDir,
+        timeoutMinutes: 1,
+        onSummarize,
+        agentsBaseDir,
+        scopedAgentMemory: true,
+      })
+      await manager.init()
+
+      manager.getOrCreateSession('user1')
+      manager.recordMessage('user1')
+
+      await vi.advanceTimersByTimeAsync(61 * 1000)
+
+      const today = new Date().toISOString().split('T')[0]
+      const mainDaily = path.join(memoryDir, 'daily', `${today}.md`)
+      expect(fs.existsSync(mainDaily)).toBe(true)
+      expect(fs.readFileSync(mainDaily, 'utf-8')).toContain('MAIN SESSION SUMMARY')
+    })
+
+    it('writes persona summaries to the shared memory dir when scoping is disabled (legacy)', async () => {
+      const agentsBaseDir = path.join(tmpDir, 'agents')
+      const onSummarize = vi.fn().mockResolvedValue('LEGACY SHARED SUMMARY')
+      const manager = new SessionManager({
+        db,
+        memoryDir,
+        timeoutMinutes: 1,
+        onSummarize,
+        agentsBaseDir,
+        scopedAgentMemory: false,
+      })
+      await manager.init()
+
+      manager.getOrCreateSession('user1', 'telegram', 'bob')
+      manager.recordMessage('user1', 'bob')
+
+      await vi.advanceTimersByTimeAsync(61 * 1000)
+
+      const today = new Date().toISOString().split('T')[0]
+      const mainDaily = path.join(memoryDir, 'daily', `${today}.md`)
+      expect(fs.existsSync(mainDaily)).toBe(true)
+      expect(fs.readFileSync(mainDaily, 'utf-8')).toContain('LEGACY SHARED SUMMARY')
+      expect(fs.existsSync(path.join(agentsBaseDir, 'bob', 'memory', 'daily', `${today}.md`))).toBe(false)
+    })
+  })
+
   describe('/new command', () => {
     it('ends session and returns summary', async () => {
       const onSummarize = vi.fn().mockResolvedValue('Session about deployment.')
