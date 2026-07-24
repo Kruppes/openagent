@@ -32,6 +32,16 @@ export interface ConsolidationResult {
     input: number
     output: number
   }
+  /**
+   * Results of the per-persona consolidation runs (scoped persona memory,
+   * RC5 multi-persona bleeding 2026-07-24). Only present when scoped memory
+   * is enabled and at least one persona had daily content to consolidate.
+   */
+  personaRuns?: Array<{
+    agentId: string
+    updated: boolean
+    reason?: string
+  }>
 }
 
 /**

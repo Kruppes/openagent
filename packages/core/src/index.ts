@@ -15,7 +15,7 @@ export {
 export type { UploadDescriptor, SaveUploadInput, UploadSettings } from './uploads.js'
 export { loadConfig, getConfigDir, ensureConfigTemplates, getDefaultTimezone, getProjectRootDir, getReadmePath, getDocsPath, getAgentDocsPath, loadMultiPersonaSettings } from './config.js'
 export type { MultiPersonaSettings } from './config.js'
-export { loadPersona, clearPersonaCache, invalidatePersonaCache, seedPersonaFiles, getPersonaDir } from './persona-loader.js'
+export { loadPersona, clearPersonaCache, invalidatePersonaCache, seedPersonaFiles, getPersonaDir, listPersonaIds } from './persona-loader.js'
 export type { PersonaContext } from './persona-loader.js'
 export * from './contracts/index.js'
 export {
@@ -55,6 +55,8 @@ export {
   assembleSystemPrompt,
 } from './memory.js'
 export { getUserProfileDir, ensureUserProfile, readUserProfile, ensureWikiDir, ensureProjectsDir, parseProjectAliases, listWikiPages, listProjectNotes } from './memory.js'
+export { isScopedAgentMemoryEnabled, getAgentMemoryDir, resolveAgentMemoryDir, ensurePersonaMemoryRoots } from './memory.js'
+export type { ResolveAgentMemoryDirOptions } from './memory.js'
 export type { SkillPromptEntry } from './memory.js'
 export { consolidateMemory, readDailyFilesForConsolidation, buildConsolidationPrompt } from './memory-consolidation.js'
 export type { MemoryConsolidationOptions, ConsolidationResult } from './memory-consolidation.js'

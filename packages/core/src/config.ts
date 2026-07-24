@@ -213,6 +213,15 @@ export function loadConfig<T = unknown>(filename: string): T {
 export interface MultiPersonaSettings {
   enabled: boolean
   defaultAgentId: string
+  /**
+   * Per-persona memory roots (RC5, multi-persona bleeding 2026-07-24).
+   * When true (default) and multi-persona is enabled, each non-main persona
+   * gets its own memory root under /data/agents/<id>/memory/ (own MEMORY.md,
+   * daily/, users/, wiki/) instead of sharing the global /data/memory/.
+   * Only effective when `enabled` is true, so upstream single-agent installs
+   * are unaffected.
+   */
+  scopedMemory: boolean
 }
 
 /**
@@ -225,9 +234,10 @@ export function loadMultiPersonaSettings(): MultiPersonaSettings {
     return {
       enabled: settings.multiPersona?.enabled ?? false,
       defaultAgentId: settings.multiPersona?.defaultAgentId ?? 'main',
+      scopedMemory: settings.multiPersona?.scopedMemory ?? true,
     }
   } catch {
-    return { enabled: false, defaultAgentId: 'main' }
+    return { enabled: false, defaultAgentId: 'main', scopedMemory: true }
   }
 }
 

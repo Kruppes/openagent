@@ -19,6 +19,7 @@ import {
   ensureConfigStructure,
   ensureConfigTemplates,
   ensureMemoryStructure,
+  ensurePersonaMemoryRoots,
   getMemoryDir,
   getActiveModelId,
   getActiveProvider,
@@ -342,6 +343,18 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   logger.log('[axiom] Ensuring memory structure...')
   ensureMemoryStructure()
   ensureConfigStructure()
+
+  // RC5 (multi-persona bleeding): idempotently bootstrap per-persona memory
+  // roots (/data/agents/<id>/memory/ with MEMORY.md, daily/, users/, wiki/)
+  // when scoped persona memory is enabled. Never overwrites existing files.
+  try {
+    const personaMemoryRoots = ensurePersonaMemoryRoots()
+    if (personaMemoryRoots.length > 0) {
+      logger.log(`[axiom] Ensured scoped persona memory roots: ${personaMemoryRoots.join(', ')}`)
+    }
+  } catch (error) {
+    logger.warn('[axiom] Failed to ensure persona memory roots:', error)
+  }
 
   logger.log('[axiom] Injecting global secrets into environment...')
   injectSecretsIntoEnv()

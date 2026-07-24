@@ -1,8 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { getWorkspaceDir } from './workspace.js'
-import { getConfigDir, getDefaultTimezone, getDocsPath, getReadmePath } from './config.js'
-import { loadPersona } from './persona-loader.js'
+import { getConfigDir, getDefaultTimezone, getDocsPath, getReadmePath, loadMultiPersonaSettings } from './config.js'
+import { loadPersona, getPersonaDir, listPersonaIds } from './persona-loader.js'
 import type { PersonaContext } from './persona-loader.js'
 
 const SOUL_TEMPLATE = `# Soul
@@ -270,6 +270,93 @@ During consolidation, also run these two checks on the wiki and report findings
 
 export function getMemoryDir(): string {
   return path.join(process.env.DATA_DIR ?? '/data', 'memory')
+}
+
+// =============================================================================
+// Scoped per-persona memory roots (RC5, multi-persona bleeding 2026-07-24)
+//
+// When multi-persona mode is enabled (and multiPersona.scopedMemory is not
+// explicitly disabled), every non-main persona gets its own memory root at
+// /data/agents/<id>/memory/ mirroring the global /data/memory/ structure
+// (MEMORY.md, daily/, users/, wiki/, sources/). Main keeps /data/memory/
+// unchanged. This stops persona session summaries, daily notes and core
+// memory from bleeding into main's system prompt and vice versa.
+// =============================================================================
+
+/**
+ * Whether scoped per-persona memory roots are active.
+ * Requires multiPersona.enabled AND multiPersona.scopedMemory (default true).
+ * Safe fallback: disabled when settings cannot be read.
+ */
+export function isScopedAgentMemoryEnabled(): boolean {
+  try {
+    const settings = loadMultiPersonaSettings()
+    return settings.enabled && settings.scopedMemory !== false
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Memory root for a persona: /data/agents/<agentId>/memory
+ * (next to the persona's IDENTITY.md/SOUL.md/... files).
+ */
+export function getAgentMemoryDir(agentId: string, agentsBaseDir?: string): string {
+  return path.join(getPersonaDir(agentId, agentsBaseDir), 'memory')
+}
+
+export interface ResolveAgentMemoryDirOptions {
+  /** Returned for main / non-scoped agents (callers usually default this to getMemoryDir()). */
+  fallbackMemoryDir?: string
+  /** Base directory containing persona dirs (tests only; default /data/agents). */
+  agentsBaseDir?: string
+  /** Force-enable/disable scoping, bypassing settings (tests / DI). */
+  scopedAgentMemory?: boolean
+}
+
+/**
+ * Resolve the memory directory an agent's memory reads/writes must target.
+ *
+ * - main (or no agentId): the fallback dir (typically undefined → global /data/memory)
+ * - persona with scoped memory enabled: /data/agents/<id>/memory
+ * - persona with scoped memory disabled: the fallback dir (legacy shared behavior)
+ */
+export function resolveAgentMemoryDir(
+  agentId?: string | null,
+  options?: ResolveAgentMemoryDirOptions,
+): string | undefined {
+  if (agentId && agentId !== 'main') {
+    const scoped = options?.scopedAgentMemory ?? isScopedAgentMemoryEnabled()
+    if (scoped) {
+      return getAgentMemoryDir(agentId, options?.agentsBaseDir)
+    }
+  }
+  return options?.fallbackMemoryDir
+}
+
+/**
+ * Idempotently create the memory roots for all personas found under
+ * /data/agents/ (MEMORY.md, daily/, users/, wiki/, sources/ — same structure
+ * as the global memory dir, so all read/write helpers work unchanged).
+ * No-op when scoped memory is disabled. Never overwrites existing files.
+ *
+ * Called at startup (runtime-composition) and lazily by assembleSystemPrompt.
+ * Returns the list of ensured roots.
+ */
+export function ensurePersonaMemoryRoots(options?: {
+  agentsBaseDir?: string
+  scopedAgentMemory?: boolean
+}): string[] {
+  const enabled = options?.scopedAgentMemory ?? isScopedAgentMemoryEnabled()
+  if (!enabled) return []
+
+  const roots: string[] = []
+  for (const agentId of listPersonaIds(options?.agentsBaseDir)) {
+    const root = getAgentMemoryDir(agentId, options?.agentsBaseDir)
+    ensureMemoryStructure(root)
+    roots.push(root)
+  }
+  return roots
 }
 
 /**
@@ -830,18 +917,42 @@ export function assembleSystemPrompt(options?: {
   availableProviders?: Array<{ name: string; models: AvailableProviderModelPromptEntry[] }>
   /** Agent ID for multi-persona support. When set (and not 'main') and persona files exist, they override global files. */
   agentId?: string
+  /** Base directory containing persona dirs (tests only; default /data/agents). */
+  agentsBaseDir?: string
+  /**
+   * Force-enable/disable scoped per-persona memory, bypassing settings
+   * (tests / DI). When undefined, resolved from multiPersona settings.
+   */
+  scopedAgentMemory?: boolean
 }): string {
-  const memoryDir = options?.memoryDir
   const recentDays = options?.recentDays ?? 3
 
-  // Ensure structure exists
+  // RC5 (multi-persona bleeding): non-main personas with scoped memory
+  // enabled read/write their OWN memory root (/data/agents/<id>/memory/)
+  // instead of the shared global memory dir. This scopes <core_memory>,
+  // <recent_memory> (dailies), wiki pages, user profiles and the
+  // <memory_paths> the LLM is told to write to. Main is unchanged.
+  const isPersona = !!options?.agentId && options.agentId !== 'main'
+  const scopedAgentMemory = isPersona
+    && (options?.scopedAgentMemory ?? isScopedAgentMemoryEnabled())
+  const memoryDir = scopedAgentMemory
+    ? getAgentMemoryDir(options!.agentId!, options?.agentsBaseDir)
+    : options?.memoryDir
+
+  // Ensure structure exists (for scoped personas this idempotently
+  // bootstraps /data/agents/<id>/memory/ with MEMORY.md, daily/, users/, wiki/)
   ensureMemoryStructure(memoryDir)
 
   // Load persona context if agentId is specified (non-'main'). Persona files
   // in /data/agents/<id>/ override the corresponding global files.
   let persona: PersonaContext | null = null
-  if (options?.agentId && options.agentId !== 'main') {
-    persona = loadPersona(options.agentId)
+  if (isPersona) {
+    persona = loadPersona(options!.agentId!, {
+      baseDir: options?.agentsBaseDir,
+      // When scoping is forced on (tests/DI), persona files must load even
+      // if the settings file is not available in the environment.
+      skipFeatureCheck: options?.scopedAgentMemory === true ? true : undefined,
+    })
   }
 
   const sections: string[] = []

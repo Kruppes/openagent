@@ -71,6 +71,24 @@ export function getPersonaDir(agentId: string, baseDir?: string): string {
 }
 
 /**
+ * List all persona agent IDs found under the agents base directory
+ * (default: /data/agents/). Excludes 'main' — main is the orchestrator and
+ * always uses the global memory/config files. Returns [] when the directory
+ * does not exist or is unreadable.
+ */
+export function listPersonaIds(baseDir?: string): string[] {
+  const dir = baseDir ?? path.join(process.env.DATA_DIR ?? '/data', 'agents')
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter(e => e.isDirectory() && e.name !== 'main')
+      .map(e => e.name)
+      .sort()
+  } catch {
+    return []
+  }
+}
+
+/**
  * Read a single persona file from disk. Returns null if not found.
  */
 function readPersonaFile(personaDir: string, filename: string): string | null {

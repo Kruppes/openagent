@@ -8,7 +8,7 @@ import { completeSimple } from '@earendil-works/pi-ai/compat'
 import type { Database } from './database.js'
 import { getAgentSkillsDir } from './agent-skills.js'
 import { getSkill } from './skill-config.js'
-import { readTasksGuidelinesFile } from './memory.js'
+import { readTasksGuidelinesFile, resolveAgentMemoryDir } from './memory.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
 import { readBackgroundThinkingLevelFromConfig, resolveBackgroundReasoning } from './thinking-level.js'
 import { withTimeout } from './promise-utils.js'
@@ -464,7 +464,13 @@ export class TaskRunner {
       // Determine effective system prompt
       const baseSystemPrompt = overrides?.systemPromptOverride
         ? overrides.systemPromptOverride
-        : buildTaskSystemPrompt(task.prompt, this.options.memoryDir)
+        // RC5 (multi-persona bleeding): persona tasks get THEIR memory root
+        // in <memory_reference>, not main's — otherwise the task LLM reads
+        // (and is pointed at) main's SOUL.md/MEMORY.md.
+        : buildTaskSystemPrompt(
+            task.prompt,
+            resolveAgentMemoryDir(task.agentId, { fallbackMemoryDir: this.options.memoryDir }),
+          )
 
       // Inject attached-skills block (before the base prompt) so skill rules are
       // anchored at the top and apply regardless of the rest of the prompt.
