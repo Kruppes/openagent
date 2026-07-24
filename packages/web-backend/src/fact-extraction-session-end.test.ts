@@ -203,12 +203,56 @@ describe('fact-extraction session-end trigger', () => {
         expect.objectContaining({ id: 'gpt-4o-mini' }),
         'key',
         expect.objectContaining({ providerType: 'openai' }),
+        'main',
       )
       expect(error).toHaveBeenCalled()
     })
 
     expect(log).not.toHaveBeenCalled()
     expect(String(error.mock.calls[0][0])).toContain('[fact-extraction] Failed for session session-2:')
+
+    db.close()
+  })
+
+  it('scopes extracted facts to the session persona (multi-persona bleeding regression)', async () => {
+    const db = initDatabase(':memory:')
+    db.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (1, ?, ?, ?)').run('alice', 'hash', 'user')
+    insertSession(db, { id: 'session-bob', userId: 1, messageCount: 4 })
+    db.prepare('UPDATE sessions SET agent_id = ? WHERE id = ?').run('bob', 'session-bob')
+
+    const extractAndStoreFacts = vi.fn().mockResolvedValue({ extracted: 1, stored: 1, duplicates: 0 })
+    const buildConversationHistory = vi.fn(() => 'User: the chain waxing interval is 300km')
+
+    const triggered = triggerFactExtractionForSessionEnd({
+      db,
+      agentCore: {
+        getSessionManager: () => ({ buildConversationHistory }),
+      },
+      userId: '1',
+      sessionId: 'session-bob',
+      deps: {
+        loadSettings: () => ({ factExtraction: { enabled: true, providerId: '', minSessionMessages: 3 } }),
+        getActiveProvider: () => makeProvider('active', 'Active'),
+        buildModel: vi.fn(() => makeModel('gpt-4o-mini')),
+        getApiKeyForProvider: vi.fn().mockResolvedValue('key'),
+        extractAndStoreFacts,
+        console: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      },
+    })
+
+    expect(triggered).toBe(true)
+    await vi.waitFor(() => {
+      expect(extractAndStoreFacts).toHaveBeenCalledWith(
+        db,
+        1,
+        'session-bob',
+        'User: the chain waxing interval is 300km',
+        expect.objectContaining({ id: 'gpt-4o-mini' }),
+        'key',
+        expect.objectContaining({ providerType: 'openai' }),
+        'bob',
+      )
+    })
 
     db.close()
   })

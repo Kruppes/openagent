@@ -26,6 +26,7 @@ interface SessionRow {
   user_id: number | null
   session_user: string | null
   message_count: number
+  agent_id: string | null
 }
 
 interface FactExtractionDeps {
@@ -130,7 +131,7 @@ export function triggerFactExtractionForSessionEnd(options: TriggerFactExtractio
   }
 
   const sessionRow = db.prepare(
-    'SELECT user_id, session_user, message_count FROM sessions WHERE id = ?'
+    'SELECT user_id, session_user, message_count, agent_id FROM sessions WHERE id = ?'
   ).get(sessionId) as SessionRow | undefined
 
   if (!sessionRow || sessionRow.message_count < settings.minSessionMessages) {
@@ -167,6 +168,10 @@ export function triggerFactExtractionForSessionEnd(options: TriggerFactExtractio
         executionContext.model,
         executionContext.apiKey,
         executionContext.provider,
+        // Scope extracted facts to the session's persona. Without this every
+        // fact landed under agent_id='main' and Warren/Bob session knowledge
+        // was injected into main conversations (multi-persona bleeding).
+        sessionRow.agent_id ?? 'main',
       )
 
       deps.console.log(`[fact-extraction] Session ${sessionId}: ${result.stored} new facts`)

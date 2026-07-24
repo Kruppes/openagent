@@ -48,6 +48,14 @@ export interface CreateSessionOptions {
   source: string
   userId?: string
   parentSessionId?: string
+  /**
+   * Persona that owns this background session. Defaults to 'main'.
+   * Without this, task/heartbeat/consolidation sessions spawned for a
+   * persona (e.g. Warren's portfolio scan) are mislabeled as 'main' in the
+   * `sessions` table, which lets persona content bleed into main-scoped
+   * reads (multi-persona bleeding, 2026-07-24).
+   */
+  agentId?: string
 }
 
 export interface SessionInfo {
@@ -712,6 +720,7 @@ export class SessionManager {
   createSession(options: CreateSessionOptions): SessionInfo {
     const id = generateSessionId()
     const now = Date.now()
+    const agentId = options.agentId ?? 'main'
     const session: SessionInfo = {
       id,
       userId: options.userId ?? 'system',
@@ -721,12 +730,12 @@ export class SessionManager {
       messageCount: 0,
       summaryWritten: false,
       restored: false,
-      agentId: 'main',
+      agentId,
     }
 
     this.db.prepare(
-      `INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, last_activity, session_user, message_count, summary_written)
-       VALUES (?, NULL, ?, ?, ?, datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), ?, 0, 0)`
+      `INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, last_activity, session_user, message_count, summary_written, agent_id)
+       VALUES (?, NULL, ?, ?, ?, datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), ?, 0, 0, ?)`
     ).run(
       id,
       options.source,
@@ -735,6 +744,7 @@ export class SessionManager {
       now,
       now,
       options.userId ?? null,
+      agentId,
     )
 
     return session

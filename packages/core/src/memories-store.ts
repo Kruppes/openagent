@@ -10,6 +10,7 @@ export interface MemoryFact {
   content: string
   source: string
   timestamp: string
+  agentId: string | null
 }
 
 export interface SearchMemoriesOptions {
@@ -17,6 +18,12 @@ export interface SearchMemoriesOptions {
   limit?: number
   dateFrom?: string
   dateTo?: string
+  /**
+   * Persona scope: when set, only facts with `agent_id IN (agentId, 'shared')`
+   * are returned. When omitted, all facts are searched (main/orchestrator
+   * behavior; also the legacy behavior).
+   */
+  agentId?: string
 }
 
 export interface ListMemoriesOptions {
@@ -35,6 +42,7 @@ interface MemoryRow {
   content: string
   source: string
   timestamp: string
+  agent_id?: string | null
 }
 
 function rowToMemoryFact(row: MemoryRow): MemoryFact {
@@ -45,6 +53,7 @@ function rowToMemoryFact(row: MemoryRow): MemoryFact {
     content: row.content,
     source: row.source,
     timestamp: row.timestamp,
+    agentId: row.agent_id ?? null,
   }
 }
 
@@ -91,7 +100,7 @@ function normalizeDateTo(input: string): string {
 }
 
 function buildMemoryFilters(
-  options: Pick<SearchMemoriesOptions, 'userId' | 'dateFrom' | 'dateTo'>,
+  options: Pick<SearchMemoriesOptions, 'userId' | 'dateFrom' | 'dateTo' | 'agentId'>,
   alias: string,
 ): { conditions: string[]; params: unknown[] } {
   const conditions: string[] = []
@@ -100,6 +109,11 @@ function buildMemoryFilters(
   if (options.userId !== undefined) {
     conditions.push(`${alias}.user_id = ?`)
     params.push(options.userId)
+  }
+
+  if (options.agentId !== undefined) {
+    conditions.push(`${alias}.agent_id IN (?, 'shared')`)
+    params.push(options.agentId)
   }
 
   if (options.dateFrom) {
@@ -127,7 +141,7 @@ export function searchMemories(db: Database, query: string, options: SearchMemor
   const whereClause = conditions.length > 0 ? ` AND ${conditions.join(' AND ')}` : ''
 
   const sql = `
-    SELECT m.id, m.user_id, m.session_id, m.content, m.source, m.timestamp
+    SELECT m.id, m.user_id, m.session_id, m.content, m.source, m.timestamp, m.agent_id
     FROM memories_fts
     INNER JOIN memories m ON m.id = memories_fts.rowid
     WHERE memories_fts MATCH ?${whereClause}
@@ -160,7 +174,7 @@ export function listMemories(db: Database, options: ListMemoriesOptions = {}): {
     const { count } = db.prepare(countSql).get(ftsQuery, ...params) as { count: number }
 
     const selectSql = `
-      SELECT m.id, m.user_id, m.session_id, m.content, m.source, m.timestamp
+      SELECT m.id, m.user_id, m.session_id, m.content, m.source, m.timestamp, m.agent_id
       FROM memories_fts
       INNER JOIN memories m ON m.id = memories_fts.rowid
       WHERE memories_fts MATCH ?${whereClause}
@@ -177,7 +191,7 @@ export function listMemories(db: Database, options: ListMemoriesOptions = {}): {
   const { count } = db.prepare(countSql).get(...params) as { count: number }
 
   const selectSql = `
-    SELECT m.id, m.user_id, m.session_id, m.content, m.source, m.timestamp
+    SELECT m.id, m.user_id, m.session_id, m.content, m.source, m.timestamp, m.agent_id
     FROM memories m
     ${whereClause}
     ORDER BY m.timestamp DESC, m.id DESC
@@ -190,7 +204,7 @@ export function listMemories(db: Database, options: ListMemoriesOptions = {}): {
 
 export function getMemoryById(db: Database, id: number): MemoryFact | null {
   const row = db.prepare(
-    'SELECT id, user_id, session_id, content, source, timestamp FROM memories WHERE id = ?'
+    'SELECT id, user_id, session_id, content, source, timestamp, agent_id FROM memories WHERE id = ?'
   ).get(id) as MemoryRow | undefined
 
   return row ? rowToMemoryFact(row) : null
@@ -202,10 +216,11 @@ export function createMemory(
   sessionId: string | null,
   content: string,
   source: string = 'session',
+  agentId: string = 'main',
 ): number {
   const result = db.prepare(
-    'INSERT INTO memories (user_id, session_id, content, source) VALUES (?, ?, ?, ?)'
-  ).run(userId, sessionId, content, source)
+    'INSERT INTO memories (user_id, session_id, content, source, agent_id) VALUES (?, ?, ?, ?, ?)'
+  ).run(userId, sessionId, content, source, agentId)
 
   const id = Number(result.lastInsertRowid)
   // Best-effort semantic vector (no-op when memoryEmbeddings is disabled).

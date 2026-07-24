@@ -39,6 +39,12 @@ export interface BaseAgentToolsOptions {
   sttEnabled?: boolean
   /** Called by search_memories to scope results to the current user. */
   getCurrentUserId?: () => number | undefined
+  /**
+   * Called by read_chat_history / search_memories to scope results to the
+   * calling persona. Non-'main' personas only see their own data; 'main'
+   * and callers that omit this stay unscoped (orchestrator behavior).
+   */
+  getCurrentAgentId?: () => string | undefined
 }
 
 /**
@@ -53,8 +59,12 @@ export function createBaseAgentTools(options: BaseAgentToolsOptions): AgentTool[
   return [
     ...createYoloTools(),
     ...createBuiltinWebTools(options.builtinToolsConfig),
-    createReadChatHistoryTool({ db: options.db }),
-    createSearchMemoriesTool({ db: options.db, getCurrentUserId: options.getCurrentUserId }),
+    createReadChatHistoryTool({ db: options.db, getCurrentAgentId: options.getCurrentAgentId }),
+    createSearchMemoriesTool({
+      db: options.db,
+      getCurrentUserId: options.getCurrentUserId,
+      getCurrentAgentId: options.getCurrentAgentId,
+    }),
     ...createAgentSkillTools(),
     ...(options.sttEnabled ? [createTranscribeAudioTool()] : []),
   ]
@@ -611,6 +621,9 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         builtinToolsConfig: () => this.readRuntimeSettings().builtinToolsConfig,
         sttEnabled,
         getCurrentUserId: () => this.getCurrentToolUserId(),
+        // Each runtime is permanently bound to one persona — scope its
+        // history/memory tools to that persona (main stays unscoped).
+        getCurrentAgentId: () => this.agentId,
       }),
       ...askAgentTools,
     ]

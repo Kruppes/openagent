@@ -5,6 +5,16 @@ import { normalizeFtsQuery } from './fts-utils.js'
 
 export interface ChatHistoryToolsOptions {
   db: Database
+  /**
+   * Supplies the persona (agentId) the calling runtime belongs to.
+   * Non-'main' personas only see chat messages tagged with their own
+   * agent_id — without this, any persona (and any persona-triggered task)
+   * could read other personas' and main's conversations, which is one of
+   * the multi-persona bleeding vectors (2026-07-24). 'main' stays
+   * unscoped: it is the orchestrator and needs the full picture for
+   * heartbeat/consolidation.
+   */
+  getCurrentAgentId?: () => string | undefined
 }
 
 interface ChatMessageRow {
@@ -118,6 +128,13 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
         // Build query dynamically
         const baseConditions: string[] = []
         const baseParams: unknown[] = []
+
+        // Persona scoping (non-negotiable, applied before all user filters)
+        const callerAgentId = options.getCurrentAgentId?.()
+        if (callerAgentId && callerAgentId !== 'main') {
+          baseConditions.push('cm.agent_id = ?')
+          baseParams.push(callerAgentId)
+        }
         const toolCallQueryCondition =
           'cm.id IN (' +
           '  SELECT cm2.id FROM chat_messages cm2' +

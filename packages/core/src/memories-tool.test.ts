@@ -71,6 +71,26 @@ describe('search_memories tool', () => {
     expect(text).not.toContain('5432')
   })
 
+  it('scopes a non-main persona to its own facts plus shared (multi-persona bleeding regression)', async () => {
+    createMemory(db, 1, 'session-a', 'warren postgres fact', 'extracted_fact', 'warren')
+    createMemory(db, 1, 'session-b', 'bob postgres fact', 'extracted_fact', 'bob')
+    createMemory(db, 1, 'session-c', 'shared postgres fact', 'extracted_fact', 'shared')
+    createMemory(db, 1, 'session-d', 'main postgres fact', 'extracted_fact', 'main')
+
+    const warrenTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'warren' })
+    const warrenText = getTextContent(await warrenTool.execute('tc-w', { query: 'postgres' }))
+    expect(warrenText).toContain('warren postgres fact')
+    expect(warrenText).toContain('shared postgres fact')
+    expect(warrenText).not.toContain('bob postgres fact')
+    expect(warrenText).not.toContain('main postgres fact')
+
+    const mainTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'main' })
+    const mainText = getTextContent(await mainTool.execute('tc-m', { query: 'postgres' }))
+    expect(mainText).toContain('warren postgres fact')
+    expect(mainText).toContain('bob postgres fact')
+    expect(mainText).toContain('main postgres fact')
+  })
+
   it('handles empty results gracefully', async () => {
     const tool = createSearchMemoriesTool({ db, getCurrentUserId: () => 1 })
     const result = await tool.execute('tool-call-3', { query: 'no-match-xyz' })

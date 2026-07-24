@@ -419,4 +419,36 @@ describe('read_chat_history tool', () => {
       expect(text).toContain('Uses C# (legacy) stack')
     })
   })
+
+  describe('persona scoping (multi-persona bleeding regression)', () => {
+    function insertAgentMessage(sessionId: string, content: string, agentId: string, ts: string) {
+      db.prepare(
+        'INSERT INTO chat_messages (session_id, user_id, role, content, timestamp, agent_id) VALUES (?, 1, ?, ?, ?, ?)',
+      ).run(sessionId, 'assistant', content, ts, agentId)
+    }
+
+    it('a non-main persona only sees its own messages', async () => {
+      insertAgentMessage('session-1-abc', 'warren portfolio update', 'warren', '2025-04-07 10:00:00')
+      insertAgentMessage('session-1-abc', 'bob workshop update', 'bob', '2025-04-07 10:01:00')
+
+      const warrenTool = createReadChatHistoryTool({ db, getCurrentAgentId: () => 'warren' })
+      const result = await warrenTool.execute('tc-1', { start: '2025-04-07', end: '2025-04-08' })
+      const text = getTextContent(result)
+
+      expect(text).toContain('warren portfolio update')
+      expect(text).not.toContain('bob workshop update')
+    })
+
+    it('main stays unscoped (orchestrator sees everything)', async () => {
+      insertAgentMessage('session-1-abc', 'warren portfolio update', 'warren', '2025-04-07 10:00:00')
+      insertAgentMessage('session-1-abc', 'bob workshop update', 'bob', '2025-04-07 10:01:00')
+
+      const mainTool = createReadChatHistoryTool({ db, getCurrentAgentId: () => 'main' })
+      const result = await mainTool.execute('tc-1', { start: '2025-04-07', end: '2025-04-08' })
+      const text = getTextContent(result)
+
+      expect(text).toContain('warren portfolio update')
+      expect(text).toContain('bob workshop update')
+    })
+  })
 })

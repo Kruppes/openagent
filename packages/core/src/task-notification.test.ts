@@ -135,6 +135,26 @@ describe('persistTaskResultMessage', () => {
     expect(metadata.promptTokens).toBe(5000)
     expect(metadata.completionTokens).toBe(3000)
   })
+
+  it('labels the task result row with the task agent_id (multi-persona bleeding regression)', () => {
+    const db = createTestDb()
+    const task = makeTask({ agentId: 'bob' })
+
+    persistTaskResultMessage(db, 1, task, 15)
+
+    const row = db.prepare('SELECT agent_id FROM chat_messages WHERE user_id = 1').get() as { agent_id: string }
+    expect(row.agent_id).toBe('bob')
+  })
+
+  it("defaults the task result row agent_id to 'main' when the task has none", () => {
+    const db = createTestDb()
+    const task = makeTask({ agentId: null })
+
+    persistTaskResultMessage(db, 1, task, 15)
+
+    const row = db.prepare('SELECT agent_id FROM chat_messages WHERE user_id = 1').get() as { agent_id: string }
+    expect(row.agent_id).toBe('main')
+  })
 })
 
 describe('resolveTaskNotificationSessionId', () => {

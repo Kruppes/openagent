@@ -794,6 +794,29 @@ describe('SessionManager', () => {
       expect(meta!.session_user).toBe('user1')
     })
 
+    it('createSession() persists the persona agent_id (multi-persona bleeding regression)', async () => {
+      const manager = new SessionManager({ db, memoryDir })
+      await manager.init()
+
+      const warrenSession = manager.createSession({
+        type: 'task',
+        source: 'system',
+        agentId: 'warren',
+      })
+      const defaultSession = manager.createSession({
+        type: 'task',
+        source: 'system',
+      })
+
+      const warrenRow = db.prepare('SELECT agent_id FROM sessions WHERE id = ?').get(warrenSession.id) as { agent_id: string }
+      const defaultRow = db.prepare('SELECT agent_id FROM sessions WHERE id = ?').get(defaultSession.id) as { agent_id: string }
+
+      expect(warrenSession.agentId).toBe('warren')
+      expect(warrenRow.agent_id).toBe('warren')
+      expect(defaultSession.agentId).toBe('main')
+      expect(defaultRow.agent_id).toBe('main')
+    })
+
     it('createSession() works for heartbeat without parent', async () => {
       const manager = new SessionManager({ db, memoryDir })
       await manager.init()

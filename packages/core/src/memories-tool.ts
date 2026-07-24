@@ -13,11 +13,11 @@ import { searchMemoriesByEmbedding } from './memory-embeddings.js'
 async function searchMemoriesHybrid(
   db: Database,
   query: string,
-  options: { userId?: number; limit: number },
+  options: { userId?: number; limit: number; agentId?: string },
 ): Promise<{ facts: MemoryFact[]; semantic: boolean }> {
   // Overfetch both lists so fusion has material to work with.
   const poolSize = Math.min(options.limit * 3, 50)
-  const ftsFacts = searchMemories(db, query, { userId: options.userId, limit: poolSize })
+  const ftsFacts = searchMemories(db, query, { userId: options.userId, limit: poolSize, agentId: options.agentId })
 
   let embeddingHits: Array<{ id: number }> = []
   try {
@@ -43,6 +43,13 @@ async function searchMemoriesHybrid(
   const merged: MemoryFact[] = []
   for (const [id] of [...scores.entries()].sort((a, b) => b[1] - a[1])) {
     const fact = factById.get(id) ?? getMemoryById(db, id) ?? undefined
+    // Enforce the agent scope on embedding hits too: getMemoryById bypasses
+    // the SQL agent filter, so a semantic match could otherwise leak another
+    // persona's fact into a scoped search.
+    if (fact && options.agentId !== undefined && fact.agentId !== null
+      && fact.agentId !== options.agentId && fact.agentId !== 'shared') {
+      continue
+    }
     if (fact) merged.push(fact)
     if (merged.length >= options.limit) break
   }
@@ -52,6 +59,12 @@ async function searchMemoriesHybrid(
 export interface SearchMemoriesToolOptions {
   db: Database
   getCurrentUserId?: () => number | undefined
+  /**
+   * Supplies the persona (agentId) the calling runtime belongs to.
+   * Non-'main' personas only see their own facts plus 'shared' facts;
+   * 'main' (and legacy callers without this option) see everything.
+   */
+  getCurrentAgentId?: () => string | undefined
 }
 
 export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): AgentTool {
@@ -94,9 +107,15 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
       try {
         const limit = Math.min(Math.max(Math.floor(rawLimit ?? 10), 1), 50)
         const userId = options.getCurrentUserId?.()
+        // Persona scoping: non-'main' personas only search their own facts
+        // (+ 'shared'). Main stays unscoped — it is the orchestrator and
+        // legacy facts are labeled 'main'.
+        const callerAgentId = options.getCurrentAgentId?.()
+        const agentScope = callerAgentId && callerAgentId !== 'main' ? callerAgentId : undefined
         const { facts, semantic } = await searchMemoriesHybrid(options.db, query, {
           userId,
           limit,
+          agentId: agentScope,
         })
 
         if (facts.length === 0) {

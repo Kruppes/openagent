@@ -428,6 +428,10 @@ export class TaskRunner {
       type: sessionType,
       source: 'system',
       parentSessionId: parentSessionId ?? undefined,
+      // Label the task session with the owning persona so downstream
+      // agent-scoped reads (chat history, consolidation) attribute the
+      // task's messages to the right agent instead of 'main'.
+      agentId: task.agentId ?? 'main',
     })
     const sessionId = session.id
 
@@ -1024,11 +1028,13 @@ export class TaskRunner {
       })
 
       // Track token usage from detection — register a child session of the task
-      const taskSessionId = this.store.getById(runningTask.taskId)?.sessionId ?? null
+      const parentTask = this.store.getById(runningTask.taskId)
+      const taskSessionId = parentTask?.sessionId ?? null
       const sessionId = this.options.sessionManager.createSession({
         type: 'loop_detection',
         source: 'system',
         parentSessionId: taskSessionId ?? undefined,
+        agentId: parentTask?.agentId ?? 'main',
       }).id
       detectionAgent.subscribe((event: AgentEvent) => {
         if (event.type === 'message_end') {

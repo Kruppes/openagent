@@ -62,6 +62,21 @@ describe('memories-store', () => {
     expect(results[0].content).toContain('6432')
   })
 
+  it('scopes searchMemories to a persona plus shared facts (multi-persona bleeding regression)', () => {
+    createMemory(db, 1, 'session-a', 'warren postgres fact', 'extracted_fact', 'warren')
+    createMemory(db, 1, 'session-b', 'bob postgres fact', 'extracted_fact', 'bob')
+    createMemory(db, 1, 'session-c', 'shared postgres fact', 'extracted_fact', 'shared')
+    createMemory(db, 1, 'session-d', 'main postgres fact', 'extracted_fact', 'main')
+
+    const warrenResults = searchMemories(db, 'postgres', { agentId: 'warren' })
+    expect(warrenResults.map(f => f.content).sort()).toEqual(['shared postgres fact', 'warren postgres fact'])
+    expect(warrenResults.every(f => f.agentId === 'warren' || f.agentId === 'shared')).toBe(true)
+
+    // Unscoped (main / legacy) search still sees everything
+    const allResults = searchMemories(db, 'postgres', {})
+    expect(allResults).toHaveLength(4)
+  })
+
   it('lists memories with pagination and correct total count', () => {
     createMemory(db, 1, 'session-1', 'alpha memory', 'session')
     createMemory(db, 1, 'session-2', 'beta memory', 'session')

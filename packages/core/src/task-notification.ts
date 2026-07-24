@@ -137,8 +137,8 @@ export function persistTaskResultMessage(
   }
 
   db.prepare(
-    'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-  ).run(resolvedSessionId, userId, 'system', content, metadata)
+    'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(resolvedSessionId, userId, 'system', content, metadata, task.agentId ?? 'main')
 }
 
 export type TelegramDeliveryMode = 'auto' | 'always'
@@ -239,8 +239,8 @@ export function persistTaskStatusUpdateMessage(
   }
 
   db.prepare(
-    'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-  ).run(resolvedSessionId, userId, 'system', content, metadata)
+    'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(resolvedSessionId, userId, 'system', content, metadata, task.agentId ?? 'main')
 }
 
 export interface TaskStatusUpdateEvent {
