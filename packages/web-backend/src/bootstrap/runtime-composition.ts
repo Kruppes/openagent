@@ -55,7 +55,7 @@ import type {
   TaskRuntimeTaskBoundary,
 } from '@axiom/core'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { completeSimple } from '@earendil-works/pi-ai/compat'
+import { completeSimple } from '@axiom/core'
 import { randomUUID } from 'node:crypto'
 import { createTelegramBot, createTelegramBotPool } from '@axiom/telegram'
 import type { TelegramBot, TelegramBotPool, TelegramChatEvent } from '@axiom/telegram'
