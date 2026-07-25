@@ -3,7 +3,7 @@ import path from 'node:path'
 import { Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { AgentEvent, AgentTool } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, Message, Model, Api } from '@earendil-works/pi-ai'
-import { completeSimple } from '@earendil-works/pi-ai/compat'
+import { completeSimple } from './pi-models.js'
 
 import type { Database } from './database.js'
 import { getAgentSkillsDir } from './agent-skills.js'
