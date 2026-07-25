@@ -1,8 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import {
-  readDailyFilesForConsolidation,
-  buildConsolidationPrompt,
-} from './memory-consolidation.js'
+import { readDailyFilesForConsolidation } from './memory-consolidation.js'
 import { ensureMemoryStructure, appendToDailyFile } from './memory.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -77,73 +74,6 @@ describe('memory-consolidation', () => {
       // Oldest first
       expect(files[0].content).toContain('day -2')
       expect(files[2].content).toContain('day -0')
-    })
-  })
-
-  describe('buildConsolidationPrompt', () => {
-    it('builds a valid context with system prompt and user message', () => {
-      const currentMemory = '# Agent Memory\n\n## Learned Lessons\n\n(none yet)\n'
-      const dailyEntries = [
-        { date: '2025-03-25', content: '# Daily Memory — 2025-03-25\n\nUser prefers dark mode' },
-        { date: '2025-03-26', content: '# Daily Memory — 2025-03-26\n\nUser speaks German' },
-      ]
-
-      const context = buildConsolidationPrompt(currentMemory, dailyEntries)
-
-      expect(context.systemPrompt).toContain('memory consolidation')
-      expect(context.messages).toHaveLength(1)
-      expect(context.messages[0].role).toBe('user')
-
-      const userContent = context.messages[0].content as string
-      expect(userContent).toContain('Agent Memory')
-      expect(userContent).toContain('2025-03-25')
-      expect(userContent).toContain('User prefers dark mode')
-      expect(userContent).toContain('2025-03-26')
-      expect(userContent).toContain('User speaks German')
-      expect(userContent).toContain('NO_UPDATE')
-    })
-
-    it('embeds consolidation rules in the system prompt when provided', () => {
-      const currentMemory = '# Agent Memory\n'
-      const dailyEntries = [
-        { date: '2025-03-25', content: 'Some entry' },
-      ]
-      const rules = '## Custom Rules\n- Always promote project names\n- Ignore small talk'
-
-      const context = buildConsolidationPrompt(currentMemory, dailyEntries, rules)
-
-      expect(context.systemPrompt).toContain('Custom Rules')
-      expect(context.systemPrompt).toContain('Always promote project names')
-      expect(context.systemPrompt).toContain('Ignore small talk')
-    })
-
-    it('uses fallback rules when no consolidation rules are provided', () => {
-      const currentMemory = '# Agent Memory\n'
-      const dailyEntries = [
-        { date: '2025-03-25', content: 'Some entry' },
-      ]
-
-      const context = buildConsolidationPrompt(currentMemory, dailyEntries)
-
-      expect(context.systemPrompt).toContain('Be selective')
-      expect(context.systemPrompt).toContain('Consolidation Rules')
-    })
-
-    it('includes all daily entries in chronological order', () => {
-      const dailyEntries = [
-        { date: '2025-03-24', content: 'Entry 1' },
-        { date: '2025-03-25', content: 'Entry 2' },
-        { date: '2025-03-26', content: 'Entry 3' },
-      ]
-
-      const context = buildConsolidationPrompt('# Memory', dailyEntries)
-      const userContent = context.messages[0].content as string
-
-      const idx1 = userContent.indexOf('2025-03-24')
-      const idx2 = userContent.indexOf('2025-03-25')
-      const idx3 = userContent.indexOf('2025-03-26')
-      expect(idx1).toBeLessThan(idx2)
-      expect(idx2).toBeLessThan(idx3)
     })
   })
 })

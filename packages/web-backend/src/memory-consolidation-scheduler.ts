@@ -17,6 +17,7 @@ import {
   readConsolidationFile,
   getMemoryDir,
   getAgentMemoryDir,
+  getAgentSkillsDir,
   isScopedAgentMemoryEnabled,
   listPersonaIds,
   readDailyFilesForConsolidation,
@@ -53,6 +54,13 @@ export interface ConsolidationPromptOptions {
    * content must not be promoted into main's memory (RC5 bleeding fix).
    */
   scopedPersonaGuard?: boolean
+  /**
+   * Weekly compaction pass: actively shrink MEMORY.md / user profiles against
+   * the size budgets and split oversized wiki pages. Every path in the
+   * compaction section is derived from `memoryDir`, so a persona run compacts
+   * that persona's own root only and never touches main's wiki (RC5).
+   */
+  compactionRun?: boolean
 }
 
 /**
@@ -65,7 +73,27 @@ export function buildConsolidationTaskPrompt(
   consolidationRules: string,
   options?: ConsolidationPromptOptions,
 ): string {
+  // RC5: every path below is derived from THIS memoryDir. In persona runs it is
+  // the persona's own root (/data/agents/<id>/memory), so the compaction section
+  // — including the wiki split targets and the wiki/log.md lint report — stays
+  // inside that persona's root and can never write into main's wiki.
   const memoryDir = options?.memoryDir ?? getMemoryDir()
+  const wikiSkillPath = `${getAgentSkillsDir()}/wiki/SKILL.md`
+  const compactionSection = options?.compactionRun
+    ? `
+
+## Weekly compaction run
+
+Today is the weekly compaction run. In addition to the steps above, actively SHRINK the long-term files:
+- Rewrite \`${memoryDir}/MEMORY.md\`: merge near-duplicate entries, collapse resolved threads to their end state, delete lessons covered by AGENTS.md or a wiki page, and enforce the size budgets from the consolidation rules.
+- Do the same for each file under \`${memoryDir}/users/\`.
+- Before deleting episodic detail that is still worth keeping, move it to the appropriate wiki page.
+- Split oversized wiki pages (~500+ lines, including ones flagged in earlier lint reports): convert them into a topic folder \`${memoryDir}/wiki/<topic>/\` with an \`index.md\` hub (short overview + links) and detailed subpages, and leave a redirect page at the old filename. Move content, never drop it — after the split, verify every section of the original page exists in exactly one subpage. Update \`${memoryDir}/wiki/index.md\` and log the split in \`${memoryDir}/wiki/log.md\`.
+- A page that other automation writes into (e.g. digest-cronjob comment blocks, tracking frontmatter) is NOT a blocker and MUST still be split in this run — just split it in place: do NOT move or rename the file, keep it at its existing path as the hub, preserve its frontmatter and all automation-written comment blocks, and extract only the body sections into subpages. The external writer keeps working unchanged. "Actively maintained by a cronjob" is never a valid reason to skip a split.
+- Before splitting, read \`${wikiSkillPath}\` and follow its page conventions for every hub and subpage you write: frontmatter with the required \`type\` field (no invented fields), exactly one \`# Title\` heading, sections as \`##\`, at most one consecutive blank line.
+- Do not defer qualifying splits to a future run. If a split is genuinely blocked, name the concrete blocker in the log entry.
+- Prune \`${memoryDir}/wiki/log.md\` to the ~10 most recent entries.`
+    : ''
 
   let scopingBlock = ''
   if (options?.agentId) {
@@ -133,6 +161,8 @@ You must NOT write to any other file. No config files, no code files, no files o
    - If you find project-specific information or concepts worth preserving, update the relevant wiki page in \`${memoryDir}/wiki/\` or create a new one if a new project or concept is detected.
    - If you find user-specific information (preferences, context), update the relevant user profile in \`${memoryDir}/users/\`.
    - Remove outdated or superseded information from MEMORY.md.
+   - Prune while you promote: merge near-duplicate entries, collapse resolved threads to their end state, and delete lessons already covered by AGENTS.md or a wiki page.
+   - Respect the size budgets from the consolidation rules (MEMORY.md and user profiles are injected into every system prompt). If a file is over budget, compact it in this run: move episodic detail to the wiki or delete it.
    - Do NOT duplicate information across files — each fact should live in exactly one place.
 
 7. **Wiki Health Check (Lint)**:
@@ -142,7 +172,8 @@ You must NOT write to any other file. No config files, no code files, no files o
    - Note outdated information that should be refreshed
    - **Content gaps**: surface concepts referenced repeatedly across wiki pages but without a dedicated page; open questions / TODO markers inside pages; topics discussed across multiple daily files but never promoted to the wiki. Report as suggestions — do NOT auto-create pages.
    - **Source coverage**: flag wiki pages that make factual claims but have no \`## Sources\` / \`## Quellen\` section. Flag files under \`${memoryDir}/sources/\` that are not cited by any wiki page (orphaned source or candidate for ingest).
-   - If any issues are found, append a brief Lint Report section to today's daily file at \`${memoryDir}/daily/\` using \`edit_file\` or \`shell\` with \`echo\`
+   - **Oversized pages**: flag wiki pages longer than ~500 lines (check with \`wc -l\`) as split candidates. Do NOT split during lint — splitting happens only in the compaction run.
+   - If any issues are found, append a brief Lint Report section to \`${memoryDir}/wiki/log.md\` — never to daily files, they are read-only source material. Keep only the ~10 most recent lint reports in log.md; delete older ones when appending.
    - Keep the lint report concise — a bullet list of findings is sufficient
 
 8. **Always complete with STATUS: silent.** Memory consolidation is a background maintenance task. The user does not need to be notified about it.
@@ -167,7 +198,7 @@ This is optional: if no relevant facts are found, continue with the daily files 
 - Do not remove information from daily files — they are append-only logs.
 - If nothing needs updating, complete silently with no changes.
 - Do NOT ask questions — make reasonable decisions autonomously.
-- You are a knowledge extractor. You store facts. You do NOT execute tasks, fix problems, apply changes, or modify configuration discussed in conversations.`
+- You are a knowledge extractor. You store facts. You do NOT execute tasks, fix problems, apply changes, or modify configuration discussed in conversations.${compactionSection}`
 }
 
 type ConsolidationTaskRuntime = Pick<TaskRuntimeTaskBoundary, 'create' | 'getById' | 'start'>
@@ -266,14 +297,15 @@ export class MemoryConsolidationScheduler {
   }
 
   /**
-   * Run consolidation now (manual trigger or scheduled)
+   * Run consolidation now (manual trigger or scheduled).
+   * Manual runs always include the compaction pass; scheduled runs only on Sunday.
    */
-  async runNow(): Promise<ConsolidationResult> {
+  async runNow(options?: { scheduled?: boolean }): Promise<ConsolidationResult> {
     if (this.consolidationInFlight) {
       return this.consolidationInFlight
     }
 
-    this.consolidationInFlight = this.executeConsolidation().finally(() => {
+    this.consolidationInFlight = this.executeConsolidation(options?.scheduled === true).finally(() => {
       this.consolidationInFlight = null
       if (this.running && this.settings.enabled) {
         this.scheduleNext()
@@ -324,7 +356,7 @@ export class MemoryConsolidationScheduler {
     const delayMs = nextRun.getTime() - Date.now()
 
     this.timer = setTimeout(() => {
-      void this.runNow()
+      void this.runNow({ scheduled: true })
     }, Math.max(0, delayMs))
 
     if (typeof this.timer === 'object' && 'unref' in this.timer) {
@@ -347,7 +379,7 @@ export class MemoryConsolidationScheduler {
     return next
   }
 
-  private async executeConsolidation(): Promise<ConsolidationResult> {
+  private async executeConsolidation(scheduled: boolean): Promise<ConsolidationResult> {
     console.log('[axiom] Starting memory consolidation...')
     const startTime = Date.now()
     // Create the consolidation session up-front so both the task and the
@@ -426,11 +458,14 @@ export class MemoryConsolidationScheduler {
       // is active (RC5), the main run gets a guard note: persona memory
       // roots are out of scope and persona content must not be promoted
       // into main's MEMORY.md — personas are consolidated in separate runs.
+      // ponytail: weekly compaction pinned to Sunday; make it configurable if that ever matters
+      const compactionRun = !scheduled || new Date().getDay() === 0
       const prompt = buildConsolidationTaskPrompt(this.settings.lookbackDays, consolidationRules, {
         scopedPersonaGuard: isScopedAgentMemoryEnabled(),
+        compactionRun,
       })
       const task: Task = taskRuntime.create({
-        name: 'Nightly Memory Consolidation',
+        name: compactionRun ? 'Nightly Memory Consolidation + Compaction' : 'Nightly Memory Consolidation',
         prompt,
         triggerType: 'consolidation',
         triggerSourceId: 'memory-consolidation',
@@ -455,7 +490,7 @@ export class MemoryConsolidationScheduler {
       // RC5: consolidate each persona's own memory root in separate,
       // agent-labeled runs (sequential, after the main run). Failures here
       // never fail the main consolidation result.
-      const personaRuns = await this.runPersonaConsolidations(taskRuntime, provider, consolidationRules)
+      const personaRuns = await this.runPersonaConsolidations(taskRuntime, provider, consolidationRules, compactionRun)
       if (personaRuns.length > 0) {
         result.personaRuns = personaRuns
       }
@@ -537,6 +572,7 @@ export class MemoryConsolidationScheduler {
     taskRuntime: ConsolidationTaskRuntime,
     provider: ProviderConfig,
     consolidationRules: string,
+    compactionRun: boolean,
   ): Promise<NonNullable<ConsolidationResult['personaRuns']>> {
     const runs: NonNullable<ConsolidationResult['personaRuns']> = []
 
@@ -567,12 +603,19 @@ export class MemoryConsolidationScheduler {
       }
 
       try {
+        // Personas compact on the same schedule as main: their MEMORY.md and
+        // user profiles grow just like main's, and the budgets apply per root.
+        // memoryDir pins every compaction target (incl. wiki/log.md) to this
+        // persona's own root, so a persona run can never write into main's wiki.
         const prompt = buildConsolidationTaskPrompt(this.settings.lookbackDays, consolidationRules, {
           memoryDir: target.memoryDir,
           agentId: target.agentId,
+          compactionRun,
         })
         const task: Task = taskRuntime.create({
-          name: `Nightly Memory Consolidation (${target.agentId})`,
+          name: compactionRun
+            ? `Nightly Memory Consolidation + Compaction (${target.agentId})`
+            : `Nightly Memory Consolidation (${target.agentId})`,
           prompt,
           triggerType: 'consolidation',
           triggerSourceId: `memory-consolidation:${target.agentId}`,
