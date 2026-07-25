@@ -167,12 +167,10 @@ export interface TelegramSettingsContract {
 /**
  * Multi-persona / multi-bot support (issue #32).
  *
- * When `enabled` is `false` (the default) the application behaves exactly as a
- * single-agent install: the per-agent `/data/agents/<id>/` layout is bypassed,
- * all state stays under the implicit `'main'` agent, and no persona-scoped read
- * paths are taken. This flag is the opt-in switch for the additive multi-persona
- * feature; toggling it never triggers schema migrations (the `agent_id` columns
- * exist unconditionally).
+ * Scaffolding: no runtime code branches on this flag yet. While it is `false`
+ * (the default) all state stays under the implicit `'main'` agent. Toggling it
+ * never triggers a schema migration — the `agent_id` columns exist
+ * unconditionally.
  */
 export interface MultiPersonaSettingsContract {
   enabled: boolean
