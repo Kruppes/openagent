@@ -125,6 +125,16 @@ WICHTIGE REGELN:
 3. ABER: Fakten über das Assistenten-System selbst (Axiom/OpenAgent-Konfiguration,
    Telegram-Bot-Setup, Heartbeats, Cronjobs, Memory-System) bleiben bei "main" —
    das ist die Domäne des Orchestrators.
+3b. ENTSCHEIDEND ist WEM das Werkzeug dient, NICHT wie technisch der Fakt klingt.
+   Werkzeuge, die der Assistent SELBST benutzt, um Nicolas zu helfen, gehören zu
+   "main" — auch wenn der Fakt nach Konfiguration/Code/OAuth/Dateipfaden klingt.
+   Beispiele die bei "main" BLEIBEN: 'gog' (Gmail-/Kalender-Zugriff des Assistenten),
+   Whisper/TTS, Ollama-Setup, SSH-Keys/Zugänge, Vaultwarden, Keyring, Paperless,
+   Home Assistant, NAS/Netzwerk.
+   Nach "bob" geht nur, was zu einem PRODUKT/PROJEKT gehört, das Nicolas baut
+   (Halfway, Looplab, WerkstattLog, SchnitzelBot, Artfactory, Stockpicker-Code).
+   Faustregel: "Womit arbeitet der Assistent?" → main.
+                "Was baut Nicolas?" → bob.
 4. Persönliches über Nicolas (Familie, Job, Gesundheit, Vorlieben, Fahrrad,
    Haushalt, Smart Home) bleibt bei "main".
 5. Wenn der aktuelle Bucket plausibel ist, behalte ihn. Nur bei klarer
@@ -170,6 +180,33 @@ async function ollamaChat(ollamaUrl, model, systemPrompt, userPrompt) {
   return data?.message?.content ?? ''
 }
 
+/**
+ * Salvage individual {"id":N,"bucket":"x","reason":"..."} records from malformed JSON.
+ *
+ * Local models occasionally emit broken object syntax (observed with gemma4:
+ * `"reason klassifiziert als ..."` — missing colon and opening quote). A strict
+ * JSON.parse throws away the whole batch for one bad character, so we fall back
+ * to per-record regex extraction. Only id+bucket are required; a malformed
+ * reason degrades to a placeholder instead of dropping a valid classification.
+ */
+function salvageClassifications(text) {
+  const items = []
+  const recordRe = /\{[^{}]*?"id"\s*:\s*(\d+)[^{}]*?\}/g
+  let match
+  while ((match = recordRe.exec(text)) !== null) {
+    const chunk = match[0]
+    const bucket = chunk.match(/"bucket"\s*:\s*"([^"]+)"/)
+    if (!bucket) continue
+    const reason = chunk.match(/"reason"\s*:\s*"([^"]*)"/)
+    items.push({
+      id: Number(match[1]),
+      bucket: bucket[1],
+      reason: reason ? reason[1] : '(Begründung unlesbar — aus defektem JSON geborgen)',
+    })
+  }
+  return items
+}
+
 /** Extract a JSON object from a possibly fenced/prefixed LLM response. */
 function extractJson(text) {
   const trimmed = text.trim()
@@ -180,7 +217,15 @@ function extractJson(text) {
   if (start === -1 || end === -1 || end <= start) {
     throw new Error(`No JSON object found in response: ${trimmed.slice(0, 200)}`)
   }
-  return JSON.parse(candidate.slice(start, end + 1))
+  const slice = candidate.slice(start, end + 1)
+  try {
+    return JSON.parse(slice)
+  } catch (error) {
+    const salvaged = salvageClassifications(slice)
+    if (salvaged.length === 0) throw error
+    console.log(`  ⚠ malformed JSON — ${salvaged.length} Einträge per Regex geborgen`)
+    return { classifications: salvaged }
+  }
 }
 
 async function classifyBatch(args, facts, attempt = 1) {
@@ -213,7 +258,11 @@ async function classifyBatch(args, facts, attempt = 1) {
       await new Promise(resolve => setTimeout(resolve, 2000 * attempt))
       return classifyBatch(args, facts, attempt + 1)
     }
-    throw err
+    // Never abort the whole run for one bad batch: with ~1000 facts a single
+    // unparseable response would otherwise discard all prior work. Unclassified
+    // facts simply keep their current bucket (reported as skipped at the end).
+    console.warn(`  ⚠ batch endgültig fehlgeschlagen (${err.message}) — ${facts.length} Fakten behalten ihren Bucket`)
+    return new Map()
   }
 }
 
