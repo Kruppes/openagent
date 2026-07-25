@@ -54,7 +54,9 @@ function parseArgs(argv) {
     out: path.resolve('fact-reclassify-proposal.json'),
     from: null,
     ollamaUrl: 'http://192.168.10.222:11434',
-    model: 'qwen3.5:27b',
+    backend: 'anthropic',
+    model: 'claude-sonnet-5',
+    keyFile: '/data/secrets/anthropic-linkedin.env',
     batchSize: 20,
     limit: null,
     resume: false,
@@ -68,9 +70,12 @@ function parseArgs(argv) {
       case '--out': args.out = path.resolve(argv[++i]); break
       case '--from': args.from = path.resolve(argv[++i]); break
       case '--ollama-url': args.ollamaUrl = argv[++i]; break
+      case '--backend': args.backend = argv[++i]; break
+      case '--key-file': args.keyFile = argv[++i]; break
       case '--model': args.model = argv[++i]; break
       case '--batch-size': args.batchSize = Number(argv[++i]); break
       case '--limit': args.limit = Number(argv[++i]); break
+      case '--ids': args.ids = argv[++i].split(',').map(Number).filter(Number.isInteger); break
       case '--resume': args.resume = true; break
       case '--apply': args.apply = true; break
       case '--help': case '-h':
@@ -103,9 +108,9 @@ Jeder Fakt gehört zu GENAU EINEM Bucket:
   Haushalt, Home Assistant / Smart Home, Termine, allgemeine Vorlieben, sowie die
   Infrastruktur und Konfiguration des Assistenten-Systems selbst (Axiom, OpenAgent,
   Telegram-Bots, Container, Proxmox/LXC, Backups, Netzwerk/WLAN).
-- "bob": Coding-/Entwickler-Persona. Software-Entwicklung, Deployments, Repos,
-  Code-Details, Build-Systeme, technische Implementierung von Side-Projekten
-  (u.a. Halfway-Technik, SchnitzelBot, Looplab-Code, Artfactory, Scanner-Tools).
+- "bob": Coding-/Entwickler-Persona. NUR die Projekte, die Nicolas TATSÄCHLICH
+  mit Bob bearbeitet: **WerkstattLog** (bikes.jansohn.xyz) und **Halfway-Technik**
+  (Deploy, VPS, Supabase/SMTP, Backend-Code). Sonst nichts.
 - "warren": Finanz-/Investment-Persona. Depot, Aktien, Trades, Portfolio-Scans,
   FIRE-Planung, Kinderdepots, Börsendaten, Ticker, Anlagethesen.
 - "gekko": Business-/Pricing-Persona (kikuchilabs). Halfway-Business: Preise,
@@ -125,6 +130,26 @@ WICHTIGE REGELN:
 3. ABER: Fakten über das Assistenten-System selbst (Axiom/OpenAgent-Konfiguration,
    Telegram-Bot-Setup, Heartbeats, Cronjobs, Memory-System) bleiben bei "main" —
    das ist die Domäne des Orchestrators.
+
+3a. ENTSCHEIDEND — "technisch klingend" ist KEIN Bob-Kriterium. Die Frage ist
+   NICHT "ist das Code/Infrastruktur?", sondern "MIT WELCHER PERSONA hat Nicolas
+   daran gearbeitet?". Main ist selbst ein voll arbeitender Entwickler-Agent und
+   baut den GRÖSSTEN TEIL der Projekte. Verbindliche Projekt-Zuordnung:
+     * Looplab (BRouter, Trailforks, Trail-Routing, AI-Mode)   -> main
+     * Artfactory (mflux, ComfyUI, Bildgenerierung, Rounds)    -> main
+     * Axiom / OpenAgent / pi-ai / Multi-Persona / Upstream-PRs -> main
+     * Stockpicker, Parqet-Sync, Paperless, Quorum, SchnitzelBot,
+       LinkedIn-Worker, Home Assistant, Netzwerk, LXC/Proxmox   -> main
+     * WerkstattLog                                             -> bob
+     * Halfway TECHNIK (Deploy/VPS/Backend/SMTP)                -> bob
+     * Halfway BUSINESS (Preise, Conversion, Funnel, Umsatz)    -> gekko
+   Ein Fakt über Repos, Commits, Ports, Services, Migrationen oder Code-Details
+   gehört NUR dann zu bob, wenn er eines von Bobs Projekten betrifft (WerkstattLog
+   / Halfway-Technik). Bei allen anderen Projekten bleibt er bei "main".
+
+3b. Werkzeuge, mit denen der ASSISTENT arbeitet (gog/Gmail-CLI, SSH-Zugänge,
+   Vaultwarden, Skills, Whisper/TTS, Ollama-Modelle, Benchmarks), sind IMMER
+   "main" — auch wenn sie technisch klingen.
 4. Persönliches über Nicolas (Familie, Job, Gesundheit, Vorlieben, Fahrrad,
    Haushalt, Smart Home) bleibt bei "main".
 5. Wenn der aktuelle Bucket plausibel ist, behalte ihn. Nur bei klarer
@@ -144,6 +169,70 @@ function buildBatchPrompt(facts) {
 // ---------------------------------------------------------------------------
 // Ollama call
 // ---------------------------------------------------------------------------
+
+/** Read the Anthropic API key from a KEY=value env file. Never logged. */
+function readAnthropicKey(keyFile) {
+  const raw = fs.readFileSync(keyFile, 'utf8')
+  const match = raw.match(/sk-ant-[A-Za-z0-9_-]+/)
+  if (!match) throw new Error(`No Anthropic key found in ${keyFile}`)
+  return match[0]
+}
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+/**
+ * Anthropic Messages API. NOTE: no `temperature` — deprecated for claude-*-5
+ * models and returns HTTP 400. Transient errors (429/5xx) are retried with
+ * exponential backoff; a final failure throws so the caller can skip the batch.
+ */
+async function anthropicChat(apiKey, model, systemPrompt, userPrompt) {
+  const MAX_ATTEMPTS = 3
+  let lastError = null
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let response
+    try {
+      response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 8192,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+        }),
+      })
+    } catch (error) {
+      lastError = error
+      if (attempt < MAX_ATTEMPTS) { await sleep(2000 * 2 ** (attempt - 1)); continue }
+      throw error
+    }
+
+    if (response.ok) {
+      const data = await response.json()
+      return (data?.content ?? []).filter(b => b?.type === 'text').map(b => b.text).join('')
+    }
+
+    const body = await response.text()
+    lastError = new Error(`Anthropic HTTP ${response.status}: ${body.slice(0, 300)}`)
+
+    const transient = response.status === 429 || response.status >= 500
+    if (!transient || attempt === MAX_ATTEMPTS) throw lastError
+
+    const retryAfter = Number(response.headers.get('retry-after'))
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? retryAfter * 1000
+      : 2000 * 2 ** (attempt - 1)
+    console.warn(`  batch: HTTP ${response.status}, retry in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${MAX_ATTEMPTS})`)
+    await sleep(waitMs)
+  }
+
+  throw lastError ?? new Error('Anthropic call failed')
+}
 
 async function ollamaChat(ollamaUrl, model, systemPrompt, userPrompt) {
   const response = await fetch(`${ollamaUrl.replace(/\/$/, '')}/api/chat`, {
@@ -186,7 +275,9 @@ function extractJson(text) {
 async function classifyBatch(args, facts, attempt = 1) {
   const MAX_ATTEMPTS = 3
   try {
-    const raw = await ollamaChat(args.ollamaUrl, args.model, CLASSIFY_SYSTEM_PROMPT, buildBatchPrompt(facts))
+    const raw = args.backend === 'anthropic'
+      ? await anthropicChat(args.apiKey, args.model, CLASSIFY_SYSTEM_PROMPT, buildBatchPrompt(facts))
+      : await ollamaChat(args.ollamaUrl, args.model, CLASSIFY_SYSTEM_PROMPT, buildBatchPrompt(facts))
     const parsed = extractJson(raw)
     const items = Array.isArray(parsed?.classifications) ? parsed.classifications : null
     if (!items) throw new Error('Response missing "classifications" array')
@@ -225,12 +316,15 @@ async function runDryRun(args) {
   console.log(`[dry-run] Opening DB READ-ONLY: ${args.db}`)
   const db = new Database(args.db, { readonly: true, fileMustExist: true })
 
-  let sql = "SELECT id, agent_id, content FROM memories WHERE source = 'extracted_fact' ORDER BY id"
+  let sql = "SELECT id, agent_id, content FROM memories WHERE source = 'extracted_fact'"
+  if (args.ids) sql += ` AND id IN (${args.ids.join(',')})`
+  sql += ' ORDER BY id'
   if (args.limit) sql += ` LIMIT ${args.limit}`
   const facts = db.prepare(sql).all()
   db.close()
 
-  console.log(`[dry-run] ${facts.length} facts to classify (model: ${args.model} @ ${args.ollamaUrl})`)
+  const backendLabel = args.backend === 'anthropic' ? 'anthropic' : args.ollamaUrl
+  console.log(`[dry-run] ${facts.length} facts to classify (model: ${args.model} @ ${backendLabel})`)
 
   // Resume support: reuse prior classifications from an existing output file.
   const done = new Map()
@@ -380,6 +474,9 @@ function runApply(args) {
 // ---------------------------------------------------------------------------
 
 const args = parseArgs(process.argv)
+if (!args.apply && args.backend === 'anthropic') {
+  args.apiKey = readAnthropicKey(args.keyFile)
+}
 if (args.apply) {
   runApply(args)
 } else {
