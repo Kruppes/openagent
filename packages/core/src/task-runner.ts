@@ -397,6 +397,7 @@ export class TaskRunner {
       type: sessionType,
       source: 'system',
       parentSessionId: parentSessionId ?? undefined,
+      agentId: task.agentId ?? 'main',
     })
     const sessionId = session.id
 
@@ -762,9 +763,12 @@ export class TaskRunner {
               model: assistantMsg.model,
             })
             try {
+              // Label the row with the task's owning persona so it matches its
+              // (task) session's agent_id; coalesces to 'main' for legacy tasks.
+              const agentId = this.store.getById(runningTask.taskId)?.agentId ?? 'main'
               this.db.prepare(
-                'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-              ).run(sessionId, null, 'assistant', content, metadata)
+                'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+              ).run(sessionId, null, 'assistant', content, metadata, agentId)
             } catch {
               // Ignore persistence errors — non-critical
             }
@@ -896,11 +900,13 @@ export class TaskRunner {
       })
 
       // Track token usage from detection — register a child session of the task
-      const taskSessionId = this.store.getById(runningTask.taskId)?.sessionId ?? null
+      const detectionTask = this.store.getById(runningTask.taskId)
+      const taskSessionId = detectionTask?.sessionId ?? null
       const sessionId = this.options.sessionManager.createSession({
         type: 'loop_detection',
         source: 'system',
         parentSessionId: taskSessionId ?? undefined,
+        agentId: detectionTask?.agentId ?? 'main',
       }).id
       detectionAgent.subscribe((event: AgentEvent) => {
         if (event.type === 'message_end') {

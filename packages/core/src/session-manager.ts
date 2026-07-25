@@ -24,6 +24,11 @@ export interface CreateSessionOptions {
   source: string
   userId?: string
   parentSessionId?: string
+  /**
+   * The persona that owns this session. Defaults to 'main' when omitted,
+   * matching the #93 column default, so single-agent installs are unchanged.
+   */
+  agentId?: string
 }
 
 export interface SessionInfo {
@@ -445,9 +450,12 @@ export class SessionManager {
 
       // Insert into SQLite (type is hardcoded to 'interactive'; see method
       // docstring for rationale).
+      // Interactive sessions belong to 'main' — written explicitly rather than
+      // left to the column default so the ownership is unambiguous until a
+      // persona-aware caller supplies a different id.
       this.db.prepare(
-        `INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, last_activity, session_user, message_count, summary_written)
-         VALUES (?, ?, ?, 'interactive', NULL, datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), ?, 0, 0)`
+        `INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, last_activity, session_user, message_count, summary_written, agent_id)
+         VALUES (?, ?, ?, 'interactive', NULL, datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), ?, 0, 0, 'main')`
       ).run(session.id, null, source, session.startedAt, session.lastActivity, userId)
 
       // Log session start to tool_calls for activity log visibility
@@ -485,8 +493,8 @@ export class SessionManager {
     }
 
     this.db.prepare(
-      `INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, last_activity, session_user, message_count, summary_written)
-       VALUES (?, NULL, ?, ?, ?, datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), ?, 0, 0)`
+      `INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, last_activity, session_user, message_count, summary_written, agent_id)
+       VALUES (?, NULL, ?, ?, ?, datetime(? / 1000, 'unixepoch'), datetime(? / 1000, 'unixepoch'), ?, 0, 0, ?)`
     ).run(
       id,
       options.source,
@@ -495,6 +503,7 @@ export class SessionManager {
       now,
       now,
       options.userId ?? null,
+      options.agentId ?? 'main',
     )
 
     return session

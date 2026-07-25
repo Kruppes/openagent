@@ -117,6 +117,36 @@ describe('SessionManager', () => {
     })
   })
 
+  describe('agent labelling (RC3)', () => {
+    function agentIdOf(db: Database, sessionId: string): string {
+      return (db.prepare('SELECT agent_id FROM sessions WHERE id = ?').get(sessionId) as { agent_id: string }).agent_id
+    }
+
+    it('createSession persists an explicit agentId', async () => {
+      const manager = new SessionManager({ db, memoryDir })
+      await manager.init()
+      const session = manager.createSession({ type: 'task', source: 'system', agentId: 'bob' })
+
+      expect(agentIdOf(db, session.id)).toBe('bob')
+    })
+
+    it('createSession defaults to main when agentId is omitted', async () => {
+      const manager = new SessionManager({ db, memoryDir })
+      await manager.init()
+      const session = manager.createSession({ type: 'task', source: 'system' })
+
+      expect(agentIdOf(db, session.id)).toBe('main')
+    })
+
+    it('interactive sessions are labelled main', async () => {
+      const manager = new SessionManager({ db, memoryDir })
+      await manager.init()
+      const session = manager.getOrCreateSession('user1', 'web')
+
+      expect(agentIdOf(db, session.id)).toBe('main')
+    })
+  })
+
   describe('message recording', () => {
     it('increments message count', async () => {
       const manager = new SessionManager({ db, memoryDir })
