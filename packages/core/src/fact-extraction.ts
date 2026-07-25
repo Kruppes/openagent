@@ -27,9 +27,19 @@ Rules:
 - Write facts in the same language as the conversation
 - If no facts worth remembering are found, respond with: NO_FACTS
 
+Scope marker (rare exception):
+- By default every fact belongs to the current persona. Do NOT add any marker.
+- Only in the exceptional case that a fact is clearly actionable for SEVERAL
+  personas at once (e.g. cross-cutting project facts like where a shared
+  project's pricing lives in the code), prefix it with "[shared] ".
+- Persona-specific material is NEVER shared: assignments given to one persona,
+  a persona's opinions or assessments, and domain judgments stay unmarked.
+- When in doubt, do NOT mark the fact as shared.
+
 Example output:
 - User prefers dark mode in all applications
 - The project uses PostgreSQL on port 5433 (non-standard)
+- [shared] The Halfway pricing model is implemented in packages/pricing/tiers.ts
 - Deployment is done via Docker Compose with 3 services`
 
 function normalizeWhitespace(text: string): string {
@@ -95,10 +105,33 @@ interface CandidateRow {
   content: string
 }
 
+export type FactScope = 'persona' | 'shared'
+
+export interface ParsedFact {
+  content: string
+  scope: FactScope
+}
+
+const SHARED_MARKER_PATTERN = /^\[shared\]\s*/i
+
+function parseScopedFact(candidate: string): ParsedFact | null {
+  if (!candidate) return null
+
+  if (SHARED_MARKER_PATTERN.test(candidate)) {
+    const content = normalizeWhitespace(candidate.replace(SHARED_MARKER_PATTERN, ''))
+    if (!content) return null
+    return { content, scope: 'shared' }
+  }
+
+  return { content: candidate, scope: 'persona' }
+}
+
 /**
- * Parse an LLM fact extraction response into a normalized fact array.
+ * Parse an LLM fact extraction response into facts with an explicit scope.
+ * A leading "[shared]" marker (set by the extraction LLM) flags a fact as
+ * cross-persona; everything else stays scoped to the session's persona.
  */
-export function parseFactLines(response: string): string[] {
+export function parseFacts(response: string): ParsedFact[] {
   const trimmed = response.trim()
   if (!trimmed || trimmed.toUpperCase() === 'NO_FACTS') {
     return []
@@ -112,7 +145,8 @@ export function parseFactLines(response: string): string[] {
   const structuredFacts = lines
     .filter(line => /^([-*•]\s+|\d+[.)]\s+)/.test(line))
     .map(normalizeFactCandidate)
-    .filter(Boolean)
+    .map(parseScopedFact)
+    .filter((fact): fact is ParsedFact => fact !== null)
 
   if (structuredFacts.length > 0) {
     return structuredFacts.slice(0, MAX_FACTS)
@@ -120,8 +154,17 @@ export function parseFactLines(response: string): string[] {
 
   return lines
     .map(normalizeFactCandidate)
-    .filter(Boolean)
+    .map(parseScopedFact)
+    .filter((fact): fact is ParsedFact => fact !== null)
     .slice(0, MAX_FACTS)
+}
+
+/**
+ * Parse an LLM fact extraction response into a normalized fact array.
+ * Scope markers are stripped; use parseFacts() when the scope is needed.
+ */
+export function parseFactLines(response: string): string[] {
+  return parseFacts(response).map(fact => fact.content)
 }
 
 /**
@@ -139,9 +182,11 @@ export function isDuplicateFact(db: Database, userId: number | null, newFact: st
 
   const ftsQuery = buildFtsOrQuery(queryTerms)
   const userClause = userId === null ? 'm.user_id IS NULL' : 'm.user_id = ?'
-  // Deduplication only happens within the same agent_id bucket: the same
-  // fact may legitimately exist for two personas, and cross-bucket dedupe
-  // would silently drop a persona's fact because main already knows it.
+  // Deduplication happens within the persona's own bucket PLUS the 'shared'
+  // bucket: the same fact may legitimately exist for two personas (no
+  // cross-persona dedupe — that would silently drop a persona's fact because
+  // main already knows it), but a fact that already exists as 'shared' is
+  // visible to every persona via retrieval and must not be stored again.
   const params = userId === null
     ? [ftsQuery, agentId, DUPLICATE_SEARCH_LIMIT]
     : [ftsQuery, userId, agentId, DUPLICATE_SEARCH_LIMIT]
@@ -150,7 +195,7 @@ export function isDuplicateFact(db: Database, userId: number | null, newFact: st
     SELECT m.content
     FROM memories_fts
     INNER JOIN memories m ON m.id = memories_fts.rowid
-    WHERE memories_fts MATCH ? AND ${userClause} AND m.agent_id = ?
+    WHERE memories_fts MATCH ? AND ${userClause} AND m.agent_id IN (?, 'shared')
     ORDER BY bm25(memories_fts) ASC, m.timestamp DESC, m.id DESC
     LIMIT ?
   `).all(...params) as CandidateRow[]
@@ -215,17 +260,23 @@ export async function extractAndStoreFacts(
     .join('')
     .trim()
 
-  const facts = parseFactLines(responseText)
+  const facts = parseFacts(responseText)
   let stored = 0
   let duplicates = 0
 
   for (const fact of facts) {
-    if (isDuplicateFact(db, userId, fact, agentId)) {
+    // isDuplicateFact checks the persona bucket AND 'shared', so a fact the
+    // LLM now flags as shared is not stored again if a persona already has it.
+    if (isDuplicateFact(db, userId, fact.content, agentId)) {
       duplicates += 1
       continue
     }
 
-    storeFact(db, userId, sessionId, fact, agentId)
+    // The extraction LLM decides the scope: '[shared]'-marked facts land in
+    // the cross-persona 'shared' bucket (visible to every persona via the
+    // agent_id IN (?, 'shared') retrieval filter); everything else stays
+    // scoped to the session's persona.
+    storeFact(db, userId, sessionId, fact.content, fact.scope === 'shared' ? 'shared' : agentId)
     stored += 1
   }
 

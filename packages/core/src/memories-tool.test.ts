@@ -93,6 +93,77 @@ describe('search_memories tool', () => {
     expect(mainText).toContain('main postgres fact')
   })
 
+  describe('cross-persona read scope (RC4: agent parameter)', () => {
+    const personas = () => ['bob', 'gekko', 'warren']
+
+    beforeEach(() => {
+      createMemory(db, 1, 'session-a', 'warren postgres fact', 'extracted_fact', 'warren')
+      createMemory(db, 1, 'session-b', 'bob postgres fact', 'extracted_fact', 'bob')
+      createMemory(db, 1, 'session-c', 'shared postgres fact', 'extracted_fact', 'shared')
+      createMemory(db, 1, 'session-d', 'main postgres fact', 'extracted_fact', 'main')
+    })
+
+    it('default (no agent): non-main persona still sees only its own + shared', async () => {
+      const bobTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'bob', listAgentIds: personas })
+      const text = getTextContent(await bobTool.execute('tc', { query: 'postgres' }))
+      expect(text).toContain('bob postgres fact')
+      expect(text).toContain('shared postgres fact')
+      expect(text).not.toContain('warren postgres fact')
+      expect(text).not.toContain('main postgres fact')
+    })
+
+    it('default (no agent): main stays unscoped', async () => {
+      const mainTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'main', listAgentIds: personas })
+      const text = getTextContent(await mainTool.execute('tc', { query: 'postgres' }))
+      expect(text).toContain('bob postgres fact')
+      expect(text).toContain('warren postgres fact')
+      expect(text).toContain('main postgres fact')
+    })
+
+    it('agent:"main" from a non-main persona returns main rows (+ shared)', async () => {
+      const bobTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'bob', listAgentIds: personas })
+      const text = getTextContent(await bobTool.execute('tc', { query: 'postgres', agent: 'main' }))
+      expect(text).toContain('main postgres fact')
+      expect(text).toContain('shared postgres fact')
+      expect(text).not.toContain('bob postgres fact')
+      expect(text).not.toContain('warren postgres fact')
+    })
+
+    it('agent:"all" returns rows across every persona bucket', async () => {
+      const bobTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'bob', listAgentIds: personas })
+      const text = getTextContent(await bobTool.execute('tc', { query: 'postgres', agent: 'all', limit: 50 }))
+      expect(text).toContain('bob postgres fact')
+      expect(text).toContain('warren postgres fact')
+      expect(text).toContain('main postgres fact')
+      expect(text).toContain('shared postgres fact')
+    })
+
+    it('unknown agent id returns an error, not an empty list', async () => {
+      const bobTool = createSearchMemoriesTool({ db, getCurrentAgentId: () => 'bob', listAgentIds: personas })
+      const result = await bobTool.execute('tc', { query: 'postgres', agent: 'schluchti' })
+      const text = getTextContent(result)
+      const details = getDetails(result)
+      expect(details.error).toBe(true)
+      expect(text).toContain('unknown agent "schluchti"')
+      expect(text).toContain('all')
+      // must NOT be the empty-result message
+      expect(text).not.toContain('No memories found')
+    })
+
+    it('still applies user-id scoping when combined with a cross-agent value', async () => {
+      createMemory(db, 2, 'session-e', 'main postgres user-two fact', 'extracted_fact', 'main')
+      const bobTool = createSearchMemoriesTool({
+        db,
+        getCurrentAgentId: () => 'bob',
+        getCurrentUserId: () => 1,
+        listAgentIds: personas,
+      })
+      const text = getTextContent(await bobTool.execute('tc', { query: 'postgres', agent: 'all', limit: 50 }))
+      expect(text).toContain('main postgres fact')
+      expect(text).not.toContain('user-two fact')
+    })
+  })
+
   it('handles empty results gracefully', async () => {
     const tool = createSearchMemoriesTool({ db, getCurrentUserId: () => 1 })
     const result = await tool.execute('tool-call-3', { query: 'no-match-xyz' })

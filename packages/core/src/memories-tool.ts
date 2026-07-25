@@ -4,6 +4,7 @@ import type { Database } from './database.js'
 import { searchMemories, getMemoryById } from './memories-store.js'
 import type { MemoryFact } from './memories-store.js'
 import { searchMemoriesByEmbedding } from './memory-embeddings.js'
+import { resolveAgentReadScope } from './agent-read-scope.js'
 
 /**
  * Hybrid retrieval: lexical FTS5 hits + semantic embedding hits merged via
@@ -65,6 +66,12 @@ export interface SearchMemoriesToolOptions {
    * 'main' (and legacy callers without this option) see everything.
    */
   getCurrentAgentId?: () => string | undefined
+  /**
+   * Injectable list of known persona ids (excludes 'main'), used to validate
+   * the optional `agent` cross-persona read parameter. Defaults to the
+   * on-disk personas. Injectable for tests.
+   */
+  listAgentIds?: () => string[]
 }
 
 export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): AgentTool {
@@ -78,7 +85,11 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
       'Plain queries match facts containing ANY of the keywords, ranked by relevance — ' +
       'so provide several related keywords (e.g. docker deployment server) rather than a full sentence. ' +
       'For strict matching, FTS5 syntax is supported: prefix queries (e.g. config*), ' +
-      'quoted phrases (e.g. "postgres port"), and boolean operators (e.g. docker AND compose).',
+      'quoted phrases (e.g. "postgres port"), and boolean operators (e.g. docker AND compose). ' +
+      'By default you search your own persona\'s memory (plus shared facts). To read another ' +
+      'persona\'s memory on demand — e.g. the user asks what was discussed with another persona, ' +
+      'or you need to continue work started in another persona — pass the `agent` parameter with ' +
+      'that persona\'s id (e.g. "main", "bob"), or "all" to search across every persona.',
     parameters: Type.Object({
       query: Type.String({
         description: 'Search query for finding relevant facts from memory.',
@@ -88,9 +99,17 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
           description: 'Maximum number of facts to return (default: 10, max: 50).',
         }),
       ),
+      agent: Type.Optional(
+        Type.String({
+          description:
+            'Cross-persona read scope. Omit to search your own persona\'s memory (plus shared facts) — ' +
+            'the default. Pass a persona id (e.g. "main", "bob") to search exactly that persona\'s memory ' +
+            '(plus shared facts), or "all" to search across every persona. An unknown id returns an error.',
+        }),
+      ),
     }),
     execute: async (_toolCallId, params) => {
-      const { query, limit: rawLimit } = params as { query?: string; limit?: number }
+      const { query, limit: rawLimit, agent: rawAgent } = params as { query?: string; limit?: number; agent?: string }
 
       if (typeof query !== 'string' || query.trim().length === 0) {
         return {
@@ -109,11 +128,22 @@ export function createSearchMemoriesTool(options: SearchMemoriesToolOptions): Ag
       try {
         const limit = Math.min(Math.max(Math.floor(rawLimit ?? 10), 1), 50)
         const userId = options.getCurrentUserId?.()
-        // Persona scoping: non-'main' personas only search their own facts
-        // (+ 'shared'). Main stays unscoped — it is the orchestrator and
-        // legacy facts are labeled 'main'.
-        const callerAgentId = options.getCurrentAgentId?.()
-        const agentScope = callerAgentId && callerAgentId !== 'main' ? callerAgentId : undefined
+        // Persona scoping: by default non-'main' personas only search their own
+        // facts (+ 'shared'); 'main' stays unscoped. An explicit `agent` param
+        // opts into cross-persona reads ('all' → unscoped; a concrete id → that
+        // bucket + 'shared'). Unknown ids error out instead of returning [].
+        const scope = resolveAgentReadScope({
+          requested: rawAgent,
+          callerAgentId: options.getCurrentAgentId?.(),
+          listAgentIds: options.listAgentIds,
+        })
+        if (!scope.ok) {
+          return {
+            content: [{ type: 'text' as const, text: scope.error }],
+            details: { error: true },
+          }
+        }
+        const agentScope = scope.agentId
         const { facts, semantic } = await searchMemoriesHybrid(options.db, query, {
           userId,
           limit,

@@ -2,6 +2,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { Type } from '@earendil-works/pi-ai'
 import type { Database } from './database.js'
 import { normalizeFtsQuery } from './fts-utils.js'
+import { resolveAgentReadScope } from './agent-read-scope.js'
 
 export interface ChatHistoryToolsOptions {
   db: Database
@@ -15,6 +16,12 @@ export interface ChatHistoryToolsOptions {
    * heartbeat/consolidation.
    */
   getCurrentAgentId?: () => string | undefined
+  /**
+   * Injectable list of known persona ids (excludes 'main'), used to validate
+   * the optional `agent` cross-persona read parameter. Defaults to the
+   * on-disk personas. Injectable for tests.
+   */
+  listAgentIds?: () => string[]
 }
 
 interface ChatMessageRow {
@@ -46,7 +53,11 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
       'Read chat messages from the database. Supports filtering by datetime range, source (web/telegram/task), ' +
       'role (user/assistant/tool/system), and session. Returns messages in chronological order. ' +
       'Use this to review past conversations, extract facts for memory, or answer questions about chat history. ' +
-      'Optionally search message content and related tool call inputs/outputs with the query parameter.',
+      'Optionally search message content and related tool call inputs/outputs with the query parameter. ' +
+      'By default you only read your own persona\'s messages. To read another persona\'s history on demand — ' +
+      'e.g. the user asks what was discussed with another persona, or you need to continue work started in ' +
+      'another persona (its in-progress session is already readable here) — pass the `agent` parameter with ' +
+      'that persona\'s id (e.g. "main", "bob"), or "all" to read across every persona.',
     parameters: Type.Object({
       start: Type.Optional(
         Type.String({
@@ -90,6 +101,14 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
           description: 'Number of messages to skip for pagination (default: 0).',
         }),
       ),
+      agent: Type.Optional(
+        Type.String({
+          description:
+            'Cross-persona read scope. Omit to read only your own persona\'s messages — the default. ' +
+            'Pass a persona id (e.g. "main", "bob") to read exactly that persona\'s history, or "all" to ' +
+            'read across every persona. An unknown id returns an error.',
+        }),
+      ),
       query: Type.Optional(
         Type.String({
           description:
@@ -110,6 +129,7 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
         limit: rawLimit,
         offset: rawOffset,
         query,
+        agent: rawAgent,
       } = params as {
         start?: string
         end?: string
@@ -119,6 +139,7 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
         limit?: number
         offset?: number
         query?: string
+        agent?: string
       }
 
       try {
@@ -129,11 +150,35 @@ export function createReadChatHistoryTool(options: ChatHistoryToolsOptions): Age
         const baseConditions: string[] = []
         const baseParams: unknown[] = []
 
-        // Persona scoping (non-negotiable, applied before all user filters)
-        const callerAgentId = options.getCurrentAgentId?.()
-        if (callerAgentId && callerAgentId !== 'main') {
-          baseConditions.push('cm.agent_id = ?')
-          baseParams.push(callerAgentId)
+        // Persona scoping (applied before all user filters). By default a
+        // non-'main' persona is locked to its own agent_id; 'main' stays
+        // unscoped. An explicit `agent` param opts into cross-persona reads:
+        // 'all' → no filter; a concrete id → that bucket (+ 'shared', for
+        // consistency with memory scoping). Unknown ids error out instead of
+        // silently returning an empty set.
+        const scope = resolveAgentReadScope({
+          requested: rawAgent,
+          callerAgentId: options.getCurrentAgentId?.(),
+          listAgentIds: options.listAgentIds,
+        })
+        if (!scope.ok) {
+          return {
+            content: [{ type: 'text' as const, text: scope.error }],
+            details: { error: true },
+          }
+        }
+        if (scope.agentId !== undefined) {
+          if (scope.explicit) {
+            // Explicit cross-persona request: include the 'shared' bucket for
+            // consistency with memory scoping.
+            baseConditions.push("cm.agent_id IN (?, 'shared')")
+            baseParams.push(scope.agentId)
+          } else {
+            // Default path: exact-match the caller's own bucket (strict no-op
+            // vs. the pre-RC4 behaviour).
+            baseConditions.push('cm.agent_id = ?')
+            baseParams.push(scope.agentId)
+          }
         }
         const toolCallQueryCondition =
           'cm.id IN (' +

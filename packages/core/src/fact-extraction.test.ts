@@ -15,8 +15,9 @@ import {
   extractAndStoreFacts,
   isDuplicateFact,
   parseFactLines,
+  parseFacts,
 } from './fact-extraction.js'
-import { createMemory, listMemories } from './memories-store.js'
+import { createMemory, listMemories, searchMemories } from './memories-store.js'
 
 const mockCompleteSimple = vi.mocked(completeSimple)
 
@@ -90,6 +91,27 @@ describe('fact-extraction', () => {
     expect(parseFactLines('\n\n')).toEqual([])
   })
 
+  it('parseFacts detects the [shared] marker and defaults to persona scope', () => {
+    expect(parseFacts([
+      '- [shared] The Halfway pricing model lives in packages/pricing/tiers.ts',
+      '- User prefers dark mode',
+      '- [SHARED] Looplab routing is configured in router.yaml',
+    ].join('\n'))).toEqual([
+      { content: 'The Halfway pricing model lives in packages/pricing/tiers.ts', scope: 'shared' },
+      { content: 'User prefers dark mode', scope: 'persona' },
+      { content: 'Looplab routing is configured in router.yaml', scope: 'shared' },
+    ])
+
+    expect(parseFacts('NO_FACTS')).toEqual([])
+  })
+
+  it('parseFactLines strips the [shared] marker from fact content', () => {
+    expect(parseFactLines('- [shared] Halfway pricing lives in tiers.ts\n- Plain persona fact')).toEqual([
+      'Halfway pricing lives in tiers.ts',
+      'Plain persona fact',
+    ])
+  })
+
   it('isDuplicateFact returns true for highly overlapping facts', () => {
     createMemory(db, 1, 'session-a', 'The project uses PostgreSQL on port 5433', 'extracted_fact')
 
@@ -100,6 +122,79 @@ describe('fact-extraction', () => {
     createMemory(db, 2, 'session-b', 'The project uses PostgreSQL on port 5433', 'extracted_fact')
 
     expect(isDuplicateFact(db, 1, 'Project uses PostgreSQL at port 5433')).toBe(false)
+  })
+
+  it('isDuplicateFact checks across the bucket boundary (persona + shared)', () => {
+    createMemory(db, 1, 'session-a', 'The Halfway pricing model uses three tiers', 'extracted_fact', 'shared')
+    createMemory(db, 1, 'session-a', 'Bob deployed the scanner on the NUC', 'extracted_fact', 'bob')
+
+    // A fact already in 'shared' is a duplicate for any persona bucket
+    expect(isDuplicateFact(db, 1, 'Halfway pricing model uses three tiers', 'bob')).toBe(true)
+    expect(isDuplicateFact(db, 1, 'Halfway pricing model uses three tiers', 'gekko')).toBe(true)
+    // A fact in bob's bucket is a duplicate for bob …
+    expect(isDuplicateFact(db, 1, 'Bob deployed the scanner on the NUC', 'bob')).toBe(true)
+    // … but NOT for another persona (no cross-persona dedupe)
+    expect(isDuplicateFact(db, 1, 'Bob deployed the scanner on the NUC', 'gekko')).toBe(false)
+  })
+
+  it('extractAndStoreFacts stores [shared]-marked facts under agent_id=shared', async () => {
+    mockCompleteSimple.mockResolvedValueOnce(makeResponse([
+      '- [shared] The Halfway pricing model is implemented in tiers.ts',
+      '- Bob prefers vitest for unit tests',
+    ].join('\n')))
+
+    const result = await extractAndStoreFacts(
+      db,
+      1,
+      'session-bob',
+      'User: transcript',
+      makeModel(),
+      'test-key',
+      undefined,
+      'bob',
+    )
+
+    expect(result).toEqual({ extracted: 2, stored: 2, duplicates: 0 })
+
+    const facts = listMemories(db, { userId: 1, limit: 10, offset: 0 }).facts
+    const byContent = new Map(facts.map(fact => [fact.content, fact.agentId]))
+    expect(byContent.get('The Halfway pricing model is implemented in tiers.ts')).toBe('shared')
+    expect(byContent.get('Bob prefers vitest for unit tests')).toBe('bob')
+  })
+
+  it('extractAndStoreFacts does not duplicate a shared fact into a persona bucket', async () => {
+    createMemory(db, 1, 'session-old', 'The Halfway pricing model is implemented in tiers.ts', 'extracted_fact', 'shared')
+    mockCompleteSimple.mockResolvedValueOnce(makeResponse(
+      '- The Halfway pricing model is implemented in tiers.ts',
+    ))
+
+    const result = await extractAndStoreFacts(
+      db,
+      1,
+      'session-gekko',
+      'User: transcript',
+      makeModel(),
+      'test-key',
+      undefined,
+      'gekko',
+    )
+
+    expect(result).toEqual({ extracted: 1, stored: 0, duplicates: 1 })
+  })
+
+  it('shared facts are visible to personas and to main via retrieval', () => {
+    createMemory(db, 1, 'session-a', 'The Halfway pricing model uses three tiers', 'extracted_fact', 'shared')
+    createMemory(db, 1, 'session-a', 'Bob deployed the scanner on the NUC', 'extracted_fact', 'bob')
+
+    const bobHits = searchMemories(db, 'Halfway pricing', { userId: 1, agentId: 'bob' }).map(f => f.content)
+    expect(bobHits).toContain('The Halfway pricing model uses three tiers')
+
+    const mainHits = searchMemories(db, 'Halfway pricing', { userId: 1, agentId: 'main' }).map(f => f.content)
+    expect(mainHits).toContain('The Halfway pricing model uses three tiers')
+
+    // Persona-scoped fact stays out of other personas' retrieval
+    const gekkoHits = searchMemories(db, 'scanner NUC', { userId: 1, agentId: 'gekko' }).map(f => f.content)
+    expect(gekkoHits).not.toContain('Bob deployed the scanner on the NUC')
   })
 
   it('extractAndStoreFacts calls the LLM, wraps the transcript, deduplicates, and stores new facts', async () => {

@@ -312,10 +312,12 @@ export type { MemoryEmbeddingSettings, EmbeddingSearchHit } from './memory-embed
 export { withTimeout } from './promise-utils.js'
 export {
   parseFactLines,
+  parseFacts,
   isDuplicateFact,
   storeFact,
   extractAndStoreFacts,
 } from './fact-extraction.js'
+export type { ParsedFact, FactScope } from './fact-extraction.js'
 export { createSearchMemoriesTool } from './memories-tool.js'
 export type { SearchMemoriesToolOptions } from './memories-tool.js'
 export { normalizeFtsQuery, normalizePlainFtsQuery } from './fts-utils.js'
