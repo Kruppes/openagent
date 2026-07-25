@@ -26,6 +26,7 @@ interface SessionRow {
   user_id: number | null
   session_user: string | null
   message_count: number
+  agent_id: string | null
 }
 
 interface FactExtractionDeps {
@@ -130,7 +131,7 @@ export function triggerFactExtractionForSessionEnd(options: TriggerFactExtractio
   }
 
   const sessionRow = db.prepare(
-    'SELECT user_id, session_user, message_count FROM sessions WHERE id = ?'
+    'SELECT user_id, session_user, message_count, agent_id FROM sessions WHERE id = ?'
   ).get(sessionId) as SessionRow | undefined
 
   if (!sessionRow || sessionRow.message_count < settings.minSessionMessages) {
@@ -144,6 +145,11 @@ export function triggerFactExtractionForSessionEnd(options: TriggerFactExtractio
     deps.console.warn(`[fact-extraction] Skipping session ${sessionId}: no numeric user ID available`)
     return false
   }
+
+  // Facts inherit the session's owning persona so they land in that agent's
+  // memory bucket. Legacy sessions predate the column default and coalesce to
+  // 'main', matching single-agent behaviour.
+  const agentId = sessionRow.agent_id ?? 'main'
 
   const conversationHistory = agentCore.getSessionManager().buildConversationHistory(sessionId)
 
@@ -167,6 +173,7 @@ export function triggerFactExtractionForSessionEnd(options: TriggerFactExtractio
         executionContext.model,
         executionContext.apiKey,
         executionContext.provider,
+        agentId,
       )
 
       deps.console.log(`[fact-extraction] Session ${sessionId}: ${result.stored} new facts`)

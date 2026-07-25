@@ -102,6 +102,17 @@ describe('fact-extraction', () => {
     expect(isDuplicateFact(db, 1, 'Project uses PostgreSQL at port 5433')).toBe(false)
   })
 
+  it('isDuplicateFact scopes deduplication within an agent bucket (RC1)', () => {
+    // A fact owned by persona 'bob' must not suppress the same fact for
+    // persona 'main' (or any other agent) — their memories are independent.
+    createMemory(db, 1, 'session-a', 'The project uses PostgreSQL on port 5433', 'extracted_fact', 'bob')
+
+    expect(isDuplicateFact(db, 1, 'Project uses PostgreSQL at port 5433', 'bob')).toBe(true)
+    expect(isDuplicateFact(db, 1, 'Project uses PostgreSQL at port 5433', 'main')).toBe(false)
+    // Default agent id is 'main', so an unscoped call sees only main's bucket.
+    expect(isDuplicateFact(db, 1, 'Project uses PostgreSQL at port 5433')).toBe(false)
+  })
+
   it('extractAndStoreFacts calls the LLM, wraps the transcript, deduplicates, and stores new facts', async () => {
     createMemory(db, 1, 'session-old', 'Deployment is done via Docker Compose with 3 services', 'extracted_fact')
     mockCompleteSimple.mockResolvedValueOnce(makeResponse([
@@ -134,6 +145,71 @@ describe('fact-extraction', () => {
 
     expect(storedFacts).toContain('The project uses PostgreSQL on port 5433')
     expect(storedFacts).toContain('User prefers dark mode in all applications')
+  })
+
+  it('stores extracted facts under the session\'s agent id (RC1)', async () => {
+    mockCompleteSimple.mockResolvedValueOnce(makeResponse(
+      '- Bob prefers concise answers',
+    ))
+
+    const result = await extractAndStoreFacts(
+      db,
+      1,
+      'session-bob',
+      'User: keep it short.\nAssistant: Got it.',
+      makeModel(),
+      'test-key',
+      undefined,
+      'bob',
+    )
+
+    expect(result).toEqual({ extracted: 1, stored: 1, duplicates: 0 })
+
+    const row = db.prepare(
+      "SELECT agent_id FROM memories WHERE content = 'Bob prefers concise answers'",
+    ).get() as { agent_id: string }
+    expect(row.agent_id).toBe('bob')
+  })
+
+  it('lets the same fact coexist across agents but dedupes within one (RC1)', async () => {
+    // main already holds the fact.
+    createMemory(db, 1, 'session-main', 'User prefers dark mode', 'extracted_fact', 'main')
+
+    mockCompleteSimple.mockResolvedValueOnce(makeResponse('- User prefers dark mode'))
+
+    // bob extracts the same fact — it must be stored (different bucket).
+    const bobResult = await extractAndStoreFacts(
+      db, 1, 'session-bob', 'User: dark mode please.\nAssistant: ok', makeModel(), 'test-key', undefined, 'bob',
+    )
+    expect(bobResult).toEqual({ extracted: 1, stored: 1, duplicates: 0 })
+
+    // A second bob extraction of the same fact is a duplicate within bob.
+    mockCompleteSimple.mockResolvedValueOnce(makeResponse('- User prefers dark mode'))
+    const bobAgain = await extractAndStoreFacts(
+      db, 1, 'session-bob2', 'User: still dark mode.\nAssistant: ok', makeModel(), 'test-key', undefined, 'bob',
+    )
+    expect(bobAgain).toEqual({ extracted: 1, stored: 0, duplicates: 1 })
+
+    const counts = db.prepare(
+      "SELECT agent_id, COUNT(*) AS n FROM memories WHERE content = 'User prefers dark mode' GROUP BY agent_id ORDER BY agent_id",
+    ).all() as { agent_id: string; n: number }[]
+    expect(counts).toEqual([
+      { agent_id: 'bob', n: 1 },
+      { agent_id: 'main', n: 1 },
+    ])
+  })
+
+  it('defaults extracted facts to the main agent when no agent id is given (RC1)', async () => {
+    mockCompleteSimple.mockResolvedValueOnce(makeResponse('- User lives in Berlin'))
+
+    await extractAndStoreFacts(
+      db, 1, 'session-default', 'User: I live in Berlin.\nAssistant: noted', makeModel(), 'test-key',
+    )
+
+    const row = db.prepare(
+      "SELECT agent_id FROM memories WHERE content = 'User lives in Berlin'",
+    ).get() as { agent_id: string }
+    expect(row.agent_id).toBe('main')
   })
 
   it('returns zero counts when the LLM says NO_FACTS', async () => {

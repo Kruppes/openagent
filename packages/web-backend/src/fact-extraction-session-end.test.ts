@@ -7,11 +7,11 @@ import {
   triggerFactExtractionForSessionEnd,
 } from './fact-extraction-session-end.js'
 
-function insertSession(db: Database, input: { id: string; userId: number; messageCount: number }): void {
+function insertSession(db: Database, input: { id: string; userId: number; messageCount: number; agentId?: string }): void {
   db.prepare(
-    `INSERT INTO sessions (id, user_id, source, started_at, ended_at, message_count, summary_written)
-     VALUES (?, ?, 'web', datetime('now', '-5 minutes'), datetime('now'), ?, 1)`
-  ).run(input.id, input.userId, input.messageCount)
+    `INSERT INTO sessions (id, user_id, source, started_at, ended_at, message_count, summary_written, agent_id)
+     VALUES (?, ?, 'web', datetime('now', '-5 minutes'), datetime('now'), ?, 1, ?)`
+  ).run(input.id, input.userId, input.messageCount, input.agentId ?? 'main')
 }
 
 function makeProvider(id: string, name: string): ProviderConfig {
@@ -203,12 +203,54 @@ describe('fact-extraction session-end trigger', () => {
         expect.objectContaining({ id: 'gpt-4o-mini' }),
         'key',
         expect.objectContaining({ providerType: 'openai' }),
+        'main',
       )
       expect(error).toHaveBeenCalled()
     })
 
     expect(log).not.toHaveBeenCalled()
     expect(String(error.mock.calls[0][0])).toContain('[fact-extraction] Failed for session session-2:')
+
+    db.close()
+  })
+
+  it('threads the session\'s owning agent id into extraction (RC1)', async () => {
+    const db = initDatabase(':memory:')
+    db.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (1, ?, ?, ?)').run('alice', 'hash', 'user')
+    insertSession(db, { id: 'session-bob', userId: 1, messageCount: 4, agentId: 'bob' })
+
+    const extractAndStoreFacts = vi.fn().mockResolvedValue({ extracted: 0, stored: 0, duplicates: 0 })
+    const buildConversationHistory = vi.fn(() => 'User: remember that I use dark mode')
+
+    triggerFactExtractionForSessionEnd({
+      db,
+      agentCore: {
+        getSessionManager: () => ({ buildConversationHistory }),
+      },
+      userId: '1',
+      sessionId: 'session-bob',
+      deps: {
+        loadSettings: () => ({ factExtraction: { enabled: true, providerId: '', minSessionMessages: 3 } }),
+        getActiveProvider: () => makeProvider('active', 'Active'),
+        buildModel: vi.fn(() => makeModel('gpt-4o-mini')),
+        getApiKeyForProvider: vi.fn().mockResolvedValue('key'),
+        extractAndStoreFacts,
+        console: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      },
+    })
+
+    await vi.waitFor(() => {
+      expect(extractAndStoreFacts).toHaveBeenCalledWith(
+        db,
+        1,
+        'session-bob',
+        'User: remember that I use dark mode',
+        expect.objectContaining({ id: 'gpt-4o-mini' }),
+        'key',
+        expect.objectContaining({ providerType: 'openai' }),
+        'bob',
+      )
+    })
 
     db.close()
   })

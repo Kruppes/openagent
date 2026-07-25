@@ -39,6 +39,16 @@ describe('memories-store', () => {
     expect(memory?.timestamp).toMatch(/^\d{4}-\d{2}-\d{2} /)
   })
 
+  it('defaults agent_id to main and honours an explicit agent id', () => {
+    const mainId = createMemory(db, 1, 'session-a', 'Runs on the default agent', 'session')
+    const bobId = createMemory(db, 1, 'session-b', 'Runs on bob', 'session', 'bob')
+
+    const mainRow = db.prepare('SELECT agent_id FROM memories WHERE id = ?').get(mainId) as { agent_id: string }
+    const bobRow = db.prepare('SELECT agent_id FROM memories WHERE id = ?').get(bobId) as { agent_id: string }
+    expect(mainRow.agent_id).toBe('main')
+    expect(bobRow.agent_id).toBe('bob')
+  })
+
   it('searches memories with FTS5 and orders by BM25 relevance', () => {
     createMemory(db, 1, 'session-a', 'postgres quickstart guide', 'session')
     createMemory(db, 1, 'session-b', 'postgres postgres port is 5432', 'session')

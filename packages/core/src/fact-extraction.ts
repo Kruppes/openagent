@@ -127,8 +127,18 @@ export function parseFactLines(response: string): string[] {
 /**
  * Check whether a fact already exists for the same user.
  * Uses FTS5 candidate search followed by normalized word-overlap matching.
+ *
+ * Duplicate detection is scoped to a single `agentId` bucket: an identical
+ * fact held by one persona must not suppress the same fact for another, since
+ * their memories are otherwise independent. With multi-persona off there is
+ * only the 'main' bucket, so behaviour is unchanged.
  */
-export function isDuplicateFact(db: Database, userId: number | null, newFact: string): boolean {
+export function isDuplicateFact(
+  db: Database,
+  userId: number | null,
+  newFact: string,
+  agentId: string = 'main',
+): boolean {
   const normalizedFact = normalizeWhitespace(newFact)
   if (!normalizedFact) return false
 
@@ -140,14 +150,14 @@ export function isDuplicateFact(db: Database, userId: number | null, newFact: st
   const ftsQuery = buildFtsOrQuery(queryTerms)
   const userClause = userId === null ? 'm.user_id IS NULL' : 'm.user_id = ?'
   const params = userId === null
-    ? [ftsQuery, DUPLICATE_SEARCH_LIMIT]
-    : [ftsQuery, userId, DUPLICATE_SEARCH_LIMIT]
+    ? [ftsQuery, agentId, DUPLICATE_SEARCH_LIMIT]
+    : [ftsQuery, userId, agentId, DUPLICATE_SEARCH_LIMIT]
 
   const candidates = db.prepare(`
     SELECT m.content
     FROM memories_fts
     INNER JOIN memories m ON m.id = memories_fts.rowid
-    WHERE memories_fts MATCH ? AND ${userClause}
+    WHERE memories_fts MATCH ? AND ${userClause} AND m.agent_id = ?
     ORDER BY bm25(memories_fts) ASC, m.timestamp DESC, m.id DESC
     LIMIT ?
   `).all(...params) as CandidateRow[]
@@ -164,8 +174,14 @@ export function isDuplicateFact(db: Database, userId: number | null, newFact: st
 /**
  * Store a single extracted fact in the memories table.
  */
-export function storeFact(db: Database, userId: number | null, sessionId: string, content: string): number {
-  return createMemory(db, userId, sessionId, normalizeWhitespace(content), 'extracted_fact')
+export function storeFact(
+  db: Database,
+  userId: number | null,
+  sessionId: string,
+  content: string,
+  agentId: string = 'main',
+): number {
+  return createMemory(db, userId, sessionId, normalizeWhitespace(content), 'extracted_fact', agentId)
 }
 
 /**
@@ -184,6 +200,11 @@ export async function extractAndStoreFacts(
    * require temperature=1). When omitted, temperature defaults to 0.
    */
   provider?: Pick<ProviderConfig, 'providerType' | 'models'>,
+  /**
+   * The persona whose session produced this transcript. Facts are stored and
+   * deduplicated within this agent's bucket. Defaults to 'main'.
+   */
+  agentId: string = 'main',
 ): Promise<{ extracted: number; stored: number; duplicates: number }> {
   const userMessage = `Analyze the following session transcript and extract atomic facts worth remembering:\n\n<transcript>\n${conversationHistory}\n</transcript>`
 
@@ -211,12 +232,12 @@ export async function extractAndStoreFacts(
   let duplicates = 0
 
   for (const fact of facts) {
-    if (isDuplicateFact(db, userId, fact)) {
+    if (isDuplicateFact(db, userId, fact, agentId)) {
       duplicates += 1
       continue
     }
 
-    storeFact(db, userId, sessionId, fact)
+    storeFact(db, userId, sessionId, fact, agentId)
     stored += 1
   }
 
