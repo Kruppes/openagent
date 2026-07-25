@@ -428,7 +428,7 @@ function writeProposal(args, facts, done, { partial }) {
 // Apply mode: write reviewed proposals to the DB (with backup)
 // ---------------------------------------------------------------------------
 
-function runApply(args) {
+async function runApply(args) {
   if (!args.from) {
     console.error('--apply requires --from <proposal.json> (a reviewed dry-run output)')
     process.exit(1)
@@ -446,12 +446,16 @@ function runApply(args) {
   console.log(`[apply] ${changes.length} changes to apply from ${args.from}`)
 
   // Backup first — always.
+  // NOTE: the DB runs in WAL mode, so a plain fs.copyFileSync would miss
+  // everything still sitting in the -wal file and yield an inconsistent
+  // snapshot. sqlite's own backup API checkpoints into a coherent copy.
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const backupPath = `${args.db}.bak-reclassify-${stamp}`
-  fs.copyFileSync(args.db, backupPath)
-  console.log(`[apply] DB backup created: ${backupPath}`)
 
   const db = new Database(args.db)
+  await db.backup(backupPath)
+  console.log(`[apply] DB backup created (sqlite backup API, WAL-safe): ${backupPath}`)
+
   const update = db.prepare("UPDATE memories SET agent_id = ? WHERE id = ? AND source = 'extracted_fact' AND agent_id = ?")
   let applied = 0
   let skipped = 0
@@ -478,7 +482,7 @@ if (!args.apply && args.backend === 'anthropic') {
   args.apiKey = readAnthropicKey(args.keyFile)
 }
 if (args.apply) {
-  runApply(args)
+  await runApply(args)
 } else {
   await runDryRun(args)
 }
