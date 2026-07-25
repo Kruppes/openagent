@@ -1,29 +1,10 @@
-export interface MemoryDailyFile {
-  filename: string
-  date: string
-  size: number
-  modifiedAt: string
-}
-
-export interface MemoryProjectFile {
-  filename: string
+export interface MemoryTreeNode {
   name: string
-  size: number
-  modifiedAt: string
-}
-
-export interface MemoryWikiFile {
-  filename: string
-  name: string
-  title: string
-  aliases: string[]
-  size: number
-  modifiedAt: string
-}
-
-interface MemoryProfileResponse {
-  content: string
-  username: string
+  path: string
+  type: 'dir' | 'file'
+  size?: number
+  modifiedAt?: string
+  children?: MemoryTreeNode[]
 }
 
 export interface MemoryFact {
@@ -49,19 +30,36 @@ interface MemoryFactsResponse {
   total: number
 }
 
+export interface MemoryFileReadStat {
+  path: string
+  count: number
+  lastReadAt: string
+}
+
+export interface MemorySearchStat {
+  id: number
+  timestamp: string
+  query: string
+  resultCount: number
+  facts: { content: string; timestamp: string; source: string }[]
+}
+
+export interface MemoryUsageStats {
+  fileReads: MemoryFileReadStat[]
+  searches: MemorySearchStat[]
+}
+
 export function useMemoryApi() {
   const { apiFetch } = useApi()
 
-  const getSoul = () => apiFetch<{ content: string }>('/api/memory/soul')
-  const updateSoul = (content: string) => apiFetch('/api/memory/soul', {
+  const listFiles = () => apiFetch<{ files: MemoryTreeNode[] }>('/api/memory/files')
+  const getFile = (path: string) => apiFetch<{ content: string }>(`/api/memory/file?path=${encodeURIComponent(path)}`)
+  const updateFile = (path: string, content: string) => apiFetch(`/api/memory/file?path=${encodeURIComponent(path)}`, {
     method: 'PUT',
     body: JSON.stringify({ content }),
   })
-
-  const getCoreMemory = () => apiFetch<{ content: string }>('/api/memory/core')
-  const updateCoreMemory = (content: string) => apiFetch('/api/memory/core', {
-    method: 'PUT',
-    body: JSON.stringify({ content }),
+  const deleteFile = (path: string) => apiFetch(`/api/memory/file?path=${encodeURIComponent(path)}`, {
+    method: 'DELETE',
   })
 
   const getAgentRules = () => apiFetch<{ content: string }>('/api/memory/agents')
@@ -70,23 +68,6 @@ export function useMemoryApi() {
     body: JSON.stringify({ content }),
   })
   const getDefaultAgentRules = () => apiFetch<{ content: string }>('/api/memory/agents/default')
-
-  const listDailyFiles = () => apiFetch<{ files: MemoryDailyFile[] }>('/api/memory/daily')
-  const getDailyFile = (date: string) => apiFetch<{ content: string }>(`/api/memory/daily/${date}`)
-  const updateDailyFile = (date: string, content: string) => apiFetch(`/api/memory/daily/${date}`, {
-    method: 'PUT',
-    body: JSON.stringify({ content }),
-  })
-
-  const listWikiPages = () => apiFetch<{ files: MemoryWikiFile[] }>('/api/memory/wiki')
-  const getWikiPage = (name: string) => apiFetch<{ content: string }>(`/api/memory/wiki/${name}`)
-  const updateWikiPage = (name: string, content: string) => apiFetch(`/api/memory/wiki/${name}`, {
-    method: 'PUT',
-    body: JSON.stringify({ content }),
-  })
-  const deleteWikiPage = (name: string) => apiFetch(`/api/memory/wiki/${name}`, {
-    method: 'DELETE',
-  })
 
   const getHeartbeat = () => apiFetch<{ content: string }>('/api/memory/heartbeat')
   const updateHeartbeat = (content: string) => apiFetch('/api/memory/heartbeat', {
@@ -108,19 +89,6 @@ export function useMemoryApi() {
     body: JSON.stringify({ content }),
   })
   const getDefaultTasksGuidelines = () => apiFetch<{ content: string }>('/api/memory/tasks-guidelines/default')
-
-  const getProfile = () => apiFetch<MemoryProfileResponse>('/api/memory/profile')
-  const updateProfile = (content: string) => apiFetch('/api/memory/profile', {
-    method: 'PUT',
-    body: JSON.stringify({ content }),
-  })
-
-  const listProjectFiles = () => apiFetch<{ files: MemoryProjectFile[] }>('/api/memory/projects')
-  const getProjectFile = (name: string) => apiFetch<{ content: string }>(`/api/memory/projects/${name}`)
-  const updateProjectFile = (name: string, content: string) => apiFetch(`/api/memory/projects/${name}`, {
-    method: 'PUT',
-    body: JSON.stringify({ content }),
-  })
 
   const listFacts = (queryOptions: MemoryFactsQuery = {}) => {
     const params = new URLSearchParams()
@@ -145,21 +113,16 @@ export function useMemoryApi() {
     method: 'DELETE',
   })
 
+  const getUsageStats = (days: number) => apiFetch<MemoryUsageStats>(`/api/memory/usage-stats?days=${days}`)
+
   return {
-    getSoul,
-    updateSoul,
-    getCoreMemory,
-    updateCoreMemory,
+    listFiles,
+    getFile,
+    updateFile,
+    deleteFile,
     getAgentRules,
     updateAgentRules,
     getDefaultAgentRules,
-    listDailyFiles,
-    getDailyFile,
-    updateDailyFile,
-    listWikiPages,
-    getWikiPage,
-    updateWikiPage,
-    deleteWikiPage,
     getHeartbeat,
     updateHeartbeat,
     getDefaultHeartbeat,
@@ -169,13 +132,9 @@ export function useMemoryApi() {
     getTasksGuidelines,
     updateTasksGuidelines,
     getDefaultTasksGuidelines,
-    getProfile,
-    updateProfile,
-    listProjectFiles,
-    getProjectFile,
-    updateProjectFile,
     listFacts,
     updateFact,
     deleteFact,
+    getUsageStats,
   }
 }
