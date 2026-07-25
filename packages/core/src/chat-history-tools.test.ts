@@ -451,4 +451,85 @@ describe('read_chat_history tool', () => {
       expect(text).toContain('bob workshop update')
     })
   })
+
+  describe('cross-persona read scope (RC4: agent parameter)', () => {
+    const personas = () => ['bob', 'gekko', 'warren']
+
+    function insertAgentMessage(sessionId: string, content: string, agentId: string, ts: string, userId = 1) {
+      db.prepare(
+        'INSERT INTO chat_messages (session_id, user_id, role, content, timestamp, agent_id) VALUES (?, ?, ?, ?, ?, ?)',
+      ).run(sessionId, userId, 'assistant', content, ts, agentId)
+    }
+
+    it('default (no agent): non-main persona still sees only its own bucket', async () => {
+      insertAgentMessage('session-1-abc', 'warren portfolio update', 'warren', '2025-04-07 10:00:00')
+      insertAgentMessage('session-1-abc', 'bob workshop update', 'bob', '2025-04-07 10:01:00')
+
+      const bobTool = createReadChatHistoryTool({ db, getCurrentAgentId: () => 'bob', listAgentIds: personas })
+      const text = getTextContent(await bobTool.execute('tc', { start: '2025-04-07', end: '2025-04-08' }))
+      expect(text).toContain('bob workshop update')
+      expect(text).not.toContain('warren portfolio update')
+    })
+
+    it('agent:"main" from a non-main persona returns main rows', async () => {
+      insertAgentMessage('session-1-abc', 'bob workshop update', 'bob', '2025-04-07 10:00:00')
+      insertAgentMessage('session-1-abc', 'main orchestrator note', 'main', '2025-04-07 10:01:00')
+
+      const bobTool = createReadChatHistoryTool({ db, getCurrentAgentId: () => 'bob', listAgentIds: personas })
+      const text = getTextContent(await bobTool.execute('tc', { start: '2025-04-07', end: '2025-04-08', agent: 'main' }))
+      expect(text).toContain('main orchestrator note')
+      expect(text).not.toContain('bob workshop update')
+    })
+
+    it('agent:"all" returns rows across multiple agent buckets', async () => {
+      insertAgentMessage('session-1-abc', 'warren portfolio update', 'warren', '2025-04-07 10:00:00')
+      insertAgentMessage('session-1-abc', 'bob workshop update', 'bob', '2025-04-07 10:01:00')
+      insertAgentMessage('session-1-abc', 'main orchestrator note', 'main', '2025-04-07 10:02:00')
+
+      const bobTool = createReadChatHistoryTool({ db, getCurrentAgentId: () => 'bob', listAgentIds: personas })
+      const text = getTextContent(await bobTool.execute('tc', { start: '2025-04-07', end: '2025-04-08', agent: 'all' }))
+      expect(text).toContain('warren portfolio update')
+      expect(text).toContain('bob workshop update')
+      expect(text).toContain('main orchestrator note')
+    })
+
+    it('unknown agent id returns an error, not an empty list', async () => {
+      insertAgentMessage('session-1-abc', 'bob workshop update', 'bob', '2025-04-07 10:00:00')
+
+      const bobTool = createReadChatHistoryTool({ db, getCurrentAgentId: () => 'bob', listAgentIds: personas })
+      const result = await bobTool.execute('tc', { start: '2025-04-07', end: '2025-04-08', agent: 'schluchti' })
+      const text = getTextContent(result)
+      const details = getDetails(result)
+      expect(details.error).toBe(true)
+      expect(text).toContain('unknown agent "schluchti"')
+      expect(text).not.toContain('No chat messages found')
+    })
+
+    it('finds a freshly inserted message from another persona (in-progress session case)', async () => {
+      // Simulate a message just written to another persona's live session.
+      const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
+      insertAgentMessage('session-live-xyz', 'gekko just said something important', 'gekko', now)
+
+      const bobTool = createReadChatHistoryTool({ db, getCurrentAgentId: () => 'bob', listAgentIds: personas })
+      // Default scope: bob cannot see it.
+      const defaultText = getTextContent(await bobTool.execute('tc', { query: 'important' }))
+      expect(defaultText).not.toContain('gekko just said something important')
+      // Cross-persona: bob reads gekko's fresh message on demand.
+      const crossText = getTextContent(await bobTool.execute('tc', { query: 'important', agent: 'gekko' }))
+      expect(crossText).toContain('gekko just said something important')
+    })
+
+    it('still applies user-id scoping is not our axis, but agent scope + shared works', async () => {
+      // 'shared'-tagged messages are included for an explicit concrete id.
+      insertAgentMessage('session-1-abc', 'main note here', 'main', '2025-04-07 10:00:00')
+      insertAgentMessage('session-1-abc', 'shared cross note', 'shared', '2025-04-07 10:01:00')
+      insertAgentMessage('session-1-abc', 'bob private note', 'bob', '2025-04-07 10:02:00')
+
+      const bobTool = createReadChatHistoryTool({ db, getCurrentAgentId: () => 'bob', listAgentIds: personas })
+      const text = getTextContent(await bobTool.execute('tc', { start: '2025-04-07', end: '2025-04-08', agent: 'main' }))
+      expect(text).toContain('main note here')
+      expect(text).toContain('shared cross note')
+      expect(text).not.toContain('bob private note')
+    })
+  })
 })
