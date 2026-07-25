@@ -33,6 +33,12 @@ export interface Task {
   startedAt: string | null
   completedAt: string | null
   sessionId: string | null
+  /**
+   * The persona that owns this task. Nullable because tasks predate the
+   * multi-persona schema (#93): legacy rows and tasks created without an
+   * explicit owner have no persona, and consumers coalesce to 'main'.
+   */
+  agentId: string | null
 }
 
 export interface CreateTaskInput {
@@ -50,6 +56,7 @@ export interface CreateTaskInput {
   isDefaultModel?: boolean
   maxDurationMinutes?: number
   sessionId?: string
+  agentId?: string
 }
 
 export interface UpdateTaskInput {
@@ -152,6 +159,7 @@ interface TaskRow {
   started_at: string | null
   completed_at: string | null
   session_id: string | null
+  agent_id: string | null
 }
 
 function rowToTask(row: TaskRow): Task {
@@ -180,6 +188,7 @@ function rowToTask(row: TaskRow): Task {
     startedAt: row.started_at,
     completedAt: row.completed_at,
     sessionId: row.session_id,
+    agentId: row.agent_id,
   }
 }
 
@@ -236,8 +245,8 @@ export class TaskStore {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
 
     this.db.prepare(`
-      INSERT INTO tasks (id, name, prompt, status, trigger_type, trigger_source_id, provider, model, is_default_model, max_duration_minutes, session_id, created_at)
-      VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tasks (id, name, prompt, status, trigger_type, trigger_source_id, provider, model, is_default_model, max_duration_minutes, session_id, agent_id, created_at)
+      VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.name,
@@ -249,6 +258,7 @@ export class TaskStore {
       input.isDefaultModel === undefined ? null : (input.isDefaultModel ? 1 : 0),
       input.maxDurationMinutes ?? null,
       input.sessionId ?? null,
+      input.agentId ?? null,
       now,
     )
 

@@ -80,6 +80,28 @@ describe('TaskStore', () => {
       expect(task.isDefaultModel).toBeNull()
     })
 
+    it('defaults agentId to null (tasks predate personas)', () => {
+      const task = store.create({
+        name: 'Ownerless Task',
+        prompt: 'test',
+        triggerType: 'agent',
+      })
+
+      expect(task.agentId).toBeNull()
+    })
+
+    it('persists an explicit agentId', () => {
+      const task = store.create({
+        name: 'Bob Task',
+        prompt: 'test',
+        triggerType: 'agent',
+        agentId: 'bob',
+      })
+
+      expect(task.agentId).toBe('bob')
+      expect(store.getById(task.id)?.agentId).toBe('bob')
+    })
+
     it('persists isDefaultModel=true for tasks using the default provider', () => {
       const task = store.create({
         name: 'Default Task',
