@@ -39,6 +39,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     startedAt: '2026-03-29 10:00:01',
     completedAt: '2026-03-29 10:15:00',
     sessionId: 'task-task-123',
+    agentId: null,
     ...overrides,
   }
 }
@@ -133,6 +134,49 @@ describe('persistTaskResultMessage', () => {
     expect(metadata.durationMinutes).toBe(15)
     expect(metadata.promptTokens).toBe(5000)
     expect(metadata.completionTokens).toBe(3000)
+  })
+
+  it('labels the row with the task\'s agent_id (RC2)', () => {
+    const db = createTestDb()
+    const task = makeTask({ agentId: 'bob' })
+
+    persistTaskResultMessage(db, 1, task, 15)
+
+    const row = db.prepare(
+      'SELECT agent_id FROM chat_messages WHERE user_id = 1'
+    ).get() as { agent_id: string }
+    expect(row.agent_id).toBe('bob')
+  })
+
+  it('coalesces a null agentId to main (RC2)', () => {
+    const db = createTestDb()
+    const task = makeTask({ agentId: null })
+
+    persistTaskResultMessage(db, 1, task, 15)
+
+    const row = db.prepare(
+      'SELECT agent_id FROM chat_messages WHERE user_id = 1'
+    ).get() as { agent_id: string }
+    expect(row.agent_id).toBe('main')
+  })
+
+  it('keeps chat_messages.agent_id consistent with its session (invariant)', () => {
+    const db = createTestDb()
+    // A task session owned by 'bob' plus a task result written into it must
+    // never leave a row whose agent_id disagrees with its session's.
+    db.prepare(
+      "INSERT INTO sessions (id, user_id, source, type, parent_session_id, started_at, message_count, summary_written, agent_id) VALUES ('task-sess-bob', 1, 'system', 'task', NULL, datetime('now'), 0, 0, 'bob')"
+    ).run()
+    const task = makeTask({ sessionId: 'task-sess-bob', agentId: 'bob' })
+
+    persistTaskResultMessage(db, 1, task, 15)
+
+    const mismatch = db.prepare(
+      `SELECT count(*) AS n FROM chat_messages c
+       JOIN sessions s ON s.id = c.session_id
+       WHERE c.agent_id != s.agent_id`
+    ).get() as { n: number }
+    expect(mismatch.n).toBe(0)
   })
 })
 
