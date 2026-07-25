@@ -155,7 +155,7 @@ function buildBatchPrompt(facts) {
 // Ollama call
 // ---------------------------------------------------------------------------
 
-async function ollamaChat(ollamaUrl, model, systemPrompt, userPrompt) {
+async function ollamaChat(ollamaUrl, model, systemPrompt, userPrompt, temperature = 0) {
   const response = await fetch(`${ollamaUrl.replace(/\/$/, '')}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -164,7 +164,7 @@ async function ollamaChat(ollamaUrl, model, systemPrompt, userPrompt) {
       stream: false,
       think: false,
       format: 'json',
-      options: { temperature: 0 },
+      options: { temperature },
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
@@ -231,7 +231,11 @@ function extractJson(text) {
 async function classifyBatch(args, facts, attempt = 1) {
   const MAX_ATTEMPTS = 3
   try {
-    const raw = await ollamaChat(args.ollamaUrl, args.model, CLASSIFY_SYSTEM_PROMPT, buildBatchPrompt(facts))
+    // Retries use a slight temperature: at temperature 0 a model that emits
+    // malformed output does so deterministically, so an identical retry can
+    // never succeed. 0.3 breaks the determinism without hurting accuracy.
+    const temperature = attempt === 1 ? 0 : 0.3
+    const raw = await ollamaChat(args.ollamaUrl, args.model, CLASSIFY_SYSTEM_PROMPT, buildBatchPrompt(facts), temperature)
     const parsed = extractJson(raw)
     const items = Array.isArray(parsed?.classifications) ? parsed.classifications : null
     if (!items) throw new Error('Response missing "classifications" array')
