@@ -168,7 +168,9 @@ describe('MemoryConsolidationScheduler', () => {
       expect(taskRuntime.start).toHaveBeenCalledOnce()
 
       const startedTask = taskRuntime.startedTasks[0]
-      expect(startedTask.task.name).toBe('Nightly Memory Consolidation')
+      // Manual runNow() always includes the compaction pass
+      expect(startedTask.task.name).toBe('Nightly Memory Consolidation + Compaction')
+      expect(startedTask.task.prompt).toContain('Weekly compaction run')
       expect(startedTask.task.triggerType).toBe('consolidation')
       expect(startedTask.task.triggerSourceId).toBe('memory-consolidation')
       expect(startedTask.task.sessionId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
@@ -350,6 +352,64 @@ describe('MemoryConsolidationScheduler', () => {
       expect(prompt).toContain("NEVER read from or write to the main agent's memory at /data/memory/")
     })
 
+    it('persona compaction targets the persona memory root, never main', () => {
+      const prompt = buildConsolidationTaskPrompt(3, 'Be selective.', {
+        memoryDir: '/data/agents/warren/memory',
+        agentId: 'warren',
+        compactionRun: true,
+      })
+
+      expect(prompt).toContain('## Weekly compaction run')
+      // Every compaction write target must live under the persona root
+      expect(prompt).toContain('Rewrite `/data/agents/warren/memory/MEMORY.md`')
+      expect(prompt).toContain('`/data/agents/warren/memory/users/`')
+      expect(prompt).toContain('`/data/agents/warren/memory/wiki/<topic>/`')
+      expect(prompt).toContain('`/data/agents/warren/memory/wiki/index.md`')
+      expect(prompt).toContain('log the split in `/data/agents/warren/memory/wiki/log.md`')
+      expect(prompt).toContain('Prune `/data/agents/warren/memory/wiki/log.md`')
+      // The lint report target is the persona's log.md too
+      expect(prompt).toContain('append a brief Lint Report section to `/data/agents/warren/memory/wiki/log.md`')
+
+      // RC5 core guarantee: no compaction/lint instruction may point at main's
+      // memory root. The only permitted /data/memory/ mention is the scoping
+      // block's explicit prohibition.
+      const mainRootMentions = prompt
+        .split('\n')
+        .filter(line => line.includes('/data/memory/'))
+      expect(mainRootMentions).toEqual([
+        "- NEVER read from or write to the main agent's memory at /data/memory/ or any other agent's directory under /data/agents/. Everything you touch must live under `/data/agents/warren/memory`.",
+      ])
+      expect(prompt).not.toContain('/data/memory/wiki/log.md')
+      expect(prompt).not.toContain('/data/memory/MEMORY.md')
+    })
+
+    it('main compaction run targets the main memory root and keeps the persona guard', () => {
+      const prompt = buildConsolidationTaskPrompt(3, 'Be selective.', {
+        scopedPersonaGuard: true,
+        compactionRun: true,
+      })
+      const mainMemoryDir = path.join(tempDataDir, 'memory')
+
+      expect(prompt).toContain('## Weekly compaction run')
+      expect(prompt).toContain(`Rewrite \`${mainMemoryDir}/MEMORY.md\``)
+      expect(prompt).toContain(`log the split in \`${mainMemoryDir}/wiki/log.md\``)
+      // Guard note and compaction section coexist
+      expect(prompt).toContain('NEVER read from or write to anything under /data/agents/')
+      // Compaction must not send the main run into persona roots
+      expect(prompt).not.toContain('/data/agents/warren')
+    })
+
+    it('omits the compaction section when compactionRun is false', () => {
+      const prompt = buildConsolidationTaskPrompt(3, 'Be selective.', {
+        memoryDir: '/data/agents/warren/memory',
+        agentId: 'warren',
+        compactionRun: false,
+      })
+      expect(prompt).not.toContain('## Weekly compaction run')
+      // Lint still routes to the persona's own log.md every run
+      expect(prompt).toContain('append a brief Lint Report section to `/data/agents/warren/memory/wiki/log.md`')
+    })
+
     it('buildConsolidationTaskPrompt adds the persona guard to the main run when scoped', () => {
       const prompt = buildConsolidationTaskPrompt(3, 'Be selective.', { scopedPersonaGuard: true })
       expect(prompt).toContain('NEVER read from or write to anything under /data/agents/')
@@ -415,17 +475,35 @@ describe('MemoryConsolidationScheduler', () => {
 
       const [mainRun, warrenRun] = taskRuntime.startedTasks
 
-      // Main run: unchanged root + guard note, no persona attribution
-      expect(mainRun.task.name).toBe('Nightly Memory Consolidation')
+      // Main run: unchanged root + guard note, no persona attribution.
+      // Manual runNow() always compacts, hence the "+ Compaction" suffix.
+      expect(mainRun.task.name).toBe('Nightly Memory Consolidation + Compaction')
       expect(mainRun.task.prompt).toContain(path.join(tempDataDir, 'memory'))
       expect(mainRun.task.prompt).toContain('NEVER read from or write to anything under /data/agents/')
       expect(mainRun.task.agentId ?? null).toBeNull()
 
       // Persona run: warren's own memory root, agent-labeled task + session
-      expect(warrenRun.task.name).toBe('Nightly Memory Consolidation (warren)')
+      expect(warrenRun.task.name).toBe('Nightly Memory Consolidation + Compaction (warren)')
       expect(warrenRun.task.agentId).toBe('warren')
       expect(warrenRun.task.prompt).toContain(path.join(tempDataDir, 'agents', 'warren', 'memory'))
       expect(warrenRun.task.prompt).toContain('persona agent "warren" ONLY')
+
+      // RC5 + compaction: the persona's compaction/lint writes must resolve to
+      // warren's own root. A persona run must never be told to touch main's wiki.
+      const warrenMemoryDir = path.join(tempDataDir, 'agents', 'warren', 'memory')
+      const mainMemoryDir = path.join(tempDataDir, 'memory')
+      expect(warrenRun.task.prompt).toContain('## Weekly compaction run')
+      expect(warrenRun.task.prompt).toContain(`Rewrite \`${warrenMemoryDir}/MEMORY.md\``)
+      expect(warrenRun.task.prompt).toContain(`log the split in \`${warrenMemoryDir}/wiki/log.md\``)
+      expect(warrenRun.task.prompt).toContain(
+        `append a brief Lint Report section to \`${warrenMemoryDir}/wiki/log.md\``,
+      )
+      expect(warrenRun.task.prompt).not.toContain(`${mainMemoryDir}/wiki`)
+      expect(warrenRun.task.prompt).not.toContain(`${mainMemoryDir}/MEMORY.md`)
+
+      // Conversely the main run compacts only main's root
+      expect(mainRun.task.prompt).toContain(`Rewrite \`${mainMemoryDir}/MEMORY.md\``)
+      expect(mainRun.task.prompt).not.toContain(warrenMemoryDir)
 
       const sessionRow = db.prepare('SELECT agent_id FROM sessions WHERE id = ?')
         .get(warrenRun.task.sessionId) as { agent_id: string }

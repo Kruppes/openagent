@@ -58,8 +58,12 @@ export { getUserProfileDir, ensureUserProfile, readUserProfile, ensureWikiDir, e
 export { isScopedAgentMemoryEnabled, getAgentMemoryDir, resolveAgentMemoryDir, ensurePersonaMemoryRoots } from './memory.js'
 export type { ResolveAgentMemoryDirOptions } from './memory.js'
 export type { SkillPromptEntry } from './memory.js'
-export { consolidateMemory, readDailyFilesForConsolidation, buildConsolidationPrompt } from './memory-consolidation.js'
-export type { MemoryConsolidationOptions, ConsolidationResult } from './memory-consolidation.js'
+// RC5: readDailyFilesForConsolidation stays exported — unlike upstream, our fork
+// uses it live in listPersonaConsolidationTargets() to decide which personas have
+// daily content worth consolidating. Upstream's removed single-call path
+// (consolidateMemory, buildConsolidationPrompt) is dropped as intended.
+export { readDailyFilesForConsolidation } from './memory-consolidation.js'
+export type { ConsolidationResult } from './memory-consolidation.js'
 export { SessionManager, generateSessionId } from './session-manager.js'
 export type { SessionInfo, SessionManagerOptions, SessionType, CreateSessionOptions } from './session-manager.js'
 export {
