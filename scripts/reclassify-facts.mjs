@@ -26,7 +26,7 @@
  *   --out <path>         Proposal output path (default: ./fact-reclassify-proposal.json)
  *   --from <path>        Proposal file to apply (required with --apply)
  *   --ollama-url <url>   Ollama base URL (default: http://192.168.10.222:11434)
- *   --model <name>       Ollama model (default: qwen3.5:27b)
+ *   --model <name>       Ollama model (default: gemma4:26b-mlx)
  *   --batch-size <n>     Facts per LLM request (default: 20)
  *   --limit <n>          Only classify the first n facts (debugging)
  *   --resume             Reuse classifications from an existing --out file
@@ -54,7 +54,7 @@ function parseArgs(argv) {
     out: path.resolve('fact-reclassify-proposal.json'),
     from: null,
     ollamaUrl: 'http://192.168.10.222:11434',
-    model: 'qwen3.5:27b',
+    model: 'gemma4:26b-mlx',
     batchSize: 20,
     limit: null,
     resume: false,
