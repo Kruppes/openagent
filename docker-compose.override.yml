@@ -1,0 +1,18 @@
+# Homelab-spezifische Ergänzungen (NICHT upstream-relevant).
+#
+# Getrennt von docker-compose.yml gehalten, damit Merges aus dem
+# meteyou/axiom-Upstream nicht mit lokaler Infrastruktur kollidieren.
+#
+# Synology-Share:
+#   NAS 192.168.10.72:/volume1/vibecoding
+#     -> Proxmox-Host .42  /mnt/lxc_shares/synology_rwx/vibecoding  (fstab, NFSv3)
+#     -> LXC 107 (mp0)     /mnt/vibecoding
+#     -> Container         /mnt/vibecoding   (dieser Bind-Mount)
+#
+# Zweck: /workspace und /data teilen sich eine 20-GB-Disk mit der Agent-DB.
+# Große/kalte Daten (DB-Backups, Artefakte, Dumps) gehören auf den Share,
+# damit ein volllaufender Workspace nicht die Datenbank mitreißt.
+services:
+  axiom:
+    volumes:
+      - /mnt/vibecoding:/mnt/vibecoding
