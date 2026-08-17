@@ -26,6 +26,7 @@ import { loadSttSettings } from './stt.js'
 import { createAgentSkillTools, getAgentSkillsForPrompt, getAgentSkillsCount, getAgentSkillsDir, trackAgentSkillUsage, currentPlatform } from './agent-skills.js'
 import { createSearchMemoriesTool } from './memories-tool.js'
 import { createReadChatHistoryTool } from './chat-history-tools.js'
+import { sanitizeHistoryBoundaries, describeHistoryStructure } from './message-history.js'
 import type { AgentRuntimeStateSnapshot, ResponseChunk } from './agent-runtime-types.js'
 
 /**
@@ -639,6 +640,24 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         textVerbosity: this.providerConfig?.textVerbosity,
         transport: this.providerConfig?.transport,
       }),
+      // Ebene B (last net before send): enforce the tool_use/tool_result
+      // boundary invariant on EVERY LLM call, right before pi-ai converts the
+      // AgentMessage history to provider messages. pi-ai's transformMessages
+      // drops error/aborted assistant messages but keeps their tool_result
+      // messages, which can orphan a tool_result at messages[0] and wedge the
+      // session (incident 2026-08-17). Sanitizing here means the request never
+      // carries an orphan in the first place. A drop here means an upstream
+      // mutation path slipped past — surfaced as console.error with a
+      // secret-free structural dump.
+      transformContext: async (messages) => {
+        const { messages: cleaned, dropped, drops } = sanitizeHistoryBoundaries(messages)
+        if (dropped) {
+          console.error(
+            `[agent-runtime] tool_use/tool_result boundary violation caught before send (agent ${this.agentId}) — dropped ${drops.length} block(s): ${drops.join('; ')} | structure(before)=${describeHistoryStructure(messages)}`,
+          )
+        }
+        return cleaned
+      },
       ...(this.providerConfig?.transport && this.providerConfig.transport !== 'sse'
         && { transport: this.providerConfig.transport }),
       getApiKey: this.providerConfig?.authMethod === 'oauth'
@@ -696,6 +715,37 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
 
   clearMessages(): void {
     this.agent.state.messages = []
+  }
+
+  /**
+   * Ebene B (after mutation): enforce the tool_use/tool_result boundary
+   * invariant on the persistent in-memory history. Called after every turn so
+   * an orphan left by an errored/aborted turn is repaired at the source — not
+   * just masked on the outgoing request. A drop here is expected maintenance
+   * (console.warn), whereas a drop in the pre-send transformContext net means
+   * something reached the wire uncleaned (console.error). Returns true if the
+   * history was modified.
+   */
+  private sanitizeInMemoryHistory(context: string): boolean {
+    let messages: unknown
+    try {
+      messages = this.agent.state.messages
+    } catch {
+      return false
+    }
+    if (!Array.isArray(messages) || messages.length === 0) return false
+    const { messages: cleaned, dropped, drops } = sanitizeHistoryBoundaries(messages)
+    if (!dropped) return false
+    console.warn(
+      `[agent-runtime] Repaired tool_use/tool_result boundary in history (${context}, agent ${this.agentId}) — dropped ${drops.length} block(s): ${drops.join('; ')}`,
+    )
+    try {
+      this.agent.state.messages = cleaned
+    } catch (err) {
+      console.error('[agent-runtime] Failed to write back sanitized history:', err)
+      return false
+    }
+    return true
   }
 
   abort(): void {
@@ -1004,6 +1054,17 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       console.warn(`[agent-runtime] EMPTY TURN (session ${sessionId}): model produced no text, no tool calls, no error — thinking=${thinkingChars} chars. Provider degradation?`)
     }
 
+    // Ebene B (after mutation): a turn that errored/aborted mid-tool can leave a
+    // dangling tool_use or an orphan tool_result in state.messages. Repair it
+    // now so the NEXT turn starts from a valid boundary and never triggers the
+    // provider 400 in the first place (incident 2026-08-17). The reactive
+    // auto-clear below stays as the last-resort safety net.
+    try {
+      this.sanitizeInMemoryHistory(`turn end, session ${sessionId}`)
+    } catch (err) {
+      console.error('[agent-runtime] Post-turn history sanitize failed:', err)
+    }
+
     // Surface mid-stream errors (e.g. context window exceeded after tool calls)
     if (midStreamError) {
       const errMsg = (midStreamError instanceof Error ? midStreamError.message : String(midStreamError)) || 'Unknown error'
@@ -1019,7 +1080,25 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     // container restart (incident 2026-07-20). The DB chat history is untouched;
     // only the live agent context is reset.
     if (corruptedContext) {
-      console.error(`[agent-runtime] Corrupted context detected (session ${sessionId}) — auto-clearing in-memory history to unwedge the session`)
+      // Secret-free structural dump (roles + block types + tool ids only, NEVER
+      // content) so we can see WHICH boundary broke if the invariant nets ever
+      // miss a case. Best-effort: try to repair in place first — if that
+      // resolves the invariant we avoid nuking the whole context.
+      try {
+        console.error(
+          `[agent-runtime] Corrupted context structure (session ${sessionId}): ${describeHistoryStructure(this.agent.state.messages)}`,
+        )
+      } catch {
+        // history not readable — fall through to clear
+      }
+      const repaired = (() => {
+        try {
+          return this.sanitizeInMemoryHistory(`corrupted-context heal, session ${sessionId}`)
+        } catch {
+          return false
+        }
+      })()
+      console.error(`[agent-runtime] Corrupted context detected (session ${sessionId}) — ${repaired ? 'repaired boundary in place, ' : ''}auto-clearing in-memory history to unwedge the session`)
       try {
         this.clearMessages()
       } catch (err) {
