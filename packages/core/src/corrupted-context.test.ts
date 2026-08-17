@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import { isCorruptedContextError, isAgentBusyError } from './agent-runtime.js'
+import { sanitizeHistoryBoundaries } from './message-history.js'
 
 describe('isCorruptedContextError', () => {
   it('matches the Anthropic dangling-tool_use phrasing', () => {
@@ -23,6 +25,26 @@ describe('isCorruptedContextError', () => {
     expect(isCorruptedContextError('')).toBe(false)
     expect(isCorruptedContextError(undefined)).toBe(false)
     expect(isCorruptedContextError(null)).toBe(false)
+  })
+})
+
+describe('corrupted context — boundary invariant closes the loop', () => {
+  // The 400 that isCorruptedContextError matches is exactly the history state
+  // that sanitizeHistoryBoundaries prevents. These two guards are the reactive
+  // (detect + heal) and proactive (never emit) halves of the same fix.
+  const orphanTr = (id: string): AgentMessage =>
+    ({ role: 'toolResult', toolCallId: id, toolName: 'shell', content: [{ type: 'text', text: 'ok' }], isError: false, timestamp: 1 } as unknown as AgentMessage)
+  const userMsg = (t: string): AgentMessage =>
+    ({ role: 'user', content: [{ type: 'text', text: t }], timestamp: 1 } as unknown as AgentMessage)
+
+  it('the history that produces the Anthropic 400 is sanitized away proactively', () => {
+    // messages.0 is an orphan tool_result — the precise wedge from the incident.
+    const wedged: AgentMessage[] = [orphanTr('toolu_01N2'), userMsg('resend please')]
+    const { messages, dropped } = sanitizeHistoryBoundaries(wedged)
+    expect(dropped).toBe(true)
+    expect((messages[0] as { role: string }).role).toBe('user')
+    // And the raw provider error for that state is still detected reactively.
+    expect(isCorruptedContextError('messages.0.content.0: unexpected `tool_use_id` found in `tool_result` blocks: toolu_01N2')).toBe(true)
   })
 })
 
