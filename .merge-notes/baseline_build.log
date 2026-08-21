@@ -1,0 +1,155 @@
+
+> axiom@0.28.5 build
+> npm run build --workspaces
+
+
+> @axiom/core@0.28.5 build
+> tsc
+
+
+> @axiom/telegram@0.28.5 build
+> tsc
+
+
+> @axiom/web-backend@0.28.5 build
+> tsc
+
+
+> @axiom/web-frontend@0.28.5 build
+> nuxt generate
+
+┌  Building Nuxt for production...
+│
+●  Nuxt 4.4.2 (with Nitro 2.13.3, Vite 7.3.1 and Vue 3.5.31)
+
+ WARN  Payload extraction is recommended for full-static output. You can enable it by setting experimental.payloadExtraction to true or 'client'.
+
+│
+●  Nitro preset: static
+ℹ Building client...
+ℹ vite v7.3.1 building client environment for production...
+
+ WARN  [plugin nuxt:module-preload-polyfill] Sourcemap is likely to be incorrect: a plugin (nuxt:module-preload-polyfill) was used to transform files, but didn't generate a sourcemap for the transformation. Consult the plugin documentation for help
+
+ℹ transforming...
+
+ WARN  [plugin @tailwindcss/vite:generate:build] Sourcemap is likely to be incorrect: a plugin (@tailwindcss/vite:generate:build) was used to transform files, but didn't generate a sourcemap for the transformation. Consult the plugin documentation for help
+
+
+ WARN  [plugin @tailwindcss/vite:generate:build] Sourcemap is likely to be incorrect: a plugin (@tailwindcss/vite:generate:build) was used to transform files, but didn't generate a sourcemap for the transformation. Consult the plugin documentation for help (x2)
+
+
+ WARN  [plugin @tailwindcss/vite:generate:build] Sourcemap is likely to be incorrect: a plugin (@tailwindcss/vite:generate:build) was used to transform files, but didn't generate a sourcemap for the transformation. Consult the plugin documentation for help (x3)
+
+ℹ ✓ 2761 modules transformed.
+ℹ rendering chunks...
+ℹ computing gzip size...
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/manifest.json                  20.94 kB │ gzip:   2.58 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/error-500.DwNMZNOg.css    1.91 kB │ gzip:   0.73 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/error-404.CnA5BOv9.css    2.43 kB │ gzip:   0.86 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/entry.hUbMvm4-.css       84.24 kB │ gzip:  14.13 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/DF0VnJtj.js               0.06 kB │ gzip:   0.08 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/DlAUqK2U.js               0.09 kB │ gzip:   0.10 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/7bkTBzp4.js               0.13 kB │ gzip:   0.13 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/C2zPDGHK.js               0.26 kB │ gzip:   0.21 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/DU6ZWHjm.js               0.36 kB │ gzip:   0.28 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/B58z4iLq.js               0.40 kB │ gzip:   0.29 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/KAu_G992.js               0.54 kB │ gzip:   0.36 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/DQn0Trv-.js               0.67 kB │ gzip:   0.42 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/CkDwyho-.js               0.67 kB │ gzip:   0.34 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/byi0JJsr.js               0.68 kB │ gzip:   0.36 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/Jz5U-NUi.js               0.70 kB │ gzip:   0.36 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BqpYdzph.js               0.75 kB │ gzip:   0.46 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/NpORE2yt.js               0.76 kB │ gzip:   0.45 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BLlY_C7S.js               0.83 kB │ gzip:   0.49 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/CT75CBCg.js               0.86 kB │ gzip:   0.41 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BrEiJ3NX.js               1.06 kB │ gzip:   0.59 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/Br8xmgA1.js               1.07 kB │ gzip:   0.53 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/Do-GyY9m.js               1.08 kB │ gzip:   0.52 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BlnBqaR3.js               1.12 kB │ gzip:   0.58 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/1MRNaQcZ.js               1.15 kB │ gzip:   0.61 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/D8MdBWIa.js               1.22 kB │ gzip:   0.50 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BQWaDJWY.js               1.25 kB │ gzip:   0.59 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/DTKilfW2.js               1.28 kB │ gzip:   0.62 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BvQ8epM5.js               1.34 kB │ gzip:   0.60 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/B9ellP9I.js               1.46 kB │ gzip:   0.74 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/CV_jGWYh.js               1.55 kB │ gzip:   0.64 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BDp0r0OZ.js               1.57 kB │ gzip:   0.87 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/CIZ9qOHC.js               1.96 kB │ gzip:   0.63 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/DRuwaLQC.js               2.09 kB │ gzip:   1.06 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/ywpWUyto.js               2.27 kB │ gzip:   1.12 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/M3Y6Xyt8.js               2.33 kB │ gzip:   1.08 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BQEbOcvO.js               2.70 kB │ gzip:   1.28 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/Le2awzBC.js               3.35 kB │ gzip:   1.38 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BQHhsI4_.js               3.48 kB │ gzip:   1.56 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BBLVGo9n.js               3.79 kB │ gzip:   1.71 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BrbjEqpp.js               3.88 kB │ gzip:   1.53 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/hfFMwbQn.js               5.37 kB │ gzip:   2.12 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BfzDV9Ne.js               5.64 kB │ gzip:   2.08 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/Bkh7ScHV.js               5.77 kB │ gzip:   1.75 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/cQ__fxYr.js               6.67 kB │ gzip:   2.41 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BOmC-Anm.js               7.79 kB │ gzip:   2.03 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/kxT4LsU8.js               8.23 kB │ gzip:   2.62 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/CmQiOCDP.js               8.31 kB │ gzip:   2.79 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/Kh4kx0rh.js              10.71 kB │ gzip:   3.63 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BCsq2pkR.js              10.81 kB │ gzip:   2.94 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/DR-deT-X.js              10.87 kB │ gzip:   2.44 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BQ1GZfzR.js              11.81 kB │ gzip:   3.64 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/DQP1E1D7.js              12.22 kB │ gzip:   3.78 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/lq8DIFuY.js              12.80 kB │ gzip:   4.03 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/B1j8a6xi.js              15.72 kB │ gzip:   5.88 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/CdJPeFnF.js              17.19 kB │ gzip:   5.95 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/tRd1ASPP.js              19.94 kB │ gzip:   5.17 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/Bq1ME6cl.js              20.12 kB │ gzip:   6.01 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/DnyOUA4L.js              22.61 kB │ gzip:   6.25 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/CSKWfGAB.js              22.69 kB │ gzip:   5.78 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/_-7U6Nm2.js              24.30 kB │ gzip:   6.41 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/B6Okvffx.js              26.46 kB │ gzip:   7.55 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/D4tfkgVp.js              26.59 kB │ gzip:   8.09 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/D7E1Js9s.js              27.61 kB │ gzip:  10.55 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/ByZpYuTw.js              32.77 kB │ gzip:   9.85 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/DSK-h9EQ.js              41.80 kB │ gzip:  14.15 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BbPhC6-Z.js              44.86 kB │ gzip:  13.37 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/DuLxdVfk.js              46.50 kB │ gzip:  11.98 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/BuJ_CJnN.js              54.49 kB │ gzip:  17.30 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/B85XXY5Z.js              69.64 kB │ gzip:  15.63 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/DkhWS9pe.js              74.58 kB │ gzip:  17.33 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/CINHxfUb.js              82.44 kB │ gzip:  16.37 kB
+ℹ ../node_modules/.cache/nuxt/.nuxt/dist/client/_nuxt/tfmhDgJm.js             283.74 kB │ gzip: 104.25 kB
+ℹ ✓ built in 11.71s
+✔ Client built in 11717ms
+ℹ Building server...
+ℹ vite v7.3.1 building ssr environment for production...
+ℹ transforming...
+ℹ ✓ 1 modules transformed.
+ℹ rendering chunks...
+ℹ ✓ built in 10ms
+✔ Server built in 24ms
+[nitro] ℹ Initializing prerenderer
+[nitro] ℹ Prerendering 17 initial routes with crawler
+[nitro]   ├─ /dashboard (53ms)
+[nitro]   ├─ /login (55ms)
+[nitro]   ├─ /logs (55ms)
+[nitro]   ├─ /instructions (55ms)
+[nitro]   ├─ /memory (58ms)
+[nitro]   ├─ /personas (58ms)
+[nitro]   ├─ /providers (62ms)
+[nitro]   ├─ /settings (62ms)
+[nitro]   ├─ /skills (63ms)
+[nitro]   ├─ /tasks (63ms)
+[nitro]   ├─ /usage (63ms)
+[nitro]   ├─ /users (63ms)
+[nitro]   ├─ /200.html (64ms)
+[nitro]   ├─ /404.html (64ms)
+[nitro]   ├─ /index.html (64ms)
+[nitro]   ├─ / (64ms)
+[nitro]   ├─ /cronjobs (54ms)
+[nitro] ℹ Prerendered 17 routes in 0.989 seconds
+[nitro] ✔ Generated public .output/public
+[nitro] ✔ You can preview this build using npx serve .output/public
+│
+▲  HTML content not prerendered because ssr: false was set.
+│
+●  You can read more in https://nuxt.com/docs/getting-started/deployment#static-hosting.
+│
+└  ✨ You can now deploy .output/public to any static hosting!
