@@ -79,6 +79,7 @@ export interface ProviderModelContract {
   contextWindow?: number
   maxTokens?: number
   reasoning?: boolean
+  thinkingLevelMap?: Record<string, string | null>
   fixedTemperature?: number
   cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number }
 }

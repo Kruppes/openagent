@@ -773,6 +773,14 @@ export interface ProviderModelConfig {
   maxTokens?: number
   reasoning?: boolean
   /**
+   * Maps Axiom's thinking levels onto the effort values the upstream API
+   * expects. Only needed for OpenAI-compatible endpoints outside pi-ai's
+   * catalog (e.g. a local Ollama server), where pi-ai has no built-in map.
+   * Without an `off` entry pi-ai omits `reasoning_effort` entirely on `off`,
+   * so a reasoning-capable model keeps thinking on every request.
+   */
+  thinkingLevelMap?: Record<string, string | null>
+  /**
    * If set, the upstream API only accepts this exact `temperature` value and
    * rejects any other value (e.g. Moonshot's Kimi K2 thinking models require
    * `temperature: 1`). Callers should pass the requested value through
@@ -1839,6 +1847,7 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
     provider: provider.provider,
     baseUrl: provider.baseUrl,
     reasoning: modelConfig?.reasoning ?? false,
+    ...(modelConfig?.thinkingLevelMap && { thinkingLevelMap: modelConfig.thinkingLevelMap }),
     input: ['text', 'image'],
     cost: {
       input: modelConfig?.cost?.input ?? priceFallback.input,
