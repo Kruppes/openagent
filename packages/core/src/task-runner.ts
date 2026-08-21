@@ -1750,6 +1750,12 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
         isDefaultModel: task.isDefaultModel ?? undefined,
         maxDurationMinutes: task.maxDurationMinutes ?? undefined,
         sessionId: task.sessionId ?? undefined,
+        // Carry the persona forward: without this the resumed row stores
+        // agent_id = NULL, and the `?? 'main'` fallbacks downstream (attribution,
+        // session labelling, sub-task inheritance) silently re-attribute a
+        // restarted warren/bob/gekko task to main — wrong memory root, wrong
+        // per-agent model and wrong result routing (multi-persona bleeding).
+        agentId: task.agentId ?? undefined,
       })
 
       // Mark the old task as failed
