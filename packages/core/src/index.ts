@@ -297,6 +297,8 @@ export {
   getCurrentTaskAgentId,
 } from './task-execution-context.js'
 export type { TaskExecutionContext } from './task-execution-context.js'
+export { resolveTaskDefaultProvider } from './task-provider-resolution.js'
+export type { TaskDefaultProviderChainOptions } from './task-provider-resolution.js'
 export type { TaskToolsOptions } from './task-tools.js'
 export { createReadChatHistoryTool } from './chat-history-tools.js'
 export type { ChatHistoryToolsOptions } from './chat-history-tools.js'

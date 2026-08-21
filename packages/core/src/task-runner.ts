@@ -658,10 +658,16 @@ export class TaskRunner {
       // completion never settles must not zombify the task (fail-open keeps
       // the original result via the outer catch).
       try {
-        await withTimeout(agent.prompt(
-          'An independent reviewer checked your reported result against the original task and found gaps:\n\n' +
-          `${critique}\n\n` +
-          'Address these points (do additional work with your tools if needed), then report your final result again in the required STATUS/SUMMARY format.'
+        // The revision round can itself call create_task — keep the task
+        // execution context bound so sub-tasks spawned here still inherit
+        // this task's provider/persona (same contract as runTaskAsync).
+        await withTimeout(runWithTaskExecutionContext(
+          { provider: taskProvider, agentId: task.agentId ?? null, taskId },
+          () => agent.prompt(
+            'An independent reviewer checked your reported result against the original task and found gaps:\n\n' +
+            `${critique}\n\n` +
+            'Address these points (do additional work with your tools if needed), then report your final result again in the required STATUS/SUMMARY format.'
+          ),
         ), 600_000, 'Task revision round')
       } catch (err) {
         try {
@@ -1477,8 +1483,25 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
     const { taskId, agent } = runningTask
 
     try {
+      // Re-bind the per-task execution context for the resumed run. PausedTask
+      // does not persist the provider, but the task row carries provider name +
+      // pinned model — reconstruct it so sub-tasks created after a pause/resume
+      // still inherit this task's model (and persona) instead of silently
+      // falling back to the system default.
+      const taskRow = this.store.getById(taskId)
+      let ctxProvider: ProviderConfig | null = null
+      if (taskRow?.provider) {
+        const base = this.options.getProviderById?.(taskRow.provider) ?? null
+        if (base) {
+          ctxProvider = taskRow.model ? { ...base, enabledModels: [taskRow.model] } : base
+        }
+      }
+
       // Send the follow-up via prompt (which adds a user message and continues the agentic loop)
-      await agent.prompt(message)
+      await runWithTaskExecutionContext(
+        { provider: ctxProvider, agentId: taskRow?.agentId ?? null, taskId },
+        () => agent.prompt(message),
+      )
 
       // Task completed after resume
       unsubscribe()

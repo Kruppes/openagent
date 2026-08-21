@@ -58,7 +58,7 @@ import type {
 } from '@axiom/core'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { completeSimple } from '@axiom/core'
-import { getCurrentTaskProvider, getCurrentTaskAgentId } from '@axiom/core'
+import { getCurrentTaskAgentId, resolveTaskDefaultProvider } from '@axiom/core'
 import { randomUUID } from 'node:crypto'
 import { createTelegramBot, createTelegramBotPool } from '@axiom/telegram'
 import type { TelegramBot, TelegramBotPool, TelegramChatEvent } from '@axiom/telegram'
@@ -399,41 +399,18 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   }
 
   /**
-   * Task default-provider inheritance chain (C2). Consulted by create_task when
-   * the caller does NOT pin a provider/model explicitly:
-   *   1. Parent task's model (this call runs inside a running task's ALS ctx)
-   *      — a Kimi-pinned task spawns Kimi-pinned sub-/sub-sub-tasks.
-   *   2. Per-agent/persona default (C4, multiPersona.perAgentProvider).
-   *   3. Global tasks.defaultProvider setting.
-   *   4. Active chat provider/model.
-   * (Explicit provider/model on create_task short-circuits before ever calling
-   * this, so it is the highest-priority tier.)
+   * System default provider (chain tiers 3+4): the global tasks.defaultProvider
+   * setting, else the live active chat provider/model. This is the weakest tier
+   * of the task model inheritance chain.
    */
-  function getTaskDefaultProvider(): ProviderConfig {
-    // 1. Inherit the parent task's (model-pinned) provider when we are running
-    //    inside a task that itself is spawning a child task.
-    const parentTaskProvider = getCurrentTaskProvider()
-    if (parentTaskProvider) return parentTaskProvider
-
-    // 2. Per-agent/persona default (only meaningful in multi-persona mode).
-    const personaSettings = loadMultiPersonaSettings()
-    if (personaSettings.enabled && personaSettings.perAgentProvider) {
-      const agentId = agentCore?.getCurrentToolAgentId() ?? getCurrentTaskAgentId() ?? undefined
-      const spec = agentId ? personaSettings.perAgentProvider[agentId] : undefined
-      if (spec) {
-        const resolved = resolveProviderModelString(spec)
-        if (resolved) return resolved
-      }
-    }
-
-    // 3. Global task default provider setting.
+  function getTaskSystemDefaultProvider(): ProviderConfig {
     const currentTaskSettings = getCurrentTaskSettings()
     if (currentTaskSettings.defaultProvider) {
       const resolved = resolveProviderModelString(currentTaskSettings.defaultProvider)
       if (resolved) return resolved
     }
 
-    // 4. "Active provider (default)": follow the live chat selection for BOTH
+    // "Active provider (default)": follow the live chat selection for BOTH
     // provider and model. Downstream task creation derives the model via
     // getProviderDefaultModel() (= enabledModels[0]), so we narrow the cloned
     // provider to the active model. Without this, tasks would pick the
@@ -445,6 +422,25 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       return { ...active, enabledModels: [activeModelId] }
     }
     return active
+  }
+
+  /**
+   * Task default-provider inheritance chain (C2), delegated to the core
+   * `resolveTaskDefaultProvider` helper (unit-tested in core):
+   *   explicit(create_task) > parent task model (ALS) > per-agent default (C4)
+   *   > system default (tasks.defaultProvider / active chat).
+   * `agentId` is the persona the new task is attributed to (from create_task);
+   * when omitted the ALS context's agentId is used.
+   */
+  function getTaskDefaultProvider(agentId?: string | null): ProviderConfig {
+    const personaSettings = loadMultiPersonaSettings()
+    return resolveTaskDefaultProvider({
+      agentId: agentId ?? agentCore?.getCurrentToolAgentId() ?? getCurrentTaskAgentId(),
+      getPerAgentProviderSpec: (id) =>
+        (personaSettings.enabled ? personaSettings.perAgentProvider?.[id] : undefined),
+      resolveProvider,
+      getSystemDefault: getTaskSystemDefaultProvider,
+    })
   }
 
   const chatEventBus = new ChatEventBus()
@@ -1664,6 +1660,32 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     })
   }
 
+  /**
+   * C4 (per-agent/persona model): pin each persona runtime listed in
+   * multiPersona.perAgentProvider to its own provider/model so a global model
+   * change (Settings, Telegram /model, fallback) no longer overrides it. Called
+   * after every (hot-swap or full-rebuild) provider update so pins survive
+   * global swaps. Best-effort: a broken persona spec is logged and skipped.
+   */
+  async function applyPerAgentProviderPins(): Promise<void> {
+    if (!agentCore) return
+    const personaSettings = loadMultiPersonaSettings()
+    if (!personaSettings.enabled || !personaSettings.perAgentProvider) return
+    for (const [agentId, spec] of Object.entries(personaSettings.perAgentProvider)) {
+      const pinned = resolveProviderModelString(spec)
+      if (!pinned) {
+        logger.warn(`[axiom] perAgentProvider: cannot resolve "${spec}" for persona "${agentId}" — skipping pin`)
+        continue
+      }
+      try {
+        const apiKey = await getApiKeyForProvider(pinned)
+        agentCore.swapProviderForAgent(agentId, pinned, apiKey, getProviderDefaultModel(pinned))
+      } catch (err) {
+        logger.error(`[axiom] perAgentProvider: failed to pin persona "${agentId}":`, err)
+      }
+    }
+  }
+
   async function initOrUpdateAgentCore(): Promise<void> {
     const provider = getActiveProvider()
     if (!provider) {
@@ -1689,6 +1711,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
         agentCore.setProviderManager(manager)
         agentCore.swapProvider(provider, apiKey, activeModelId ?? undefined)
+        await applyPerAgentProviderPins()
         agentCore.refreshSystemPrompt()
 
         logger.log(`[axiom] Provider hot-swapped to ${provider.name} (${activeModelId ?? getProviderDefaultModel(provider)}) — sessions preserved`)
@@ -1745,6 +1768,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       agentCore.init().catch(err => {
         logger.error('[axiom] Error during agentCore.init():', err)
       })
+
+      await applyPerAgentProviderPins()
 
       await restartTelegramBot()
 

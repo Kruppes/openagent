@@ -7,8 +7,14 @@ import type { TaskRuntimeTaskBoundary } from './task-runtime.js'
 
 export interface TaskToolsOptions {
   taskRuntime: TaskRuntimeTaskBoundary
-  /** Get the default provider to use for tasks */
-  getDefaultProvider: () => ProviderConfig
+  /**
+   * Get the default provider to use for tasks. Receives the agentId the new
+   * task is attributed to (if any), so implementations can apply the model
+   * inheritance chain: parent task's model > agent/persona default > system
+   * default (see `resolveTaskDefaultProvider` in task-provider-resolution.ts).
+   * Zero-arg implementations remain valid and simply ignore the agent.
+   */
+  getDefaultProvider: (agentId?: string | null) => ProviderConfig
   /** Resolve a provider by name/id */
   resolveProvider: (nameOrId: string) => ProviderConfig | null
   /** Default max duration from settings */
@@ -152,8 +158,15 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
       }
 
       try {
+        // Attribution target of the new task. Resolved ONCE so the same value
+        // is used for (a) the persona-default lookup in the model inheritance
+        // chain and (b) the agentId stored on the task row — deterministic
+        // data pass-through, never re-inferred later.
+        const taskAgentId = options.getCurrentAgentId?.() ?? undefined
+
         // Resolve (provider, model) into a concrete provider config.
-        // - Both empty       → use default task provider
+        // - Both empty       → use default task provider (inheritance chain:
+        //                       parent task's model > agent default > system default)
         // - Any combination  → run through the shared resolver so a bare
         //                       model name ("kimi-k2.6") auto-selects its
         //                       provider and an enabled-model guard runs.
@@ -180,7 +193,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
             ? base
             : { ...base, enabledModels: [resolved.modelId] }
         } else {
-          provider = options.getDefaultProvider()
+          provider = options.getDefaultProvider(taskAgentId)
         }
 
         // Cap max duration
@@ -202,7 +215,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           model: getProviderDefaultModel(provider),
           isDefaultModel,
           maxDurationMinutes: maxDuration,
-          agentId: options.getCurrentAgentId?.() ?? undefined,
+          agentId: taskAgentId,
         })
 
         // Start the task, linking its session to the current interactive session
