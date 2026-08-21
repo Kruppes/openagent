@@ -435,7 +435,12 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   function getTaskDefaultProvider(agentId?: string | null): ProviderConfig {
     const personaSettings = loadMultiPersonaSettings()
     return resolveTaskDefaultProvider({
-      agentId: agentId ?? agentCore?.getCurrentToolAgentId() ?? getCurrentTaskAgentId(),
+      // Priority: explicit (create_task passes its attribution target) >
+      // ALS task context (deterministic data from the task row — RC principle) >
+      // interactive-turn inference. ALS MUST come before getCurrentToolAgentId:
+      // inside a background task, the interactive field can concurrently hold a
+      // DIFFERENT persona mid-turn and must not leak into task model choice.
+      agentId: agentId ?? getCurrentTaskAgentId() ?? agentCore?.getCurrentToolAgentId(),
       getPerAgentProviderSpec: (id) =>
         (personaSettings.enabled ? personaSettings.perAgentProvider?.[id] : undefined),
       resolveProvider,
@@ -973,6 +978,13 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   const backgroundTaskToolsOptions = {
     ...taskToolsOptions,
     getParentSessionId: () => null as string | null,
+    // Sub-tasks spawned from INSIDE a background task must be attributed to
+    // the persona of that task — read deterministically from the ALS task
+    // context (fed from the task row), NEVER from the interactive runtime's
+    // getCurrentToolAgentId(): that field belongs to whatever interactive
+    // turn happens to run concurrently and could attribute the sub-task (and
+    // its memory root + result routing) to the wrong persona.
+    getCurrentAgentId: () => getCurrentTaskAgentId() ?? undefined,
   }
 
   // Task runner, heartbeat and cronjob paths capture the `backgroundTaskTools`

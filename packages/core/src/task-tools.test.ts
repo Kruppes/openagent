@@ -15,7 +15,19 @@ import type { TaskRuntimeTaskBoundary } from './task-runtime.js'
 
 vi.mock('./provider-config.js', async (importOriginal) => {
   const original = await importOriginal() as Record<string, unknown>
-  return { ...original, estimateCost: vi.fn(() => 0.001) }
+  return {
+    ...original,
+    estimateCost: vi.fn(() => 0.001),
+    // The explicit-override tests pass provider/model to create_task; the real
+    // resolver reads providers.json from disk, which does not exist in tests.
+    resolveProviderModelInput: vi.fn((input: { provider?: string; model?: string }) => ({
+      ok: true,
+      providerId: input.provider ?? 'explicit-provider-id',
+      providerName: input.provider ?? 'explicit-provider',
+      modelId: input.model ?? 'explicit-model',
+      composite: `${input.provider ?? 'explicit-provider-id'}:${input.model ?? 'explicit-model'}`,
+    })),
+  }
 })
 
 vi.mock('@earendil-works/pi-agent-core', () => {
@@ -103,6 +115,99 @@ describe('createTaskTool', () => {
       }
     }
     tmpFiles.length = 0
+  })
+
+  // C5 — model inheritance chain at the create_task tool level.
+  it('sub-task inherits the parent task\'s model when no provider/model is given (parent > default)', async () => {
+    const { runWithTaskExecutionContext } = await import('./task-execution-context.js')
+    const { resolveTaskDefaultProvider } = await import('./task-provider-resolution.js')
+
+    const parentProvider: ProviderConfig = {
+      ...mockProvider,
+      id: 'parent-provider-id',
+      name: 'parent-provider',
+      enabledModels: ['parent-pinned-model'],
+    }
+    const systemDefault: ProviderConfig = {
+      ...mockProvider,
+      id: 'system-default-id',
+      name: 'system-default',
+      enabledModels: ['system-default-model'],
+    }
+
+    const tool = createTaskTool({
+      taskRuntime: buildBoundary(),
+      // Same wiring as the composition layer: the default resolver consults
+      // the ALS task context first (parent inheritance), then falls back.
+      getDefaultProvider: (agentId) => resolveTaskDefaultProvider({
+        agentId,
+        resolveProvider: () => null,
+        getSystemDefault: () => systemDefault,
+      }),
+      resolveProvider: () => mockProvider,
+      defaultMaxDurationMinutes: 60,
+      maxDurationMinutesCap: 240,
+    })
+
+    // Execute create_task INSIDE a running task's execution context.
+    const result = await runWithTaskExecutionContext(
+      { provider: parentProvider, agentId: 'warren', taskId: 'parent-task' },
+      () => tool.execute('call-inherit', { prompt: 'sub work', name: 'Sub' }),
+    )
+
+    const taskId = (result.details as { taskId: string }).taskId
+    const task = runner.getStore().getById(taskId)!
+    expect(task.provider).toBe('parent-provider')
+    expect(task.model).toBe('parent-pinned-model')
+    expect(task.isDefaultModel).toBe(true)
+    // Attribution flows from the tool's getCurrentAgentId (absent here), not
+    // silently from the ALS — the composition layer wires that explicitly.
+    runner.abortTask(taskId, 'cleanup')
+  })
+
+  it('sub-task with explicit provider/model overrides the parent task\'s model (explicit > parent)', async () => {
+    const { runWithTaskExecutionContext } = await import('./task-execution-context.js')
+
+    const parentProvider: ProviderConfig = {
+      ...mockProvider,
+      id: 'parent-provider-id',
+      name: 'parent-provider',
+      enabledModels: ['parent-pinned-model'],
+    }
+    const explicitProvider: ProviderConfig = {
+      ...mockProvider,
+      id: 'explicit-provider-id',
+      name: 'explicit-provider',
+      enabledModels: ['explicit-model'],
+    }
+
+    const getDefaultProvider = vi.fn(() => parentProvider)
+    const tool = createTaskTool({
+      taskRuntime: buildBoundary(),
+      getDefaultProvider,
+      resolveProvider: (nameOrId) => (nameOrId === 'explicit-provider-id' ? explicitProvider : null),
+      defaultMaxDurationMinutes: 60,
+      maxDurationMinutesCap: 240,
+    })
+
+    const result = await runWithTaskExecutionContext(
+      { provider: parentProvider, agentId: 'warren', taskId: 'parent-task' },
+      () => tool.execute('call-override', {
+        prompt: 'sub work',
+        name: 'Sub',
+        provider: 'explicit-provider-id',
+        model: 'explicit-model',
+      }),
+    )
+
+    const taskId = (result.details as { taskId: string }).taskId
+    const task = runner.getStore().getById(taskId)!
+    expect(task.provider).toBe('explicit-provider')
+    expect(task.model).toBe('explicit-model')
+    expect(task.isDefaultModel).toBe(false)
+    // The default chain (which would have returned the parent) was never used.
+    expect(getDefaultProvider).not.toHaveBeenCalled()
+    runner.abortTask(taskId, 'cleanup')
   })
 
   it('persists max_duration_minutes from the tool input onto the Task row', async () => {
