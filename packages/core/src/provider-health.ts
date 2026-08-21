@@ -1,11 +1,17 @@
 import type { Database } from './database.js'
 import type { ProviderConfig } from './provider-config.js'
-import { buildModel, getApiKeyForProvider, PROVIDER_TYPE_PRESETS, resolveModelTemperature, getProviderDefaultModel } from './provider-config.js'
+import { buildModel, getApiKeyForProvider, PROVIDER_TYPE_PRESETS, resolveModelTemperature, getProviderDefaultModel, DEFAULT_HEALTH_CHECK_TIMEOUT_MS } from './provider-config.js'
 import { completeSimple } from './pi-models.js'
+import { assertLlmResponseOk } from './llm-response.js'
 
 export type ProviderHealthStatus = 'healthy' | 'degraded' | 'down' | 'unconfigured'
 
 export interface ProviderHealthCheckOptions {
+  /**
+   * Explicit hard abort timeout. Takes precedence over the provider's
+   * persisted `healthCheckTimeoutMs` (used e.g. by the manual provider test,
+   * which always allows 60 s regardless of the monitor configuration).
+   */
   timeoutMs?: number
   degradedThresholdMs?: number
   fetchImpl?: typeof fetch
@@ -21,6 +27,13 @@ export interface ProviderHealthCheckResult {
   latencyMs: number | null
   errorMessage: string | null
   isRateLimited: boolean
+  /**
+   * True when the check failed because the hard timeout aborted the request
+   * (as opposed to a real provider error such as 401, 5xx or connection
+   * refused). Lets callers treat cold-start timeouts differently from actual
+   * outages. Absent/false for successful checks and non-timeout failures.
+   */
+  isTimeout?: boolean
 }
 
 export interface HealthCheckLogInput {
@@ -157,14 +170,15 @@ async function performPiAiHealthCheck(
     const timer = setTimeout(() => controller.abort(), timeoutMs)
 
     try {
-      await completeSimple(model, {
+      const response = await completeSimple(model, {
         messages: [{ role: 'user', content: [{ type: 'text', text: 'Respond with OK only.' }], timestamp: Date.now() }],
       }, {
         apiKey,
         maxTokens: 5,
-        temperature: resolveModelTemperature(provider, getProviderDefaultModel(provider), 0),
         signal: controller.signal,
       })
+
+      assertLlmResponseOk(response, 'Health check failed')
 
       const latencyMs = Date.now() - startedAt
       return {
@@ -183,9 +197,8 @@ async function performPiAiHealthCheck(
     }
   } catch (err) {
     const message = (err as Error).message || 'Unknown error'
-    const errorMessage = message.includes('abort') || (err as Error).name === 'AbortError'
-      ? 'Connection timed out'
-      : message
+    const isTimeout = message.includes('abort') || (err as Error).name === 'AbortError'
+    const errorMessage = isTimeout ? 'Connection timed out' : message
     const isRateLimited = message.includes('429') || message.toLowerCase().includes('rate limit')
 
     return {
@@ -198,6 +211,7 @@ async function performPiAiHealthCheck(
       latencyMs: Date.now() - startedAt,
       errorMessage,
       isRateLimited,
+      isTimeout,
     }
   }
 }
@@ -222,7 +236,10 @@ export async function performProviderHealthCheck(
     }
   }
 
-  const timeoutMs = options.timeoutMs ?? 15000
+  // Resolution order: explicit call option > per-provider persisted timeout
+  // (e.g. 60 s for local Ollama providers whose model cold start exceeds 15 s)
+  // > global default.
+  const timeoutMs = options.timeoutMs ?? provider.healthCheckTimeoutMs ?? DEFAULT_HEALTH_CHECK_TIMEOUT_MS
   const degradedThresholdMs = options.degradedThresholdMs ?? provider.degradedThresholdMs ?? 5000
   const fetchImpl = options.fetchImpl ?? fetch
   const controller = new AbortController()
@@ -279,9 +296,8 @@ export async function performProviderHealthCheck(
     }
   } catch (err) {
     const message = (err as Error).message || 'Unknown error'
-    const errorMessage = message.includes('abort') || (err as Error).name === 'AbortError'
-      ? 'Connection timed out'
-      : message
+    const isTimeout = message.includes('abort') || (err as Error).name === 'AbortError'
+    const errorMessage = isTimeout ? 'Connection timed out' : message
 
     return {
       checkedAt,
@@ -293,6 +309,7 @@ export async function performProviderHealthCheck(
       latencyMs: Date.now() - startedAt,
       errorMessage,
       isRateLimited: false,
+      isTimeout,
     }
   } finally {
     clearTimeout(timer)

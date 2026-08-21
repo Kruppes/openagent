@@ -1,6 +1,7 @@
 export { AgentHeartbeatService, DEFAULT_AGENT_HEARTBEAT_SETTINGS } from './agent-heartbeat.js'
 export type { AgentHeartbeatSettings, AgentHeartbeatNightMode, AgentHeartbeatServiceOptions } from './agent-heartbeat.js'
 export { initDatabase, getDatabase, isValidUsername, validateUsername } from './database.js'
+export { getOAuthAuth, oauthLogin } from './pi-oauth.js'
 export type { Database } from './database.js'
 export {
   getDataDir,
@@ -26,6 +27,7 @@ export {
   resolveBackgroundReasoning,
   resolveChatReasoning,
 } from './thinking-level.js'
+export { assertLlmResponseOk } from './llm-response.js'
 export {
   ensureMemoryStructure,
   ensureConfigStructure,
@@ -102,6 +104,9 @@ export {
   resolveModelTemperature,
   DEFAULT_PRICE_TABLE,
   getConfiguredPriceTable,
+  DEFAULT_HEALTH_CHECK_TIMEOUT_MS,
+  LOCAL_HEALTH_CHECK_TIMEOUT_MS,
+  getDefaultHealthCheckTimeoutMs,
   PROVIDER_TYPE_PRESETS,
   PROVIDER_TYPE_MODEL_OVERRIDES,
   CLAUDE_CODE_VERSION,
@@ -288,6 +293,15 @@ export {
 } from './loop-detection.js'
 export type { TrackedToolCall, LoopDetectionConfig, LoopDetectionResult } from './loop-detection.js'
 export { createTaskTool, createResumeTaskTool, listTasksTool } from './task-tools.js'
+export {
+  runWithTaskExecutionContext,
+  getCurrentTaskExecutionContext,
+  getCurrentTaskProvider,
+  getCurrentTaskAgentId,
+} from './task-execution-context.js'
+export type { TaskExecutionContext } from './task-execution-context.js'
+export { resolveTaskDefaultProvider } from './task-provider-resolution.js'
+export type { TaskDefaultProviderChainOptions } from './task-provider-resolution.js'
 export type { TaskToolsOptions } from './task-tools.js'
 export { createReadChatHistoryTool } from './chat-history-tools.js'
 export type { ChatHistoryToolsOptions } from './chat-history-tools.js'
@@ -331,6 +345,125 @@ export {
   cronToHumanReadable,
 } from './cron-parser.js'
 export type { CronFields } from './cron-parser.js'
+export {
+  loadEmailAccounts,
+  saveEmailAccounts,
+  listEmailAccounts,
+  getEmailAccount,
+  getEmailAccountDecrypted,
+  createEmailAccount,
+  updateEmailAccount,
+  deleteEmailAccount,
+  toSafeEmailAccount,
+  DEFAULT_ATTACHMENT_DOWNLOAD_PATH,
+} from './email-account-store.js'
+export type {
+  EmailAccount,
+  EmailAccountsFile,
+  EmailAllowlist,
+  EmailFolderMode,
+  SafeEmailAccount,
+  CreateEmailAccountInput,
+  UpdateEmailAccountInput,
+} from './email-account-store.js'
+export {
+  createEmailClient,
+  htmlToText,
+  normalizeAddress,
+  addressDomain,
+  formatAddress,
+  mapAddresses,
+  parseReferences,
+  collectAttachmentParts,
+  decodeHtmlEntities,
+  describeConnectionError,
+} from './email-client.js'
+export type {
+  EmailClient,
+  EmailClientAccount,
+  EmailAddress,
+  EmailFolder,
+  EmailAttachmentInfo,
+  EmailAttachmentDownload,
+  EmailMessage,
+  EmailMessageSummary,
+  EmailListOptions,
+  EmailOutgoingAttachment,
+  EmailSendInput,
+  EmailSendResult,
+  EmailConnectionCheck,
+  EmailConnectionTestResult,
+  EmailSecurity,
+  EmailProtocol,
+} from './email-client.js'
+export {
+  evaluateEmailSendPolicy,
+  isRecipientAllowed,
+} from './email-send-policy.js'
+export type {
+  EmailSendDecision,
+  EmailRecipientField,
+  EmailRecipientViolation,
+  EmailSendPolicyAccount,
+  EmailSendPolicyRecipients,
+  EmailSendPolicyResult,
+} from './email-send-policy.js'
+export {
+  initEmailSendLogTable,
+  createEmailSendLogEntry,
+  getEmailSendLogEntry,
+  updateEmailSendLogEntry,
+  listEmailSendLog,
+  countEmailSendLog,
+  EMAIL_SEND_LOG_STATUSES,
+} from './email-send-log.js'
+export type {
+  EmailSendLogEntry,
+  EmailSendLogStatus,
+  EmailSendLogAttachment,
+  CreateEmailSendLogInput,
+  UpdateEmailSendLogInput,
+  ListEmailSendLogOptions,
+} from './email-send-log.js'
+export {
+  createEmailTools,
+  createEmailListTool,
+  createEmailFoldersTool,
+  createEmailReadTool,
+  createEmailMarkReadTool,
+  createEmailMarkUnreadTool,
+  createEmailMoveTool,
+  createEmailDeleteTool,
+  createEmailDownloadAttachmentTool,
+  createEmailSendTool,
+  appendSignature,
+  appendHtmlSignature,
+  resolveWorkspaceFile,
+  isFolderAllowed,
+  toClientAccount,
+  attachmentTargetDir,
+  safeAttachmentFilename,
+  DEFAULT_EMAIL_FOLDER,
+  DEFAULT_EMAIL_LIST_LIMIT,
+  MAX_EMAIL_LIST_LIMIT,
+  MAX_EMAIL_BULK_UIDS,
+} from './email-tools.js'
+export type { EmailToolsDeps } from './email-tools.js'
+export { createEmailApprovalService, recoverStuckApprovedEmails } from './email-approval.js'
+export {
+  registerEmailApprovalNotifier,
+  clearEmailApprovalNotifiers,
+  notifyEmailApprovalRequested,
+  notifyEmailApprovalResolved,
+} from './email-approval-notifier.js'
+export type {
+  EmailApprovalService,
+  EmailApprovalDeps,
+  EmailApprovalDecider,
+  EmailApprovalResult,
+  EmailApprovalErrorCode,
+} from './email-approval.js'
+export type { EmailApprovalNotifier } from './email-approval-notifier.js'
 export { ScheduledTaskStore, initScheduledTasksTable } from './scheduled-task-store.js'
 export type { ScheduledTask, ScheduledTaskActionType, CreateScheduledTaskInput, UpdateScheduledTaskInput } from './scheduled-task-store.js'
 export { TaskScheduler } from './task-scheduler.js'

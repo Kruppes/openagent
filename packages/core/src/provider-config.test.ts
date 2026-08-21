@@ -185,6 +185,26 @@ describe('provider-config', () => {
     expect(model.cost.output).toBe(10.00)
   })
 
+  it('buildModel routes GitHub Copilot to the account proxy endpoint from the token', () => {
+    const model = buildModel({
+      id: 'copilot-id',
+      name: 'copilot',
+      type: 'anthropic-messages',
+      providerType: 'github-copilot' as const,
+      provider: 'github-copilot',
+      baseUrl: '',
+      apiKey: '',
+      authMethod: 'oauth' as const,
+      enabledModels: ['claude-haiku-4.5'],
+      oauthCredentials: {
+        refresh: 'r',
+        access: 'tid=abc;exp=1;proxy-ep=proxy.enterprise.githubcopilot.com;',
+        expires: Date.now() + 60_000,
+      },
+    })
+    expect(model.baseUrl).toBe('https://api.enterprise.githubcopilot.com')
+  })
+
   it('buildModel uses configured settings price table as fallback', () => {
     setupTmpConfig()
     fs.writeFileSync(
@@ -323,7 +343,7 @@ describe('provider-config', () => {
     })
     // The module-level catalog default must stay untouched (no shared reference).
     const catalogDefault = PROVIDER_TYPE_MODEL_OVERRIDES.kimi?.find(m => m.id === 'kimi-k2.6')
-    expect(catalogDefault?.cost?.input).toBe(0.6)
+    expect(catalogDefault?.cost?.input).toBe(0.95)
     const entry = patched.models?.find(m => m.id === 'kimi-k2.6')
     expect(entry).toBeDefined()
     expect(entry?.description).toBe('Fast model for digests')
@@ -334,7 +354,7 @@ describe('provider-config', () => {
     expect(entry?.cost?.input).toBe(1.5)
     expect(entry?.cost?.output).toBe(2.5)
     // Catalog cache cost preserved when not overridden
-    expect(entry?.cost?.cacheRead).toBe(0.15)
+    expect(entry?.cost?.cacheRead).toBe(0.16)
 
     // Clearing the description removes it; cost stays
     const cleared = updateProviderModel('kimi-id', 'kimi-k2.6', { description: '   ' })
@@ -654,6 +674,98 @@ describe('transport persistence guard', () => {
     const provider = addProvider({ name: 'primary', providerType: 'openai', apiKey: 'sk-a', enabledModels: ['gpt-4o'] })
     const updated = updateProvider(provider.id, { transport: 'websocket-cached' })
     expect(updated.transport).toBeUndefined()
+  })
+})
+
+describe('healthCheckTimeoutMs persistence', () => {
+  let tmpDir: string
+  const originalDataDir = process.env.DATA_DIR
+
+  afterEach(() => {
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true })
+    if (originalDataDir !== undefined) process.env.DATA_DIR = originalDataDir
+    else delete process.env.DATA_DIR
+  })
+
+  function setupEmpty(): void {
+    tmpDir = path.join(os.tmpdir(), `axiom-hct-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const configDir = path.join(tmpDir, 'config')
+    fs.mkdirSync(configDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(configDir, 'providers.json'),
+      JSON.stringify({ providers: [] }, null, 2),
+      'utf-8',
+    )
+    process.env.DATA_DIR = tmpDir
+  }
+
+  it('addProvider defaults local Ollama providers to the 60 s cold-start timeout', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'local-ollama',
+      providerType: 'ollama',
+      baseUrl: 'http://mac-studio:11434/v1',
+      enabledModels: ['qwen3:32b'],
+    })
+    expect(provider.healthCheckTimeoutMs).toBe(60000)
+  })
+
+  it('addProvider defaults remote providers to the regular 15 s timeout', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'remote-openai',
+      providerType: 'openai',
+      apiKey: 'sk-a',
+      enabledModels: ['gpt-4o'],
+    })
+    expect(provider.healthCheckTimeoutMs).toBe(15000)
+  })
+
+  it('addProvider honours an explicit healthCheckTimeoutMs over the type default', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'local-ollama',
+      providerType: 'ollama',
+      enabledModels: ['qwen3:32b'],
+      healthCheckTimeoutMs: 120000,
+    })
+    expect(provider.healthCheckTimeoutMs).toBe(120000)
+  })
+
+  it('updateProvider persists healthCheckTimeoutMs and leaves it untouched when omitted', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'remote-openai',
+      providerType: 'openai',
+      apiKey: 'sk-a',
+      enabledModels: ['gpt-4o'],
+    })
+    const updated = updateProvider(provider.id, { healthCheckTimeoutMs: 30000 })
+    expect(updated.healthCheckTimeoutMs).toBe(30000)
+
+    const untouched = updateProvider(provider.id, { name: 'renamed' })
+    expect(untouched.healthCheckTimeoutMs).toBe(30000)
+  })
+
+  it('existing provider entries without the field stay without it (no silent rewrite)', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'remote-openai',
+      providerType: 'openai',
+      apiKey: 'sk-a',
+      enabledModels: ['gpt-4o'],
+    })
+    // Simulate a pre-existing config entry created before the field existed
+    const file = loadProviders()
+    delete file.providers.find(p => p.id === provider.id)!.healthCheckTimeoutMs
+    fs.writeFileSync(
+      path.join(tmpDir, 'config', 'providers.json'),
+      JSON.stringify(file, null, 2),
+      'utf-8',
+    )
+
+    const updated = updateProvider(provider.id, { name: 'renamed' })
+    expect(updated.healthCheckTimeoutMs).toBeUndefined()
   })
 })
 

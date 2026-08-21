@@ -253,6 +253,25 @@
           <p class="text-xs text-muted-foreground">{{ $t('providers.degradedThresholdHint') }}</p>
         </div>
 
+        <!-- Health Check Timeout -->
+        <div v-if="form.providerType" class="flex flex-col gap-1.5">
+          <Label for="provider-health-check-timeout">{{ $t('providers.healthCheckTimeout') }}</Label>
+          <div class="flex items-center gap-2">
+            <Input
+              id="provider-health-check-timeout"
+              v-model.number="form.healthCheckTimeoutMs"
+              type="number"
+              min="1"
+              step="1"
+              :placeholder="healthCheckTimeoutPlaceholder"
+              :disabled="oauthInProgress"
+              class="flex-1"
+            />
+            <span class="text-xs text-muted-foreground">ms</span>
+          </div>
+          <p class="text-xs text-muted-foreground">{{ $t('providers.healthCheckTimeoutHint') }}</p>
+        </div>
+
         <!-- Text verbosity (OpenAI Codex Responses) -->
         <div v-if="supportsTextVerbosity" class="flex flex-col gap-1.5">
           <Label>{{ $t('providers.textVerbosity') }}</Label>
@@ -400,6 +419,7 @@ export interface ProviderFormPayload {
   apiKey: string
   enabledModels: string[]
   degradedThresholdMs: number
+  healthCheckTimeoutMs: number | null
   textVerbosity: null | 'low' | 'medium' | 'high'
   transport: null | 'sse' | 'websocket' | 'websocket-cached' | 'auto'
   extraFields: Record<string, string>
@@ -437,6 +457,7 @@ const form = reactive({
   apiKey: '',
   enabledModels: [] as string[],
   degradedThresholdMs: 5000,
+  healthCheckTimeoutMs: null as number | null,
   textVerbosity: 'default' as 'default' | 'low' | 'medium' | 'high',
   transport: 'default' as 'default' | 'sse' | 'websocket' | 'websocket-cached' | 'auto',
   extraFields: {} as Record<string, string>,
@@ -461,6 +482,13 @@ const ollamaPullResult = ref<{ success: boolean; message: string } | null>(null)
 
 const isOllamaProvider = computed(() => {
   return form.providerType === 'ollama'
+})
+
+// Mirrors the backend creation defaults (getDefaultHealthCheckTimeoutMs):
+// local Ollama providers get a 60 s cold-start-tolerant timeout, everything
+// else keeps the regular 15 s. Shown as placeholder when the field is empty.
+const healthCheckTimeoutPlaceholder = computed(() => {
+  return form.providerType === 'ollama' ? '60000' : '15000'
 })
 
 const selectedPreset = computed(() => {
@@ -584,6 +612,7 @@ watch(() => [props.open, props.provider] as const, ([isOpen, entry]) => {
     form.apiKey = ''
     form.enabledModels = [...(entry.enabledModels ?? [])]
     form.degradedThresholdMs = entry.degradedThresholdMs ?? 5000
+    form.healthCheckTimeoutMs = entry.healthCheckTimeoutMs ?? null
     form.textVerbosity = entry.textVerbosity ?? 'default'
     form.transport = entry.transport ?? 'default'
     form.extraFields = { ...(entry.extraFields ?? {}) }
@@ -601,6 +630,7 @@ watch(() => [props.open, props.provider] as const, ([isOpen, entry]) => {
     form.apiKey = ''
     form.enabledModels = []
     form.degradedThresholdMs = 5000
+    form.healthCheckTimeoutMs = null
     form.textVerbosity = 'default'
     form.transport = 'default'
     form.extraFields = {}
@@ -763,6 +793,9 @@ function normalizeExtraFieldsPayload(): Record<string, string> {
 function handleSubmit() {
   emit('submit', {
     ...form,
+    healthCheckTimeoutMs: typeof form.healthCheckTimeoutMs === 'number' && Number.isFinite(form.healthCheckTimeoutMs)
+      ? form.healthCheckTimeoutMs
+      : null,
     textVerbosity: normalizeTextVerbosityPayload(),
     transport: normalizeTransportPayload(),
     enabledModels: [...form.enabledModels],

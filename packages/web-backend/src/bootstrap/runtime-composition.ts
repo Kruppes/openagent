@@ -42,6 +42,8 @@ import {
   getProviderDefaultModel,
   ProviderManager,
   SessionManager,
+  createEmailApprovalService,
+  registerEmailApprovalNotifier,
   removeCronjobTool,
   TaskEventBus,
 } from '@axiom/core'
@@ -56,10 +58,13 @@ import type {
 } from '@axiom/core'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { completeSimple } from '@axiom/core'
+import { getCurrentTaskAgentId, resolveTaskDefaultProvider } from '@axiom/core'
 import { randomUUID } from 'node:crypto'
 import { createTelegramBot, createTelegramBotPool } from '@axiom/telegram'
 import type { TelegramBot, TelegramBotPool, TelegramChatEvent } from '@axiom/telegram'
 import { ChatEventBus } from '../chat-event-bus.js'
+import { ChatActionRegistry } from '../chat-actions.js'
+import { registerEmailApprovalChatChannel } from '../email-approval-chat.js'
 import { triggerFactExtractionForSessionEnd } from '../fact-extraction-session-end.js'
 import { HealthMonitorService } from '../health-monitor.js'
 import { MemoryConsolidationScheduler } from '../memory-consolidation-scheduler.js'
@@ -132,6 +137,7 @@ export interface RuntimeComposition {
   uploadCleanupService: UploadCleanupService
   taskEventBus: TaskEventBus
   chatEventBus: ChatEventBus
+  chatActions: ChatActionRegistry
   getAgentCore: () => AgentCore | null
   getTaskRuntime: () => TaskRuntimeBoundary
   /**
@@ -377,17 +383,31 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     }
   }
 
-  function getTaskDefaultProvider(): ProviderConfig {
+  /**
+   * Resolve a "providerId" or "providerId:modelId" string to a model-pinned
+   * ProviderConfig, or null when it cannot be resolved. Shared by the task
+   * default-provider inheritance chain.
+   */
+  function resolveProviderModelString(spec: string): ProviderConfig | null {
+    const { providerId, modelId } = parseProviderModelId(spec)
+    if (!providerId) return null
+    let resolved = resolveProvider(providerId)
+    if (resolved && modelId) {
+      resolved = { ...resolved, enabledModels: [modelId] }
+    }
+    return resolved ?? null
+  }
+
+  /**
+   * System default provider (chain tiers 3+4): the global tasks.defaultProvider
+   * setting, else the live active chat provider/model. This is the weakest tier
+   * of the task model inheritance chain.
+   */
+  function getTaskSystemDefaultProvider(): ProviderConfig {
     const currentTaskSettings = getCurrentTaskSettings()
     if (currentTaskSettings.defaultProvider) {
-      const { providerId, modelId } = parseProviderModelId(currentTaskSettings.defaultProvider)
-      if (providerId) {
-        let resolved = resolveProvider(providerId)
-        if (resolved && modelId) {
-          resolved = { ...resolved, enabledModels: [modelId] }
-        }
-        if (resolved) return resolved
-      }
+      const resolved = resolveProviderModelString(currentTaskSettings.defaultProvider)
+      if (resolved) return resolved
     }
 
     // "Active provider (default)": follow the live chat selection for BOTH
@@ -404,8 +424,48 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     return active
   }
 
+  /**
+   * Task default-provider inheritance chain (C2), delegated to the core
+   * `resolveTaskDefaultProvider` helper (unit-tested in core):
+   *   explicit(create_task) > parent task model (ALS) > per-agent default (C4)
+   *   > system default (tasks.defaultProvider / active chat).
+   * `agentId` is the persona the new task is attributed to (from create_task);
+   * when omitted the ALS context's agentId is used.
+   */
+  function getTaskDefaultProvider(agentId?: string | null): ProviderConfig {
+    const personaSettings = loadMultiPersonaSettings()
+    return resolveTaskDefaultProvider({
+      // Priority: explicit (create_task passes its attribution target) >
+      // ALS task context (deterministic data from the task row — RC principle) >
+      // interactive-turn inference. ALS MUST come before getCurrentToolAgentId:
+      // inside a background task, the interactive field can concurrently hold a
+      // DIFFERENT persona mid-turn and must not leak into task model choice.
+      agentId: agentId ?? getCurrentTaskAgentId() ?? agentCore?.getCurrentToolAgentId(),
+      getPerAgentProviderSpec: (id) =>
+        (personaSettings.enabled ? personaSettings.perAgentProvider?.[id] : undefined),
+      resolveProvider,
+      getSystemDefault: getTaskSystemDefaultProvider,
+    })
+  }
+
   const chatEventBus = new ChatEventBus()
   const taskEventBus = new TaskEventBus()
+
+  // Interactive chat messages are broadcast to every user, because approvals
+  // (the current consumer) may be answered by any authenticated user.
+  const chatActions = new ChatActionRegistry({
+    publishToClients: ({ type, message }) => {
+      const rows = db.prepare('SELECT id FROM users').all() as { id: number }[]
+      for (const row of rows) {
+        chatEventBus.broadcast({ type, userId: row.id, source: 'web', chatAction: message })
+      }
+    },
+  })
+
+  const unregisterEmailApprovalChat = registerEmailApprovalChatChannel({
+    chatActions,
+    approval: createEmailApprovalService({ db }),
+  })
 
   // Shared SessionManager dedicated to background producers (tasks,
   // heartbeat, consolidation, scheduled jobs, reminders). It only uses
@@ -421,6 +481,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   // Multi-persona mode: one TelegramBot per persona account. `telegramBot`
   // then points at the pool's primary bot for backward compatibility.
   let telegramBotPool: TelegramBotPool | null = null
+  let unregisterTelegramEmailApproval: (() => void) | null = null
 
   /**
    * Resolve the Telegram bot bound to a persona. Falls back to the primary
@@ -717,9 +778,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     })
   }
 
-  // Background task tools are built as a mutable array so that
-  // create_task / list_tasks can be pushed in after taskRuntime is
-  // available (they need taskRuntime.tasks — resolved below).
+  // Background task tools live in a mutable array that is repopulated in place
+  // by rebuildBackgroundTaskTools (see there).
   const backgroundSttEnabled = (() => { try { return loadSttSettings().enabled } catch { return false } })()
   // createBaseAgentTools builds the shared tool set (yolo, web, chat-history,
   // search-memories, agent-skills, transcribe-audio). Both the interactive
@@ -913,21 +973,37 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     getCurrentAgentId: () => agentCore?.getCurrentToolAgentId(),
   }
 
-  // Now that taskRuntime exists, push create_task / list_tasks into the
-  // background-task tool set. The task runner holds a reference to the
-  // backgroundTaskTools array, so all subsequently started tasks
-  // (heartbeat, cronjob, user-spawned) will see these tools.
   // Background tasks never have an active interactive session, so
   // getParentSessionId always returns null here.
   const backgroundTaskToolsOptions = {
     ...taskToolsOptions,
     getParentSessionId: () => null as string | null,
+    // Sub-tasks spawned from INSIDE a background task must be attributed to
+    // the persona of that task — read deterministically from the ALS task
+    // context (fed from the task row), NEVER from the interactive runtime's
+    // getCurrentToolAgentId(): that field belongs to whatever interactive
+    // turn happens to run concurrently and could attribute the sub-task (and
+    // its memory root + result routing) to the wrong persona.
+    getCurrentAgentId: () => getCurrentTaskAgentId() ?? undefined,
   }
-  backgroundTaskTools.push(
-    createTaskTool(backgroundTaskToolsOptions),
-    createResumeTaskTool(backgroundTaskToolsOptions),
-    listTasksTool({ taskRuntime: taskRuntime.tasks }),
-  )
+
+  // Task runner, heartbeat and cronjob paths capture the `backgroundTaskTools`
+  // array reference once, so this MUST mutate that array in place — reassigning
+  // it would leave every background path on the stale tool set.
+  function rebuildBackgroundTaskTools(): void {
+    backgroundTaskTools.length = 0
+    backgroundTaskTools.push(
+      ...createBaseAgentTools({
+        db,
+        builtinToolsConfig: () => loadRuntimeSettings().builtinToolsConfig,
+        sttEnabled: backgroundSttEnabled,
+      }),
+      createTaskTool(backgroundTaskToolsOptions),
+      createResumeTaskTool(backgroundTaskToolsOptions),
+      listTasksTool({ taskRuntime: taskRuntime.tasks }),
+    )
+  }
+  rebuildBackgroundTaskTools()
 
   // Wrap the schedule boundary so deleting a cronjob also evicts its
   // cached reminder session id. Without this, a cronjob deleted mid-
@@ -1280,9 +1356,17 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       // wrong id, causing the divider row + summary to be written into
       // the NEW session's transcript instead of the OLD one.
       const dividerMetadata = JSON.stringify({ type: 'session_divider', summary: summary ?? null })
+      // Date the divider at the session's end, not at `now`: a background
+      // summary lands seconds after the user already sent messages in the new
+      // session, and chat history is ordered by timestamp — a `now` divider
+      // would reappear *below* those messages after a page reload.
       db.prepare(
-        'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
-      ).run(sessionId, numericUserId, 'system', summary ?? '', dividerMetadata, agentId)
+        // RC1–3: agent_id on every INSERT (write-path discipline).
+        // Upstream 1cd455c2: date the divider at the session's end via
+        // COALESCE(ended_at, now()). Both columns kept.
+        `INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT ended_at FROM sessions WHERE id = ?), datetime('now')))`
+      ).run(sessionId, numericUserId, 'system', summary ?? '', dividerMetadata, agentId, sessionId)
 
       if (numericUserId !== null) {
         if (isBackground) {
@@ -1447,6 +1531,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       return
     }
 
+    unregisterTelegramEmailApproval?.()
+    unregisterTelegramEmailApproval = null
+
     // Stop existing pool if any
     if (telegramBotPool) {
       try {
@@ -1496,6 +1583,13 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         // Point telegramBot at the primary bot for backward compatibility
         // (reminders, status updates, single-bot callers).
         telegramBot = telegramBotPool.getPrimaryBot()
+        // Email approval notifications route through the primary bot in pool
+        // mode too, so the upstream email-approval feature keeps working when
+        // multi-persona is enabled. Cleanup is symmetric via
+        // unregisterTelegramEmailApproval in the stop/shutdown paths.
+        if (telegramBot) {
+          unregisterTelegramEmailApproval = registerEmailApprovalNotifier(telegramBot.createEmailApprovalNotifier())
+        }
         if (telegramBotPool.hasRunningBots()) {
           logger.log('[axiom] Telegram bot pool (re)started')
         } else {
@@ -1530,6 +1624,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     if (telegramBot) {
       try {
         await telegramBot.start()
+        unregisterTelegramEmailApproval = registerEmailApprovalNotifier(telegramBot.createEmailApprovalNotifier())
         logger.log('[axiom] Telegram bot (re)started')
       } catch (err) {
         logger.error('[axiom] Failed to start Telegram bot:', err)
@@ -1577,6 +1672,32 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     })
   }
 
+  /**
+   * C4 (per-agent/persona model): pin each persona runtime listed in
+   * multiPersona.perAgentProvider to its own provider/model so a global model
+   * change (Settings, Telegram /model, fallback) no longer overrides it. Called
+   * after every (hot-swap or full-rebuild) provider update so pins survive
+   * global swaps. Best-effort: a broken persona spec is logged and skipped.
+   */
+  async function applyPerAgentProviderPins(): Promise<void> {
+    if (!agentCore) return
+    const personaSettings = loadMultiPersonaSettings()
+    if (!personaSettings.enabled || !personaSettings.perAgentProvider) return
+    for (const [agentId, spec] of Object.entries(personaSettings.perAgentProvider)) {
+      const pinned = resolveProviderModelString(spec)
+      if (!pinned) {
+        logger.warn(`[axiom] perAgentProvider: cannot resolve "${spec}" for persona "${agentId}" — skipping pin`)
+        continue
+      }
+      try {
+        const apiKey = await getApiKeyForProvider(pinned)
+        agentCore.swapProviderForAgent(agentId, pinned, apiKey, getProviderDefaultModel(pinned))
+      } catch (err) {
+        logger.error(`[axiom] perAgentProvider: failed to pin persona "${agentId}":`, err)
+      }
+    }
+  }
+
   async function initOrUpdateAgentCore(): Promise<void> {
     const provider = getActiveProvider()
     if (!provider) {
@@ -1602,6 +1723,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
         agentCore.setProviderManager(manager)
         agentCore.swapProvider(provider, apiKey, activeModelId ?? undefined)
+        await applyPerAgentProviderPins()
         agentCore.refreshSystemPrompt()
 
         logger.log(`[axiom] Provider hot-swapped to ${provider.name} (${activeModelId ?? getProviderDefaultModel(provider)}) — sessions preserved`)
@@ -1659,6 +1781,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         logger.error('[axiom] Error during agentCore.init():', err)
       })
 
+      await applyPerAgentProviderPins()
+
       await restartTelegramBot()
 
       logger.log(`[axiom] Agent core initialized with provider: ${provider.name} (${activeModelId ?? getProviderDefaultModel(provider)})`)
@@ -1710,6 +1834,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     uploadCleanupService,
     taskEventBus,
     chatEventBus,
+    chatActions,
     getAgentCore: () => agentCore,
     getTaskRuntime: () => taskRuntime,
     resolveProvider,
@@ -1722,6 +1847,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       })
     },
     onActiveProviderChanged: () => {
+      // initOrUpdateAgentCore only rebuilds the interactive core.
+      rebuildBackgroundTaskTools()
       initOrUpdateAgentCore().catch((err) => {
         logger.error('[axiom] Error initializing agent core after provider change:', err)
       })
@@ -1736,6 +1863,10 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       agentHeartbeatService.stop()
       uploadCleanupService.stop()
       taskRuntime.schedules.stop()
+
+      unregisterTelegramEmailApproval?.()
+      unregisterTelegramEmailApproval = null
+      unregisterEmailApprovalChat()
 
       if (telegramBotPool) {
         try {

@@ -5,7 +5,8 @@ import type { Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { Api, ImageContent, Model } from '@earendil-works/pi-ai'
 import { completeSimple } from './pi-models.js'
 import type { Database } from './database.js'
-import { getApiKeyForProvider, buildModel, resolveModelTemperature } from './provider-config.js'
+import { getApiKeyForProvider, buildModel } from './provider-config.js'
+import { assertLlmResponseOk } from './llm-response.js'
 import type { ProviderConfig } from './provider-config.js'
 import type { ProviderManager } from './provider-manager.js'
 import { loadConfig } from './config.js'
@@ -80,6 +81,15 @@ export class AgentCore {
    */
   private runtimes: Map<string, AgentRuntimeBoundary> = new Map()
   private runtimeOptions: AgentCoreOptions
+  /**
+   * Personas whose runtime is pinned to its own provider/model via
+   * swapProviderForAgent (C4, per-agent model selection). Pinned runtimes are
+   * skipped by the global swapProvider() so a global model change (Settings,
+   * Telegram /model, fallback machinery) no longer overrides a persona's own
+   * model. Note the documented consequence: a pinned persona does not follow
+   * the global fallback swap either — its pin stays authoritative.
+   */
+  private pinnedProviderAgents: Set<string> = new Set()
 
   constructor(options: AgentCoreOptions) {
     this.db = options.db
@@ -189,8 +199,37 @@ export class AgentCore {
     // Update stored options so future lazily-created persona runtimes use the
     // new provider too.
     this.runtimeOptions = { ...this.runtimeOptions, providerConfig: provider }
-    for (const runtime of this.runtimes.values()) {
+    for (const [agentId, runtime] of this.runtimes) {
+      // Personas pinned to their own model keep it across global swaps.
+      if (this.pinnedProviderAgents.has(agentId)) continue
       runtime.swapProvider(provider, apiKey, modelId)
+    }
+  }
+
+  /**
+   * Pin ONE persona runtime to its own provider/model (C4, per-agent model
+   * selection — `multiPersona.perAgentProvider`). Creates the runtime if it
+   * does not exist yet. Pinned runtimes are excluded from global
+   * swapProvider() calls until unpinAgentProvider() is called.
+   */
+  // Used by the composition layer to apply multiPersona.perAgentProvider.
+  swapProviderForAgent(agentId: string, provider: ProviderConfig, apiKey: string, modelId?: string): void {
+    const runtime = this.getOrCreateRuntime(agentId)
+    runtime.swapProvider(provider, apiKey, modelId)
+    this.pinnedProviderAgents.add(agentId)
+  }
+
+  /**
+   * Remove a persona's provider pin. When the global provider/apiKey is
+   * passed, the runtime is re-synced to it immediately; otherwise it keeps
+   * its current model until the next global swapProvider() call.
+   */
+  // Used by the composition layer when a perAgentProvider entry is removed.
+  // fallow-ignore-next-line unused-class-member
+  unpinAgentProvider(agentId: string, provider?: ProviderConfig, apiKey?: string, modelId?: string): void {
+    if (!this.pinnedProviderAgents.delete(agentId)) return
+    if (provider && apiKey !== undefined) {
+      this.runtimes.get(agentId)?.swapProvider(provider, apiKey, modelId)
     }
   }
 
@@ -595,7 +634,6 @@ export class AgentCore {
             const resolvedModelId = modelId ?? getProviderDefaultModel(summaryProvider)
             summaryModel = buildModel(summaryProvider, resolvedModelId)
             summaryApiKey = await getApiKeyForProvider(summaryProvider)
-            summaryProviderForTemp = summaryProvider
             console.log(`[session-summary] Using dedicated provider: ${summaryProvider.name} (${resolvedModelId})`)
           } else {
             console.warn(`[session-summary] Configured summary provider '${providerId}' not found, using active provider`)
@@ -648,11 +686,10 @@ Do NOT add this section if everything discussed was resolved or if there is noth
         }],
       }, {
         apiKey: summaryApiKey,
-        temperature: summaryProviderForTemp
-          ? resolveModelTemperature(summaryProviderForTemp, summaryModel.id, 0)
-          : 0,
         reasoning: resolveBackgroundReasoning(),
       }), 180_000, 'Session summary')
+
+      assertLlmResponseOk(response, '[session-summary] Provider rejected the summary request')
 
       const textContent = response.content.filter(c => c.type === 'text')
 
@@ -671,8 +708,11 @@ Do NOT add this section if everything discussed was resolved or if there is noth
 
       return summary || 'Empty session.'
     } catch (err) {
+      // Return no summary at all: a placeholder string would be written to
+      // the daily memory file and shown as the session's summary card,
+      // making a broken provider look like an uneventful conversation.
       console.error('Failed to generate session summary:', err)
-      return 'Session ended (summary generation failed).'
+      return ''
     }
   }
 

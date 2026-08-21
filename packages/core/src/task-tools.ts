@@ -7,8 +7,14 @@ import type { TaskRuntimeTaskBoundary } from './task-runtime.js'
 
 export interface TaskToolsOptions {
   taskRuntime: TaskRuntimeTaskBoundary
-  /** Get the default provider to use for tasks */
-  getDefaultProvider: () => ProviderConfig
+  /**
+   * Get the default provider to use for tasks. Receives the agentId the new
+   * task is attributed to (if any), so implementations can apply the model
+   * inheritance chain: parent task's model > agent/persona default > system
+   * default (see `resolveTaskDefaultProvider` in task-provider-resolution.ts).
+   * Zero-arg implementations remain valid and simply ignore the agent.
+   */
+  getDefaultProvider: (agentId?: string | null) => ProviderConfig
   /** Resolve a provider by name/id */
   resolveProvider: (nameOrId: string) => ProviderConfig | null
   /** Default max duration from settings */
@@ -133,7 +139,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
       ),
       model: Type.Optional(
         Type.String({
-          description: 'Specific model id to use for this task (e.g. "kimi-k2.6", "gpt-5", "claude-sonnet-4-5"). Choose based on the descriptions in `<available_providers>` — prefer cost-effective models for simple work and stronger models for complex coding or research. Only pass this if you have a specific reason to deviate from the default task model. If `provider` is omitted, the provider is auto-detected from the configured providers (requires a unique match).',
+          description: 'Specific model id to use for this task (e.g. "kimi-k2.6", "gpt-5", "claude-sonnet-4-5"). Choose based on the descriptions in `<available_providers>` — prefer cost-effective models for simple work and stronger models for complex coding or research. Only pass this if you have a specific reason to deviate from the default task model. If `provider` is omitted, the provider is auto-detected from the configured providers (requires a unique match). If you omit both `provider` and `model`, the task inherits the model of the task that created it (or your active model at the top level), so sub-tasks and sub-sub-tasks stay on the same model unless you pin a different one here.',
         })
       ),
       max_duration_minutes: Type.Optional(
@@ -152,8 +158,15 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
       }
 
       try {
+        // Attribution target of the new task. Resolved ONCE so the same value
+        // is used for (a) the persona-default lookup in the model inheritance
+        // chain and (b) the agentId stored on the task row — deterministic
+        // data pass-through, never re-inferred later.
+        const taskAgentId = options.getCurrentAgentId?.() ?? undefined
+
         // Resolve (provider, model) into a concrete provider config.
-        // - Both empty       → use default task provider
+        // - Both empty       → use default task provider (inheritance chain:
+        //                       parent task's model > agent default > system default)
         // - Any combination  → run through the shared resolver so a bare
         //                       model name ("kimi-k2.6") auto-selects its
         //                       provider and an enabled-model guard runs.
@@ -180,7 +193,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
             ? base
             : { ...base, enabledModels: [resolved.modelId] }
         } else {
-          provider = options.getDefaultProvider()
+          provider = options.getDefaultProvider(taskAgentId)
         }
 
         // Cap max duration
@@ -202,7 +215,7 @@ export function createTaskTool(options: TaskToolsOptions): AgentTool {
           model: getProviderDefaultModel(provider),
           isDefaultModel,
           maxDurationMinutes: maxDuration,
-          agentId: options.getCurrentAgentId?.() ?? undefined,
+          agentId: taskAgentId,
         })
 
         // Start the task, linking its session to the current interactive session

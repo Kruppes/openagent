@@ -1005,6 +1005,39 @@ describe('TaskRunner', () => {
       const original = store.getById(task.id)!
       expect(original.status).toBe('failed')
     })
+
+    it('carries agentId over to the resumed task (multi-persona attribution)', async () => {
+      const task = store.create({
+        name: 'Warren Task',
+        prompt: 'Work',
+        triggerType: 'agent',
+        agentId: 'warren',
+      })
+      store.update(task.id, { status: 'running' })
+
+      await runner.recoverTasks(() => null, mockProvider)
+
+      const resumed = store.list({}).find(t => t.name === 'Warren Task (resumed)')
+      expect(resumed).toBeDefined()
+      // Must NOT fall back to 'main': a NULL agent_id would be re-attributed to
+      // main downstream and leak the task into the wrong persona.
+      expect(resumed!.agentId).toBe('warren')
+    })
+
+    it('leaves agentId unset when the original task had none', async () => {
+      const task = store.create({
+        name: 'Unowned Task',
+        prompt: 'Work',
+        triggerType: 'agent',
+      })
+      store.update(task.id, { status: 'running' })
+
+      await runner.recoverTasks(() => null, mockProvider)
+
+      const resumed = store.list({}).find(t => t.name === 'Unowned Task (resumed)')
+      expect(resumed).toBeDefined()
+      expect(resumed!.agentId).toBeNull()
+    })
   })
 
   describe('task overrides', () => {

@@ -400,19 +400,23 @@ export const PROVIDER_TYPE_MODEL_OVERRIDES: Partial<Record<ProviderType, Provide
     // Current K2 family
     // Note: K2 reasoning models only accept `temperature: 1` (the upstream API
     // returns "invalid temperature: only 1 is allowed for this model" otherwise).
-    { id: 'kimi-k2.6', name: 'Kimi K2.6', contextWindow: 262_144, maxTokens: 32_768, reasoning: true, fixedTemperature: 1,
+    { id: 'kimi-k2.7-code', name: 'Kimi K2.7 Code', contextWindow: 262_144, maxTokens: 262_144, reasoning: true, fixedTemperature: 1,
+      cost: { input: 0.95, output: 4.0, cacheRead: 0.19, cacheWrite: 0 } },
+    { id: 'kimi-k2.7-code-highspeed', name: 'Kimi K2.7 Code HighSpeed', contextWindow: 262_144, maxTokens: 262_144, reasoning: true, fixedTemperature: 1,
+      cost: { input: 1.9, output: 8.0, cacheRead: 0.38, cacheWrite: 0 } },
+    { id: 'kimi-k2.6', name: 'Kimi K2.6', contextWindow: 262_144, maxTokens: 262_144, reasoning: true, fixedTemperature: 1,
+      cost: { input: 0.95, output: 4.0, cacheRead: 0.16, cacheWrite: 0 } },
+    { id: 'kimi-k2.5', name: 'Kimi K2.5', contextWindow: 262_144, maxTokens: 262_144, reasoning: true, fixedTemperature: 1,
+      cost: { input: 0.6, output: 3.0, cacheRead: 0.1, cacheWrite: 0 } },
+    { id: 'kimi-k2-thinking', name: 'Kimi K2 Thinking', contextWindow: 262_144, maxTokens: 262_144, reasoning: true, fixedTemperature: 1,
       cost: { input: 0.6, output: 2.5, cacheRead: 0.15, cacheWrite: 0 } },
-    { id: 'kimi-k2.5', name: 'Kimi K2.5', contextWindow: 262_144, maxTokens: 32_768, reasoning: true, fixedTemperature: 1,
-      cost: { input: 0.6, output: 2.5, cacheRead: 0.15, cacheWrite: 0 } },
-    { id: 'kimi-k2-thinking', name: 'Kimi K2 Thinking', contextWindow: 262_144, maxTokens: 32_768, reasoning: true, fixedTemperature: 1,
-      cost: { input: 0.6, output: 2.5, cacheRead: 0.15, cacheWrite: 0 } },
-    { id: 'kimi-k2-thinking-turbo', name: 'Kimi K2 Thinking Turbo', contextWindow: 262_144, maxTokens: 32_768, reasoning: true, fixedTemperature: 1,
+    { id: 'kimi-k2-thinking-turbo', name: 'Kimi K2 Thinking Turbo', contextWindow: 262_144, maxTokens: 262_144, reasoning: true, fixedTemperature: 1,
+      cost: { input: 1.15, output: 8.0, cacheRead: 0.15, cacheWrite: 0 } },
+    { id: 'kimi-k2-turbo-preview', name: 'Kimi K2 Turbo (preview)', contextWindow: 262_144, maxTokens: 262_144, reasoning: false,
       cost: { input: 2.4, output: 10.0, cacheRead: 0.6, cacheWrite: 0 } },
-    { id: 'kimi-k2-turbo-preview', name: 'Kimi K2 Turbo (preview)', contextWindow: 262_144, maxTokens: 32_768, reasoning: false,
-      cost: { input: 2.4, output: 10.0, cacheRead: 0.6, cacheWrite: 0 } },
-    { id: 'kimi-k2-0905-preview', name: 'Kimi K2 0905 (preview)', contextWindow: 262_144, maxTokens: 32_768, reasoning: false,
+    { id: 'kimi-k2-0905-preview', name: 'Kimi K2 0905 (preview)', contextWindow: 262_144, maxTokens: 262_144, reasoning: false,
       cost: { input: 0.6, output: 2.5, cacheRead: 0.15, cacheWrite: 0 } },
-    { id: 'kimi-k2-0711-preview', name: 'Kimi K2 0711 (preview)', contextWindow: 131_072, maxTokens: 32_768, reasoning: false,
+    { id: 'kimi-k2-0711-preview', name: 'Kimi K2 0711 (preview)', contextWindow: 131_072, maxTokens: 16_384, reasoning: false,
       cost: { input: 0.6, output: 2.5, cacheRead: 0.15, cacheWrite: 0 } },
 
     // Convenience alias that always points at the latest stable
@@ -680,6 +684,27 @@ export function resolveModelTemperature(
   return requested
 }
 
+/** Default hard abort timeout for automated provider health checks (ms). */
+export const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 15000
+
+/**
+ * Health-check timeout applied to newly created LOCAL providers (Ollama and
+ * its legacy aliases). A model cold start (VRAM eviction, model reload) can
+ * easily take 30–60 s; the regular 15 s default would misclassify a merely
+ * cold provider as down.
+ */
+export const LOCAL_HEALTH_CHECK_TIMEOUT_MS = 60000
+
+/**
+ * Creation-time default for `ProviderConfig.healthCheckTimeoutMs`.
+ * Only affects NEWLY created providers — existing configs without the field
+ * keep resolving to DEFAULT_HEALTH_CHECK_TIMEOUT_MS in the health check.
+ */
+export function getDefaultHealthCheckTimeoutMs(providerType: ProviderType): number {
+  const preset = PROVIDER_TYPE_PRESETS[providerType]
+  return preset?.type === 'ollama' ? LOCAL_HEALTH_CHECK_TIMEOUT_MS : DEFAULT_HEALTH_CHECK_TIMEOUT_MS
+}
+
 /**
  * Provider configuration as stored in providers.json
  */
@@ -693,6 +718,15 @@ export interface ProviderConfig {
   apiKey: string // encrypted at rest
   enabledModels?: string[] // list of model IDs enabled for this provider; first entry is the default/primary model
   degradedThresholdMs?: number
+  /**
+   * Hard abort timeout for automated health checks (ms). Absent → the
+   * health check falls back to DEFAULT_HEALTH_CHECK_TIMEOUT_MS (15000), so
+   * existing provider configs keep their exact pre-existing behavior.
+   * Local providers (Ollama) get LOCAL_HEALTH_CHECK_TIMEOUT_MS (60000) on
+   * creation because a model cold start (VRAM eviction + reload) routinely
+   * exceeds 15 s and must not be classified as "down".
+   */
+  healthCheckTimeoutMs?: number
   textVerbosity?: TextVerbosity
   transport?: ProviderTransport
   models?: ProviderModelConfig[]
@@ -738,6 +772,14 @@ export interface ProviderModelConfig {
   contextWindow?: number
   maxTokens?: number
   reasoning?: boolean
+  /**
+   * Maps Axiom's thinking levels onto the effort values the upstream API
+   * expects. Only needed for OpenAI-compatible endpoints outside pi-ai's
+   * catalog (e.g. a local Ollama server), where pi-ai has no built-in map.
+   * Without an `off` entry pi-ai omits `reasoning_effort` entirely on `off`,
+   * so a reasoning-capable model keeps thinking on every request.
+   */
+  thinkingLevelMap?: Record<string, string | null>
   /**
    * If set, the upstream API only accepts this exact `temperature` value and
    * rejects any other value (e.g. Moonshot's Kimi K2 thinking models require
@@ -1091,6 +1133,7 @@ export function addProvider(input: {
   apiKey?: string
   enabledModels: string[]
   degradedThresholdMs?: number
+  healthCheckTimeoutMs?: number
   textVerbosity?: TextVerbosity
   transport?: ProviderTransport
   extraFields?: Record<string, string>
@@ -1121,6 +1164,7 @@ export function addProvider(input: {
     apiKey: input.apiKey ? encrypt(input.apiKey) : '',
     enabledModels,
     degradedThresholdMs: input.degradedThresholdMs ?? 5000,
+    healthCheckTimeoutMs: input.healthCheckTimeoutMs ?? getDefaultHealthCheckTimeoutMs(input.providerType),
     ...(input.textVerbosity && presetSupportsTextVerbosity(input.providerType)
       && { textVerbosity: input.textVerbosity }),
     ...(input.transport && input.transport !== 'sse' && presetSupportsTransport(input.providerType)
@@ -1153,6 +1197,7 @@ export function addOAuthProvider(input: {
   providerType: ProviderType
   enabledModels: string[]
   degradedThresholdMs?: number
+  healthCheckTimeoutMs?: number
   textVerbosity?: TextVerbosity
   transport?: ProviderTransport
   oauthCredentials: OAuthCredentials
@@ -1184,6 +1229,7 @@ export function addOAuthProvider(input: {
     apiKey: '',
     enabledModels,
     degradedThresholdMs: input.degradedThresholdMs ?? 5000,
+    healthCheckTimeoutMs: input.healthCheckTimeoutMs ?? getDefaultHealthCheckTimeoutMs(input.providerType),
     ...(input.textVerbosity && presetSupportsTextVerbosity(input.providerType)
       && { textVerbosity: input.textVerbosity }),
     ...(input.transport && input.transport !== 'sse' && presetSupportsTransport(input.providerType)
@@ -1214,6 +1260,7 @@ export function updateProvider(id: string, input: {
   apiKey?: string
   enabledModels?: string[]
   degradedThresholdMs?: number
+  healthCheckTimeoutMs?: number
   textVerbosity?: TextVerbosity | null
   transport?: ProviderTransport | null
   extraFields?: Record<string, string>
@@ -1256,6 +1303,7 @@ export function updateProvider(id: string, input: {
     existing.enabledModels = input.enabledModels
   }
   if (input.degradedThresholdMs !== undefined) existing.degradedThresholdMs = input.degradedThresholdMs
+  if (input.healthCheckTimeoutMs !== undefined) existing.healthCheckTimeoutMs = input.healthCheckTimeoutMs
   if (input.extraFields !== undefined) {
     existing.extraFields = mergeExtraFieldsForUpdate(existing.providerType, existing.extraFields, input.extraFields)
   }
@@ -1629,7 +1677,9 @@ export async function refreshOAuthCredentialsLocked(
     }
     if (Date.now() < base.expires) return base
 
-    const rotated = await oauthAuth.refresh(base)
+    // pi-ai 0.84.1: OAuthAuth.refresh(credential, signal) requires an AbortSignal.
+    // 30s cap mirrors upstream pi-oauth.ts; a hung refresh must not wedge the turn.
+    const rotated = await oauthAuth.refresh(base, AbortSignal.timeout(30_000))
     const { type: _type, ...toStore } = rotated
     updateOAuthCredentials(providerId, toStore as OAuthCredentials)
     return rotated
@@ -1676,6 +1726,12 @@ export async function getApiKeyForProvider(provider: ProviderConfig): Promise<st
   // family; incident 2026-07-22). refresh() surfaces the real failure cause
   // (e.g. `invalid_grant` when the refresh token itself expired and a UI
   // re-login is required) instead of a generic message.
+  //
+  // NOTE (upstream 0.84.1 merge): upstream replaced this locked path with
+  // `getOAuthApiKey()` from pi-oauth.ts, which refreshes WITHOUT a per-provider
+  // lock. We keep our serialized refresh deliberately — the SDK helper does not
+  // guarantee that two concurrent turns never present the same rotated refresh
+  // token (the exact failure that caused 4× Anthropic OAuth revokes in July).
   if (Date.now() >= creds.expires) {
     creds = await refreshOAuthCredentialsLocked(provider.id, oauthAuth, creds)
   }
@@ -1714,6 +1770,12 @@ export function getProviderDefaultModel(provider: Pick<ProviderConfig, 'enabledM
   return provider.enabledModels?.[0] ?? ''
 }
 
+/** Copilot token format: `tid=...;exp=...;proxy-ep=proxy.individual.githubcopilot.com;...` */
+function copilotBaseUrlFromToken(token: string): string | undefined {
+  const proxyHost = token.match(/proxy-ep=([^;]+)/)?.[1]
+  return proxyHost ? `https://${proxyHost.replace(/^proxy\./, 'api.')}` : undefined
+}
+
 export function buildModel(provider: ProviderConfig, modelId?: string): Model<Api> {
   const id = modelId ?? getProviderDefaultModel(provider)
   const preset = PROVIDER_TYPE_PRESETS[provider.providerType]
@@ -1724,9 +1786,22 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
   if (preset?.piAiProvider && (preset.authMethod === 'oauth' || preset.resolveModelsFromCatalog)) {
     try {
       const piAiModels = getPiAiModels(preset.piAiProvider as Parameters<typeof getPiAiModels>[0])
-      const models: Model<Api>[] = piAiModels as Model<Api>[]
 
+      // GitHub Copilot routes each account through its own proxy endpoint,
+      // encoded in the access token; the catalog only carries the default one.
+      // Derive the baseUrl eagerly from the token (upstream 0.84.1) so it is
+      // correct even before the first request populates lastResolvedModelAuth.
+      let models: Model<Api>[] = piAiModels as Model<Api>[]
+      if (preset.oauthProviderId === 'github-copilot' && provider.oauthCredentials) {
+        const baseUrl = copilotBaseUrlFromToken(
+          storedToOAuthCredentials(provider.oauthCredentials).access,
+        )
+        if (baseUrl) models = models.map(m => ({ ...m, baseUrl }))
+      }
+
+      // `let` (not const): the resolvedAuth.baseUrl override below reassigns it.
       let piModel = models.find(m => m.id === id)
+
       if (piModel) {
         // Per-credential endpoint rewriting (GitHub Copilot proxy baseUrl)
         // moved from the removed `modifyModels` hook into `OAuthAuth.toAuth()`
@@ -1772,6 +1847,7 @@ export function buildModel(provider: ProviderConfig, modelId?: string): Model<Ap
     provider: provider.provider,
     baseUrl: provider.baseUrl,
     reasoning: modelConfig?.reasoning ?? false,
+    ...(modelConfig?.thinkingLevelMap && { thinkingLevelMap: modelConfig.thinkingLevelMap }),
     input: ['text', 'image'],
     cost: {
       input: modelConfig?.cost?.input ?? priceFallback.input,

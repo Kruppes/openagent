@@ -112,6 +112,64 @@ describe('AgentCore runtime boundary', () => {
     expect(snapshotAfter.messageCount).toBe(snapshotBefore.messageCount)
   })
 
+  // C4 — per-persona provider pinning.
+  it('swapProviderForAgent pins ONE persona without touching the others', () => {
+    const agentCore = new AgentCore({
+      model: makeModel(),
+      apiKey: 'sk-primary',
+      db,
+      tools: [],
+      providerConfig: makeProvider(),
+    })
+
+    agentCore.swapProviderForAgent('warren', makeFallbackProvider(), 'sk-fallback')
+
+    expect(agentCore.getRuntimeStateSnapshot('warren').modelId).toBe('claude-sonnet-4-20250514')
+    expect(agentCore.getRuntimeStateSnapshot('main').modelId).toBe('gpt-4o')
+  })
+
+  it('global swapProvider skips pinned personas (per-agent model survives global model change)', () => {
+    const agentCore = new AgentCore({
+      model: makeModel(),
+      apiKey: 'sk-primary',
+      db,
+      tools: [],
+      providerConfig: makeProvider(),
+    })
+
+    // Pin warren to the fallback provider's model…
+    agentCore.swapProviderForAgent('warren', makeFallbackProvider(), 'sk-fallback')
+    // …then change the GLOBAL model (as Settings / Telegram /model would).
+    const newGlobal = makeProvider({ id: 'global-2', name: 'Global2', enabledModels: ['gpt-4o-mini'] })
+    agentCore.swapProvider(newGlobal, 'sk-global-2')
+
+    // main follows the global change, warren keeps its pinned model.
+    expect(agentCore.getRuntimeStateSnapshot('main').modelId).toBe('gpt-4o-mini')
+    expect(agentCore.getRuntimeStateSnapshot('warren').modelId).toBe('claude-sonnet-4-20250514')
+  })
+
+  it('unpinAgentProvider re-syncs the persona to the supplied global provider', () => {
+    const agentCore = new AgentCore({
+      model: makeModel(),
+      apiKey: 'sk-primary',
+      db,
+      tools: [],
+      providerConfig: makeProvider(),
+    })
+
+    agentCore.swapProviderForAgent('warren', makeFallbackProvider(), 'sk-fallback')
+    expect(agentCore.getRuntimeStateSnapshot('warren').modelId).toBe('claude-sonnet-4-20250514')
+
+    const global = makeProvider()
+    agentCore.unpinAgentProvider('warren', global, 'sk-primary')
+    expect(agentCore.getRuntimeStateSnapshot('warren').modelId).toBe('gpt-4o')
+
+    // After unpinning, global swaps reach warren again.
+    const newGlobal = makeProvider({ id: 'global-2', name: 'Global2', enabledModels: ['gpt-4o-mini'] })
+    agentCore.swapProvider(newGlobal, 'sk-global-2')
+    expect(agentCore.getRuntimeStateSnapshot('warren').modelId).toBe('gpt-4o-mini')
+  })
+
   it('accepts a ProviderManager in constructor options', () => {
     const pm = new ProviderManager(makeProvider(), makeFallbackProvider())
     const agentCore = new AgentCore({

@@ -18,6 +18,7 @@ import type { SessionManager, SessionType } from './session-manager.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
 import { estimateCost, parseProviderModelId, buildStreamFn, getProviderDefaultModel } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
+import { runWithTaskExecutionContext } from './task-execution-context.js'
 import {
   ToolCallTracker,
   buildSmartDetectionPrompt,
@@ -657,10 +658,16 @@ export class TaskRunner {
       // completion never settles must not zombify the task (fail-open keeps
       // the original result via the outer catch).
       try {
-        await withTimeout(agent.prompt(
-          'An independent reviewer checked your reported result against the original task and found gaps:\n\n' +
-          `${critique}\n\n` +
-          'Address these points (do additional work with your tools if needed), then report your final result again in the required STATUS/SUMMARY format.'
+        // The revision round can itself call create_task — keep the task
+        // execution context bound so sub-tasks spawned here still inherit
+        // this task's provider/persona (same contract as runTaskAsync).
+        await withTimeout(runWithTaskExecutionContext(
+          { provider: taskProvider, agentId: task.agentId ?? null, taskId },
+          () => agent.prompt(
+            'An independent reviewer checked your reported result against the original task and found gaps:\n\n' +
+            `${critique}\n\n` +
+            'Address these points (do additional work with your tools if needed), then report your final result again in the required STATUS/SUMMARY format.'
+          ),
         ), 600_000, 'Task revision round')
       } catch (err) {
         try {
@@ -696,8 +703,16 @@ export class TaskRunner {
     const { taskId, agent } = runningTask
 
     try {
+      // Bind the per-task execution context for the whole agent run so any
+      // create_task the task issues (sub-task / sub-sub-task) can inherit THIS
+      // task's model when it does not pin one explicitly. AsyncLocalStorage
+      // keeps concurrent tasks isolated from each other's provider.
+      const taskAgentId = this.store.getById(taskId)?.agentId ?? null
       // Prompt the task agent with the task — the system prompt already contains the full task description
-      await agent.prompt('Begin working on the task described in your system prompt. Work autonomously and report your results when done.')
+      await runWithTaskExecutionContext(
+        { provider: runningTask.provider ?? null, agentId: taskAgentId, taskId },
+        () => agent.prompt('Begin working on the task described in your system prompt. Work autonomously and report your results when done.'),
+      )
 
       // Task completed successfully
       unsubscribe()
@@ -1468,8 +1483,25 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
     const { taskId, agent } = runningTask
 
     try {
+      // Re-bind the per-task execution context for the resumed run. PausedTask
+      // does not persist the provider, but the task row carries provider name +
+      // pinned model — reconstruct it so sub-tasks created after a pause/resume
+      // still inherit this task's model (and persona) instead of silently
+      // falling back to the system default.
+      const taskRow = this.store.getById(taskId)
+      let ctxProvider: ProviderConfig | null = null
+      if (taskRow?.provider) {
+        const base = this.options.getProviderById?.(taskRow.provider) ?? null
+        if (base) {
+          ctxProvider = taskRow.model ? { ...base, enabledModels: [taskRow.model] } : base
+        }
+      }
+
       // Send the follow-up via prompt (which adds a user message and continues the agentic loop)
-      await agent.prompt(message)
+      await runWithTaskExecutionContext(
+        { provider: ctxProvider, agentId: taskRow?.agentId ?? null, taskId },
+        () => agent.prompt(message),
+      )
 
       // Task completed after resume
       unsubscribe()
@@ -1718,6 +1750,12 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
         isDefaultModel: task.isDefaultModel ?? undefined,
         maxDurationMinutes: task.maxDurationMinutes ?? undefined,
         sessionId: task.sessionId ?? undefined,
+        // Carry the persona forward: without this the resumed row stores
+        // agent_id = NULL, and the `?? 'main'` fallbacks downstream (attribution,
+        // session labelling, sub-task inheritance) silently re-attribute a
+        // restarted warren/bob/gekko task to main — wrong memory root, wrong
+        // per-agent model and wrong result routing (multi-persona bleeding).
+        agentId: task.agentId ?? undefined,
       })
 
       // Mark the old task as failed
