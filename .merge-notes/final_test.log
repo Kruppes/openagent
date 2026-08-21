@@ -1,0 +1,875 @@
+
+> axiom@0.28.5 test
+> vitest run --reporter=dot
+
+
+ RUN  v3.2.4 /workspace/openagent
+
+···xstdout | packages/core/src/memory.test.ts > memory > ensureMemoryStructure > migrates projects/ to wiki/ on first run
+[axiom] Migrated memory/projects/ to memory/wiki/
+
+·····················xxxxx·············stdout | packages/core/src/memory.test.ts > memory > ensureWikiDir > migrates projects/ to wiki/
+[axiom] Migrated memory/projects/ to memory/wiki/
+
+·····································stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > constructor and basic lifecycle > starts and stops without errors
+[axiom] Memory consolidation scheduled for 2026-08-22T01:00:00.000Z (in 974 min)
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > constructor and basic lifecycle > restart reloads settings
+[axiom] Memory consolidation scheduled for 2026-08-22T01:00:00.000Z (in 974 min)
+[axiom] Memory consolidation scheduled for 2026-08-22T02:00:00.000Z (in 1034 min)
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > returns error result when task runtime is not available
+[axiom] Starting memory consolidation...
+
+stderr | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > returns error result when task runtime is not available
+[axiom] Memory consolidation skipped: task runtime not available
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > returns error result when no provider is available
+[axiom] Starting memory consolidation...
+
+stderr | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > returns error result when no provider is available
+[axiom] Memory consolidation skipped: no provider available
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > creates and starts a consolidation task via task runtime boundary
+[axiom] Starting memory consolidation...
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > creates and starts a consolidation task via task runtime boundary
+[axiom] Memory consolidation task started: 8bd2889b-6059-4739-b9ab-4593a8353dbd
+
+·······stdout | packages/web-backend/src/app.test.ts
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+··········································································stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > creates and starts a consolidation task via task runtime boundary
+[axiom] Memory consolidation complete: no change (task 8bd2889b-6059-4739-b9ab-4593a8353dbd)
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > completes silently when task finishes with silent status
+[axiom] Starting memory consolidation...
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > completes silently when task finishes with silent status
+[axiom] Memory consolidation task started: 079616ce-0698-45db-bebf-ad404ba40791
+
+·······················stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > completes silently when task finishes with silent status
+[axiom] Memory consolidation complete: no change (task 079616ce-0698-45db-bebf-ad404ba40791, 150 tokens)
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > refreshes system prompt after task completion when agentCore is set
+[axiom] Starting memory consolidation...
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > refreshes system prompt after task completion when agentCore is set
+[axiom] Memory consolidation task started: 971238fd-7383-4995-b112-d6ab071bc36a
+
+·············stdout | packages/core/src/session-manager.test.ts > SessionManager > session creation > returns existing session for same user
+[session] Timer set for user1:main: 15min (900000ms)
+
+····stdout | packages/core/src/session-manager.test.ts > SessionManager > message recording > increments message count
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+
+·stdout | packages/core/src/session-manager.test.ts > SessionManager > message recording > updates message count and last_activity in SQLite
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > fires timeout after configured inactivity period
+[session] Timer set for user1:main: 1min (60000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > fires timeout after configured inactivity period
+[session] Timeout fired for user1:main — ending session
+[session] Ending session cf39ad33-3de0-48c7-abf1-dc6dc6893e58 for user user1 agent main (1 messages)
+[session] Skipping summary: messageCount=1, onSummarize=false
+
+·····stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > resets timer on new message
+[session] Timer set for user1:main: 1min (60000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > resets timer on new message
+[session] Timer set for user1:main: 1min (60000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > resets timer on new message
+[session] Timeout fired for user1:main — ending session
+[session] Ending session e7664053-412a-4549-abfb-b208ae4d3a0d for user user1 agent main (2 messages)
+[session] Skipping summary: messageCount=2, onSummarize=false
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > calls onSummarize on timeout when messages exist
+[session] Timer set for user1:main: 1min (60000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > calls onSummarize on timeout when messages exist
+[session] Timeout fired for user1:main — ending session
+[session] Ending session d7443e22-9efc-46e4-a409-6460ffc4ebd4 for user user1 agent main (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > calls onSummarize on timeout when messages exist
+[session] Summary written to daily log for session d7443e22-9efc-46e4-a409-6460ffc4ebd4
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > uses lastActivity timestamp for daily file entry
+[session] Timer set for user1:main: 1min (60000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > uses lastActivity timestamp for daily file entry
+[session] Timeout fired for user1:main — ending session
+[session] Ending session 0b223fea-f5a5-40cc-95bf-ccbac85d474a for user user1 agent main (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > uses lastActivity timestamp for daily file entry
+[session] Summary written to daily log for session 0b223fea-f5a5-40cc-95bf-ccbac85d474a
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > updates SQLite on session end with summary flag
+[session] Timer set for user1:main: 1min (60000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > updates SQLite on session end with summary flag
+[session] Timeout fired for user1:main — ending session
+[session] Ending session 13705ee2-5fa6-47e2-a346-68ca88e4cf03 for user user1 agent main (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session timeout > updates SQLite on session end with summary flag
+[session] Summary written to daily log for session 13705ee2-5fa6-47e2-a346-68ca88e4cf03
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > scoped persona memory (RC5 multi-persona bleeding) > writes persona session summaries to the persona memory root, not into main dailies
+[session] Timer set for user1:warren: 1min (60000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > scoped persona memory (RC5 multi-persona bleeding) > writes persona session summaries to the persona memory root, not into main dailies
+[session] Timeout fired for user1:warren — ending session
+[session] Ending session 6660efe9-a5d0-4954-bee8-2fdbf764807b for user user1 agent warren (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > scoped persona memory (RC5 multi-persona bleeding) > writes persona session summaries to the persona memory root, not into main dailies
+[session] Summary written to daily log for session 6660efe9-a5d0-4954-bee8-2fdbf764807b
+
+·····stdout | packages/core/src/session-manager.test.ts > SessionManager > scoped persona memory (RC5 multi-persona bleeding) > keeps main session summaries in the shared memory dir when scoping is enabled
+[session] Timer set for user1:main: 1min (60000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > scoped persona memory (RC5 multi-persona bleeding) > keeps main session summaries in the shared memory dir when scoping is enabled
+[session] Timeout fired for user1:main — ending session
+[session] Ending session 88f93999-e21b-440f-b07e-7f28cb9e92f4 for user user1 agent main (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > scoped persona memory (RC5 multi-persona bleeding) > keeps main session summaries in the shared memory dir when scoping is enabled
+[session] Summary written to daily log for session 88f93999-e21b-440f-b07e-7f28cb9e92f4
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > scoped persona memory (RC5 multi-persona bleeding) > writes persona summaries to the shared memory dir when scoping is disabled (legacy)
+[session] Timer set for user1:bob: 1min (60000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > scoped persona memory (RC5 multi-persona bleeding) > writes persona summaries to the shared memory dir when scoping is disabled (legacy)
+[session] Timeout fired for user1:bob — ending session
+[session] Ending session 96725361-c3a2-42b6-ae9a-e5bf6d182057 for user user1 agent bob (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > scoped persona memory (RC5 multi-persona bleeding) > writes persona summaries to the shared memory dir when scoping is disabled (legacy)
+[session] Summary written to daily log for session 96725361-c3a2-42b6-ae9a-e5bf6d182057
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command > ends session and returns summary
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Ending session ff256d01-d5d5-4714-b97d-85d926a0244c for user user1 agent main (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command > ends session and returns summary
+[session] Summary written to daily log for session ff256d01-d5d5-4714-b97d-85d926a0244c
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command > subsequent messages start a fresh session
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Ending session 81c9dc8b-021e-45cf-860e-a355bd88edce for user user1 agent main (1 messages)
+[session] Skipping summary: messageCount=1, onSummarize=false
+
+·······stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command > appends summary to daily file
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Ending session 390fdba6-c5bd-4cb1-8732-678f026e1195 for user user1 agent main (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command > appends summary to daily file
+[session] Summary written to daily log for session 390fdba6-c5bd-4cb1-8732-678f026e1195
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > returns the new session synchronously without waiting for the summary
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > returns the new session synchronously without waiting for the summary
+[session] Finalizing detached session 87afd6dc-0f71-41e7-bfb8-95e2e571a72e for user user1 (3 messages, background)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > returns the new session synchronously without waiting for the summary
+[session] Background summary written to daily log for session 87afd6dc-0f71-41e7-bfb8-95e2e571a72e
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > writes the background summary to the daily file after completion
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > writes the background summary to the daily file after completion
+[session] Finalizing detached session 94f6dbec-8245-4fc3-bee6-3896889e59f2 for user user1 (3 messages, background)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > writes the background summary to the daily file after completion
+[session] Background summary written to daily log for session 94f6dbec-8245-4fc3-bee6-3896889e59f2
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > dates ended_at at the /new click, not at the slow summary completion
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > dates ended_at at the /new click, not at the slow summary completion
+[session] Finalizing detached session 4968d452-89da-4c30-a3ec-4608784cbc99 for user user1 (3 messages, background)
+
+········stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > refreshes system prompt after task completion when agentCore is set
+[axiom] Memory consolidation complete: UPDATED (task 971238fd-7383-4995-b112-d6ab071bc36a)
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > deduplicates concurrent runNow calls
+[axiom] Starting memory consolidation...
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > deduplicates concurrent runNow calls
+[axiom] Memory consolidation task started: f3f64477-2e37-4fe2-a053-fba2dc8baad0
+
+·····················stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > dates ended_at at the /new click, not at the slow summary completion
+[session] Background summary written to daily log for session 4968d452-89da-4c30-a3ec-4608784cbc99
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > uses a placeholder divider and skips the summarizer for short ping/pong sessions
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > uses a placeholder divider and skips the summarizer for short ping/pong sessions
+[session] Finalizing detached session c6fef5fa-a983-4704-a127-a7c1c36370d5 for user user1 (2 messages, background)
+[session] Skipping summary for short session c6fef5fa-a983-4704-a127-a7c1c36370d5 (2 < 3 messages); using placeholder divider
+
+·stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > writes divider + summary against the OLD session id, even after a new session was minted
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Finalizing detached session 3df58c9d-75a2-4687-b9ec-a0bd0ca5483c for user user1 (3 messages, background)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > /new command (async / non-blocking) > writes divider + summary against the OLD session id, even after a new session was minted
+[session] Background summary written to daily log for session 3df58c9d-75a2-4687-b9ec-a0bd0ca5483c
+
+···stdout | packages/core/src/session-manager.test.ts > SessionManager > endAllSessions > ends active sessions and emits session end callbacks
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Timer set for user2:main: 15min (900000ms)
+[session] Ending session b1aa05b9-8104-4286-8b3d-def0523505be for user user1 agent main (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > endAllSessions > ends active sessions and emits session end callbacks
+[session] Summary written to daily log for session b1aa05b9-8104-4286-8b3d-def0523505be
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > endAllSessions > ends active sessions and emits session end callbacks
+[session] Ending session 387289d6-a6d4-4c59-878f-9aa752a7e06b for user user2 agent main (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > endAllSessions > ends active sessions and emits session end callbacks
+[session] Summary written to daily log for session 387289d6-a6d4-4c59-878f-9aa752a7e06b
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > dispose > clears all sessions and updates SQLite
+[session] Timer set for user1:main: 15min (900000ms)
+
+····stdout | packages/core/src/session-manager.test.ts > SessionManager > session summaries always generate > always generates summary when session has messages and onSummarize is configured
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Ending session 9228e6b3-a166-4d94-bbb3-49b8cd72c50c for user user1 agent main (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session summaries always generate > always generates summary when session has messages and onSummarize is configured
+[session] Summary written to daily log for session 9228e6b3-a166-4d94-bbb3-49b8cd72c50c
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session summaries always generate > includes background task notifications and task injection responses in the summary history
+[session] Timer set for 1:main: 15min (900000ms)
+[session] Ending session 899f1292-75ea-4d97-a306-2d928134bc50 for user 1 agent main (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > session summaries always generate > includes background task notifications and task injection responses in the summary history
+[session] Summary written to daily log for session 899f1292-75ea-4d97-a306-2d928134bc50
+
+············stdout | packages/core/src/session-manager.test.ts > SessionManager > UUID generation and session types > init() does NOT throw when orphans are empty or already summarized (no onSummarize needed)
+[session] Found 2 orphaned session(s) from previous run
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > summarizes orphaned sessions with elapsed timeout on init
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Found 1 orphaned session(s) from previous run
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > summarizes orphaned sessions with elapsed timeout on init
+[session] Summary written for orphaned session 8ad93490-c890-4b22-8108-776e11404a79 (at 2026-08-21T06:45:42.000Z)
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > deduplicates concurrent runNow calls
+[axiom] Memory consolidation complete: no change (task f3f64477-2e37-4fe2-a053-fba2dc8baad0)
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > records lastRun and lastResult after execution
+[axiom] Starting memory consolidation...
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > records lastRun and lastResult after execution
+[axiom] Memory consolidation task started: 4847e1fc-3680-4e38-b79a-2305859dd267
+
+·····stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > fires onSessionEnd when an orphaned session is summarized on startup
+[session] Timer set for 1:main: 15min (900000ms)
+[session] Found 1 orphaned session(s) from previous run
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > fires onSessionEnd when an orphaned session is summarized on startup
+[session] Summary written for orphaned session 0d0a68f8-b1e1-4737-8d6d-3be682851e0b (at 2026-08-21T06:45:42.000Z)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > writes summary to previous day daily file when crash spans midnight
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Found 1 orphaned session(s) from previous run
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > writes summary to previous day daily file when crash spans midnight
+[session] Summary written for orphaned session e20ec3cc-1c90-4d08-96db-2661724fb95e (at 2026-08-20T21:35:00.000Z)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > restores orphaned sessions with remaining timeout
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Found 1 orphaned session(s) from previous run
+[session] Restored session dfd64db9-f1b4-438b-a842-6bc07afea893 for user user1 agent main (10min remaining)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > restores orphaned sessions with remaining timeout
+[session] Timeout fired for restored session of user user1 agent main
+[session] Ending session dfd64db9-f1b4-438b-a842-6bc07afea893 for user user1 agent main (1 messages)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > restores orphaned sessions with remaining timeout
+[session] Summary written to daily log for session dfd64db9-f1b4-438b-a842-6bc07afea893
+
+·stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > restored session gets new messages and resets timer
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Found 1 orphaned session(s) from previous run
+[session] Restored session 7f1db9ab-6fe9-4d5a-b63c-c82a85cf60bb for user user1 agent main (10min remaining)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > restored session gets new messages and resets timer
+[session] Timer set for user1:main: 15min (900000ms)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > restored session gets new messages and resets timer
+[session] Timeout fired for user1:main — ending session
+[session] Ending session 7f1db9ab-6fe9-4d5a-b63c-c82a85cf60bb for user user1 agent main (2 messages)
+[session] Skipping summary: messageCount=2, onSummarize=false
+
+····stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > handles orphaned sessions without chat_messages gracefully
+[session] Timer set for user1:main: 15min (900000ms)
+[session] Found 1 orphaned session(s) from previous run
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > restores orphaned sessions with NULL session_user using user_id fallback
+[session] Found 1 orphaned session(s) from previous run
+[session] Restored session a0089829-874c-4ce1-ae88-f9b50d4411a7 for user 42 agent main (15min remaining)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > prefers user_id over legacy non-numeric session_user when restoring orphans
+[session] Found 1 orphaned session(s) from previous run
+[session] Restored session 9ba3c4cc-46d6-42bd-81e9-d02f85e6fb85 for user 43 agent main (15min remaining)
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > handles pre-migration sessions without last_activity (falls back to started_at)
+[session] Found 1 orphaned session(s) from previous run
+
+stdout | packages/core/src/session-manager.test.ts > SessionManager > orphaned session handling > handles pre-migration sessions without last_activity (falls back to started_at)
+[session] Summary written for orphaned session a58c3f30-d9c4-40fd-a09b-51000b9a0bb7 (at 2026-08-21T06:45:42.000Z)
+
+·························stderr | packages/web-backend/src/health-monitor.test.ts > HealthMonitorService > granular notification toggles > enabled healthyToDegraded sends notification
+[axiom] Health monitor background check failed: TypeError: The database connection is not open
+    at Database.prepare [90m(/workspace/openagent/[39mnode_modules/[4mbetter-sqlite3[24m/lib/methods/wrappers.js:5:21[90m)[39m
+    at logHealthCheck [90m(/workspace/openagent/[39mpackages/core/src/provider-health.ts:305:21[90m)[39m
+    at HealthMonitorService.executeNormalCheck [90m(/workspace/openagent/[39mpackages/web-backend/src/health-monitor.ts:276:5[90m)[39m
+
+·········stdout | packages/web-backend/src/ws-chat.test.ts > setupWebSocketChat kill switch > aborts the active agent task when /stop is sent from web chat
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+····stdout | packages/web-backend/src/ws-chat.test.ts > setupWebSocketChat kill switch > immediately announces the new session on /new without waiting for the background summary
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+········stdout | packages/web-backend/src/ws-chat.test.ts > setupWebSocketChat kill switch > forwards a late session_summary chat-event-bus broadcast to the connected client
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+·····stdout | packages/web-backend/src/ws-chat.test.ts > setupWebSocketChat kill switch > streams thinking chunks, persists them with metadata.kind=thinking, and broadcasts them
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+·stdout | packages/web-backend/src/ws-chat.test.ts > setupWebSocketChat kill switch > forwards uploads attached to a tool_call_end chunk as an `attachment` ws message and persists them on the assistant row
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+······stdout | packages/web-backend/src/ws-chat.test.ts > setupWebSocketChat kill switch > responds to /help with a system message listing slash commands
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+········stdout | packages/web-backend/src/ws-chat.test.ts > setupWebSocketChat kill switch > responds to /unknown with a system message and does not forward to the agent
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+stdout | packages/web-backend/src/ws-chat.test.ts > setupWebSocketChat kill switch > treats /kill as an alias for /stop over web chat
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+···stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > records lastRun and lastResult after execution
+[axiom] Memory consolidation complete: no change (task 4847e1fc-3680-4e38-b79a-2305859dd267)
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > logs activity to tool_calls table
+[axiom] Starting memory consolidation...
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > logs activity to tool_calls table
+[axiom] Memory consolidation task started: 1f9483fd-fad6-4aa2-9731-b834bb8690fe
+
+···················································································stdout | packages/web-backend/src/cronjobs.test.ts
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+············stdout | packages/web-backend/src/cronjobs.test.ts > Cronjobs REST API > GET /api/cronjobs/meta > surfaces the tool names provided by getBackgroundTaskToolNames
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+·············stdout | packages/web-backend/src/api/modules/email/route.test.ts
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+·····stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > executeConsolidation via runNow > logs activity to tool_calls table
+[axiom] Memory consolidation complete: no change (task 1f9483fd-fad6-4aa2-9731-b834bb8690fe)
+
+············stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > scoped persona memory (RC5 multi-persona bleeding) > runNow runs an additional agent-labeled consolidation task per persona with daily content
+[axiom] Starting memory consolidation...
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > scoped persona memory (RC5 multi-persona bleeding) > runNow runs an additional agent-labeled consolidation task per persona with daily content
+[axiom] Memory consolidation task started: 2e1733d7-d5b1-44ee-bfa8-db10401ced92
+
+····································stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > start/stop > loads enabled schedules on start
+[axiom] Scheduled "Job 1" next run at 2026-08-22T07:00:00.000Z (in 1334 min)
+[axiom] Task scheduler loaded 1 enabled schedule(s)
+
+stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > start/stop > clears all timers on stop
+[axiom] Scheduled "Job 1" next run at 2026-08-22T07:00:00.000Z (in 1334 min)
+[axiom] Task scheduler loaded 1 enabled schedule(s)
+
+stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > registerSchedule > registers a new schedule
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+[axiom] Scheduled "New Job" next run at 2026-08-22T07:00:00.000Z (in 1334 min)
+
+···stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > registerSchedule > re-registers an updated schedule
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+[axiom] Scheduled "Job" next run at 2026-08-22T07:00:00.000Z (in 1334 min)
+[axiom] Scheduled "Job" next run at 2026-08-22T08:00:00.000Z (in 1394 min)
+
+stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > registerSchedule > does not register disabled schedules
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+
+stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > unregisterSchedule > removes a schedule
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+[axiom] Scheduled "Job" next run at 2026-08-22T07:00:00.000Z (in 1334 min)
+
+stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > unregisterSchedule > does nothing for non-existent schedule
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+
+stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > triggerNow > creates and starts a task immediately
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+
+·····stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > triggerNow > returns null for non-existent schedule
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+
+stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > injection mode > fires injection callback instead of task for injection-type cronjobs
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+
+stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > injection mode > updates last_run fields for injection-type cronjobs
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+
+stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > injection mode > fires task for task-type cronjobs even with injection callback set
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+
+stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > injection mode > triggerNow fires injection with correct XML wrapper
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+
+stdout | packages/telegram/src/bot.test.ts > TelegramBot > start > verifies token and starts polling
+✅ Telegram bot connected: @test_bot (TestBot)
+
+stdout | packages/telegram/src/bot.test.ts > TelegramBot > start > verifies token and starts polling
+🤖 Telegram bot started in polling mode
+
+stdout | packages/telegram/src/bot.test.ts > TelegramBot > stop > stops the bot
+✅ Telegram bot connected: @test_bot (TestBot)
+
+stdout | packages/telegram/src/bot.test.ts > TelegramBot > stop > stops the bot
+🤖 Telegram bot started in polling mode
+
+stdout | packages/telegram/src/bot.test.ts > TelegramBot > stop > stops the bot
+🛑 Telegram bot stopped
+
+·····stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > injection mode > deduplication: does not re-fire if lastRunAt is very recent
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+
+stdout | packages/core/src/task-scheduler.test.ts > TaskScheduler > injection mode > deduplication: does not re-fire if lastRunAt is very recent
+[axiom] Skipping cronjob "Dedup Test" — already fired recently (lastRunAt: 2026-08-21 08:45:47)
+[axiom] Scheduled "Dedup Test" next run at 2026-08-22T07:00:00.000Z (in 1334 min)
+
+·stderr | packages/telegram/src/bot.test.ts > TelegramBot > /new command > handles errors gracefully
+Error handling /new command: Error: reset failed
+    at Object.<anonymous> [90m(/workspace/openagent/[39mpackages/telegram/src/bot.test.ts:554:79[90m)[39m
+    at Object.mockCall [90m(file:///workspace/openagent/[39mnode_modules/[4m@vitest/spy[24m/dist/index.js:96:15[90m)[39m
+    at Object.spy [as resetSessionAsync] [90m(file:///workspace/openagent/[39mnode_modules/[4mtinyspy[24m/dist/index.js:47:80[90m)[39m
+    at [90m/workspace/openagent/[39mpackages/telegram/src/bot.ts:580:24
+[90m    at processTicksAndRejections (node:internal/process/task_queues:103:5)[39m
+    at [90m/workspace/openagent/[39mpackages/telegram/src/bot.test.ts:561:7
+    at [90mfile:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:752:20
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > message batching > concatenates two messages sent within the batching window
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > message batching > resets the batching timer on each new message from the same chat
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > message batching > uses the batching delay from telegram.json when created via config loading
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > message batching > falls back to legacy top-level batchingDelayMs in settings.json when telegram.json is missing the key
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > message batching > prefers telegram.json batchingDelayMs over the legacy settings.json value when both exist
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > message batching > fires the batch only after the silence period expires
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > message handling > sends a fallback notice on empty responses instead of staying silent
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > message handling > handles agent errors gracefully
+Error processing Telegram message: Error: agent failed
+    at Object.<anonymous> [90m(/workspace/openagent/[39mpackages/telegram/src/bot.test.ts:938:15[90m)[39m
+    at Object.mockCall [90m(file:///workspace/openagent/[39mnode_modules/[4m@vitest/spy[24m/dist/index.js:96:15[90m)[39m
+    at Object.spy [as sendMessage] [90m(file:///workspace/openagent/[39mnode_modules/[4mtinyspy[24m/dist/index.js:47:80[90m)[39m
+    at TelegramBot.processQueuedMessage [90m(/workspace/openagent/[39mpackages/telegram/src/bot.ts:1388:50[90m)[39m
+    at TelegramBot.processQueue [90m(/workspace/openagent/[39mpackages/telegram/src/bot.ts:1246:9[90m)[39m
+    at TelegramBot.flushPendingBatch [90m(/workspace/openagent/[39mpackages/telegram/src/bot.ts:1232:5[90m)[39m
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > DM vs group chat > sends telegram source for DM (private) chats
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > DM vs group chat > sends telegram-group source for group chats
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > DM vs group chat > sends telegram-group source for supergroup chats
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > reply-to message context > prepends <reply-context> wrapper to the agent-facing message when the user replied to a bot message
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > reply-to message context > prepends wrapper when replying to another user message (non-bot)
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > reply-to message context > does not inject any wrapper when there is no reply_to_message
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > reply-to message context > truncates long reply-to texts at 500 chars with a single ellipsis
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > reply-to message context > uses caption when replying to a photo with a caption
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > reply-to message context > silently omits the wrapper when replying to a non-text message (sticker)
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > reply-to message context > stores the original user text in chat_messages (wrapper only in agent-facing string)
+[telegram] Could not fetch avatar for 12345: this.bot.api.getUserProfilePhotos is not a function
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > reply-to message context > stores the original user text in chat_messages (wrapper only in agent-facing string)
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stderr | packages/telegram/src/bot.test.ts > TelegramBot > reply-to message context > forwards replyContext on the onChatEvent user_message for cross-channel sync
+[telegram] Empty turn for chat telegram-chat-67890 — sending fallback notice to user
+
+stdout | packages/telegram/src/bot.test.ts > createTelegramBot > returns null when disabled
+ℹ️  Telegram bot disabled in config (enabled: false). Running in web-only mode.
+
+stdout | packages/telegram/src/bot.test.ts > createTelegramBot > returns null when no token
+ℹ️  No Telegram bot token configured. Running in web-only mode.
+
+stdout | packages/telegram/src/bot.test.ts > createTelegramBot > returns null when config load fails
+ℹ️  Telegram config not found. Running in web-only mode.
+
+stderr | packages/telegram/src/bot.test.ts > email approval channel > accept callback approves via the core boundary and edits the prompt
+[telegram] Could not fetch avatar for 12345: this.bot.api.getUserProfilePhotos is not a function
+
+stderr | packages/telegram/src/bot.test.ts > email approval channel > cancel callback rejects via the core boundary
+[telegram] Could not fetch avatar for 12345: this.bot.api.getUserProfilePhotos is not a function
+
+stderr | packages/telegram/src/bot.test.ts > email approval channel > a second decision gets the "already decided" alert
+[telegram] Could not fetch avatar for 12345: this.bot.api.getUserProfilePhotos is not a function
+
+stderr | packages/telegram/src/bot.test.ts > email approval channel > invalidates the prompt when another channel decides
+[telegram] Could not fetch avatar for 12345: this.bot.api.getUserProfilePhotos is not a function
+
+·················································································stdout | packages/web-backend/src/ws-task.test.ts
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > scoped persona memory (RC5 multi-persona bleeding) > runNow runs an additional agent-labeled consolidation task per persona with daily content
+[axiom] Persona memory consolidation task started: 21c762d8-52d6-441c-83ea-f5b75ac1146b (warren)
+
+········stdout | packages/web-backend/src/api/modules/tasks/route.test.ts
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+··············stdout | packages/web-backend/src/email-approval-chat.test.ts
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+·······stdout | packages/web-backend/src/bootstrap/start-backend-server.test.ts > backend bootstrap composition root > starts app/server/realtime boundaries and stops cleanly
+[axiom] Initializing database...
+[axiom] Ensuring config templates...
+[axiom] Ensuring memory structure...
+[axiom] Injecting global secrets into environment...
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+[axiom] Memory consolidation scheduled for 2026-08-22T01:00:00.000Z (in 974 min)
+
+stderr | packages/web-backend/src/bootstrap/start-backend-server.test.ts > backend bootstrap composition root > starts app/server/realtime boundaries and stops cleanly
+[axiom] No provider configured — chat will be unavailable. Configure a provider in Settings.
+
+stdout | packages/web-backend/src/bootstrap/start-backend-server.test.ts > backend bootstrap composition root > starts app/server/realtime boundaries and stops cleanly
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > scoped persona memory (RC5 multi-persona bleeding) > runNow runs an additional agent-labeled consolidation task per persona with daily content
+[axiom] Persona memory consolidation complete (warren): no change
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > scoped persona memory (RC5 multi-persona bleeding) > runNow runs an additional agent-labeled consolidation task per persona with daily content
+[axiom] Memory consolidation complete: no change (task 2e1733d7-d5b1-44ee-bfa8-db10401ced92)
+
+stdout | packages/web-backend/src/bootstrap/start-backend-server.test.ts > backend bootstrap composition root > starts app/server/realtime boundaries and stops cleanly
+[axiom] Server running at http://127.0.0.1:46655
+[axiom] Health check: http://127.0.0.1:46655/health
+[axiom] WebSocket chat: ws://127.0.0.1:46655/ws/chat
+[axiom] WebSocket logs: ws://127.0.0.1:46655/ws/logs
+[axiom] WebSocket task viewer: ws://127.0.0.1:46655/ws/task/:id
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > scoped persona memory (RC5 multi-persona bleeding) > runNow skips persona runs when scoped memory is disabled
+[axiom] Starting memory consolidation...
+
+stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > scoped persona memory (RC5 multi-persona bleeding) > runNow skips persona runs when scoped memory is disabled
+[axiom] Memory consolidation task started: 2dc20c26-b45d-4cb4-a116-ee2a5550a160
+
+··stdout | packages/web-backend/src/api/modules/providers/route.test.ts
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+·················stdout | packages/web-backend/src/api/modules/memory/route.test.ts
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+stderr | packages/core/src/task-notification.test.ts > resolveTaskNotificationSessionId > persistTaskResultMessage skips (does not throw) when no session resolvable
+[task-notification] Skipping persist for task task-123: no session_id available (legacy task?)
+
+····················stderr | packages/core/src/task-notification.test.ts > deliverTaskNotification > handles Telegram send failure gracefully
+[task-notification] Failed to send Telegram notification for task task-123: Error: Network error
+    at [90m/workspace/openagent/[39mpackages/core/src/task-notification.test.ts:373:52
+    at [90mfile:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:155:11
+    at [90mfile:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:752:26
+    at [90mfile:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:1897:20
+    at new Promise (<anonymous>)
+    at runWithTimeout [90m(file:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:1863:10[90m)[39m
+    at runTest [90m(file:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:1574:12[90m)[39m
+[90m    at processTicksAndRejections (node:internal/process/task_queues:103:5)[39m
+    at runSuite [90m(file:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:1729:8[90m)[39m
+    at runSuite [90m(file:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:1729:8[90m)[39m
+
+·············································································································stdout | packages/web-backend/src/memory-consolidation-scheduler.test.ts > MemoryConsolidationScheduler > scoped persona memory (RC5 multi-persona bleeding) > runNow skips persona runs when scoped memory is disabled
+[axiom] Memory consolidation complete: no change (task 2dc20c26-b45d-4cb4-a116-ee2a5550a160)
+
+············stdout | packages/web-backend/src/api/modules/settings/route.test.ts
+[axiom] Admin user "admin" created.
+[axiom] Serving frontend from /workspace/openagent/packages/web-frontend/.output/public
+
+····stdout | packages/core/src/task-runtime.test.ts > TaskRuntime boundary > manages schedule registration lifecycle behind the schedules boundary
+[axiom] Scheduled "Daily task" next run at 2026-08-22T07:00:00.000Z (in 1334 min)
+[axiom] Task scheduler loaded 1 enabled schedule(s)
+
+·················································································································stdout | packages/core/src/agent-session-summary.test.ts > generateSessionSummary — open threads prompt > sends conversation history to completeSimple
+[session-summary] Generating summary for 68 chars of history
+
+stdout | packages/core/src/agent-session-summary.test.ts > generateSessionSummary — open threads prompt > returns no summary when the provider rejects the request
+[session-summary] Generating summary for 52 chars of history
+
+stderr | packages/core/src/agent-session-summary.test.ts > generateSessionSummary — open threads prompt > returns no summary when the provider rejects the request
+Failed to generate session summary: Error: [session-summary] Provider rejected the summary request: 400 `temperature` is deprecated for this model.
+    at assertLlmResponseOk [90m(/workspace/openagent/[39mpackages/core/src/llm-response.ts:14:11[90m)[39m
+    at AgentCore.generateSessionSummary [90m(/workspace/openagent/[39mpackages/core/src/agent.ts:692:7[90m)[39m
+[90m    at processTicksAndRejections (node:internal/process/task_queues:103:5)[39m
+    at [90m/workspace/openagent/[39mpackages/core/src/agent-session-summary.test.ts:190:21
+    at [90mfile:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:752:20
+
+stdout | packages/core/src/agent-session-summary.test.ts > generateSessionSummary — open threads prompt > prompt instructs LLM to add ### Open Threads section for unresolved items
+[session-summary] Generating summary for 71 chars of history
+
+stdout | packages/core/src/agent-session-summary.test.ts > generateSessionSummary — open threads prompt > returns summary with open threads section when LLM includes it
+[session-summary] Generating summary for 49 chars of history
+
+stdout | packages/core/src/agent-session-summary.test.ts > generateSessionSummary — open threads prompt > returns summary without open threads section when LLM omits it
+[session-summary] Generating summary for 58 chars of history
+
+stderr | packages/core/src/agent-session-summary.test.ts > generateSessionSummary — open threads prompt > returns "Empty session." when no conversation history is provided
+[session-summary] No conversation history available, returning Empty session.
+
+stdout | packages/core/src/agent-session-summary.test.ts > generateSessionSummary — open threads prompt > returns no summary when completeSimple throws
+[session-summary] Generating summary for 25 chars of history
+
+stderr | packages/core/src/agent-session-summary.test.ts > generateSessionSummary — open threads prompt > returns no summary when completeSimple throws
+Failed to generate session summary: Error: LLM unavailable
+    at [90m/workspace/openagent/[39mpackages/core/src/agent-session-summary.test.ts:292:46
+    at [90mfile:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:155:11
+    at [90mfile:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:752:26
+    at [90mfile:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:1897:20
+    at new Promise (<anonymous>)
+    at runWithTimeout [90m(file:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:1863:10[90m)[39m
+    at runTest [90m(file:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:1574:12[90m)[39m
+[90m    at processTicksAndRejections (node:internal/process/task_queues:103:5)[39m
+    at runSuite [90m(file:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:1729:8[90m)[39m
+    at runSuite [90m(file:///workspace/openagent/[39mnode_modules/[4m@vitest/runner[24m/dist/chunk-hooks.js:1729:8[90m)[39m
+
+stdout | packages/core/src/agent-session-summary.test.ts > generateSessionSummary — open threads prompt > uses a single completeSimple call (no second call for open threads)
+[session-summary] Generating summary for 43 chars of history
+
+stdout | packages/core/src/agent-session-summary.test.ts > generateSessionSummary — open threads prompt > daily file entry contains both activity and open threads when present
+[session-summary] Generating summary for 60 chars of history
+
+··················stderr | packages/core/src/tool-boundary-integration.test.ts > tool_use/tool_result boundary invariant — runtime integration > strips a leading orphan tool_result before the request is built (the messages[0] incident)
+[agent-runtime] tool_use/tool_result boundary violation caught before send (agent main) — dropped 1 block(s): toolResult#0(id=toolu_orphan): no preceding tool_use | structure(before)=toolResult:toolu_orphan | assistant[text,toolCall:toolu_ok](toolUse) | toolResult:toolu_ok | user
+
+stdout | packages/core/src/agent-task-injection.test.ts > AgentCore task injection chunk metadata > includes the actual sessionId on task injection chunks
+[session] Timer set for 1:main: 30min (1800000ms)
+
+stdout | packages/core/src/agent-task-injection.test.ts > AgentCore task injection chunk metadata > includes the actual sessionId on task injection chunks
+[session] Timer set for 1:main: 30min (1800000ms)
+
+····stdout | packages/core/src/agent-task-injection.test.ts > AgentCore task injection chunk metadata > tags every chunk with a caller-supplied injectionId for per-call correlation
+[session] Timer set for 1:main: 30min (1800000ms)
+
+stdout | packages/core/src/agent-task-injection.test.ts > AgentCore task injection chunk metadata > tags every chunk with a caller-supplied injectionId for per-call correlation
+[session] Timer set for 1:main: 30min (1800000ms)
+
+stdout | packages/core/src/agent-task-injection.test.ts > AgentCore task injection chunk metadata > mints a fresh injectionId when the caller does not supply one
+[session] Timer set for 1:main: 30min (1800000ms)
+
+stdout | packages/core/src/agent-task-injection.test.ts > AgentCore task injection chunk metadata > mints a fresh injectionId when the caller does not supply one
+[session] Timer set for 1:main: 30min (1800000ms)
+
+·······stdout | packages/web-backend/src/bootstrap/runtime-composition.test.ts > background task tools rebuild on email account change > adds email tools to the background task tool set after an account change without a restart
+[axiom] Task scheduler loaded 0 enabled schedule(s)
+[axiom] Memory consolidation scheduled for 2026-08-22T01:00:00.000Z (in 974 min)
+
+···stdout | packages/core/src/agent-runtime.test.ts > AgentRuntime boundary > orchestrates prompt execution events into runtime response chunks
+[agent-runtime] Turn end (session session-1): text=5 thinking=0 tools=1 errors=0
+
+stdout | packages/core/src/agent-runtime.test.ts > AgentRuntime boundary > forwards thinking_delta events as thinking response chunks
+[agent-runtime] Turn end (session session-1): text=5 thinking=22 tools=0 errors=0
+
+·············································································stdout | packages/core/src/agent-heartbeat.test.ts > AgentHeartbeatService > executeHeartbeat > creates a background task with the correct prompt
+[axiom] Agent heartbeat task started: task-123
+
+stdout | packages/core/src/agent-heartbeat.test.ts > AgentHeartbeatService > executeHeartbeat > prompt is a minimal delegation prompt
+[axiom] Agent heartbeat task started: task-123
+
+stdout | packages/core/src/agent-heartbeat.test.ts > AgentHeartbeatService > executeHeartbeat > skips when HEARTBEAT.md is effectively empty
+[axiom] Agent heartbeat skipped: HEARTBEAT.md has no actionable content
+
+stdout | packages/core/src/agent-heartbeat.test.ts > AgentHeartbeatService > executeHeartbeat > skips when HEARTBEAT.md does not exist
+[axiom] Agent heartbeat skipped: HEARTBEAT.md not found or unreadable
+
+stdout | packages/core/src/agent-heartbeat.test.ts > AgentHeartbeatService > executeHeartbeat > proceeds when HEARTBEAT.md has actionable content
+[axiom] Agent heartbeat task started: task-123
+
+stdout | packages/core/src/agent-heartbeat.test.ts > AgentHeartbeatService > executeHeartbeat > checks night mode before reading HEARTBEAT.md
+[axiom] Agent heartbeat skipped: night mode active
+
+stdout | packages/core/src/agent-heartbeat.test.ts > AgentHeartbeatService > executeHeartbeat > skips heartbeat during night mode
+[axiom] Agent heartbeat skipped: night mode active
+
+stdout | packages/core/src/agent-heartbeat.test.ts > AgentHeartbeatService > executeHeartbeat > does not skip heartbeat when night mode is disabled
+[axiom] Agent heartbeat task started: task-123
+
+stdout | packages/core/src/agent-heartbeat.test.ts > AgentHeartbeatService > scheduling > fires at configured interval
+[axiom] Agent heartbeat task started: task-123
+
+··············································································································································································································stderr | packages/core/src/stt.test.ts > transcribeAudio > returns raw transcript without rewritten when rewrite fails
+[stt] Rewrite failed, returning raw transcript: Internal Server Error
+
+····································································································································································································stderr | packages/core/src/task-runner.attached-skills.test.ts > loadAttachedSkillContent > returns null for a missing agent skill and does not throw
+[task-runner] attachedSkills: could not read /tmp/axiom-attached-skills-zKeqAD/skills_agent/does-not-exist/SKILL.md: ENOENT: no such file or directory, open '/tmp/axiom-attached-skills-zKeqAD/skills_agent/does-not-exist/SKILL.md'
+
+stderr | packages/core/src/task-runner.attached-skills.test.ts > loadAttachedSkillContent > rejects path traversal and absolute paths
+[task-runner] attachedSkills: ignoring invalid skill name ".."
+[task-runner] attachedSkills: ignoring invalid skill name "a/../b"
+[task-runner] attachedSkills: ignoring invalid skill name "/etc/passwd"
+[task-runner] attachedSkills: ignoring invalid skill name "a\b"
+
+stderr | packages/core/src/task-runner.attached-skills.test.ts > loadAttachedSkillContent > returns null when installed-skill id is not in skills.json
+[task-runner] attachedSkills: installed skill "unknown/skill" not found in skills.json
+
+stderr | packages/core/src/task-runner.attached-skills.test.ts > loadAttachedSkillContent > rejects malformed installed-skill ids with extra slashes
+[task-runner] attachedSkills: invalid installed-skill id "a/b/c"
+
+stderr | packages/core/src/task-runner.attached-skills.test.ts > renderAttachedSkillsBlock > returns an empty string when no skills resolve
+[task-runner] attachedSkills: could not read /tmp/axiom-attached-skills-zKeqAD/skills_agent/does-not-exist/SKILL.md: ENOENT: no such file or directory, open '/tmp/axiom-attached-skills-zKeqAD/skills_agent/does-not-exist/SKILL.md'
+
+··········································································································································································································
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  packages/core/src/config.test.ts > config > loadConfig reads and parses JSON
+Error: EACCES: permission denied, open '/tmp/config/test.json'
+ ❯ packages/core/src/config.test.ts:84:8
+     82|     const configDir = path.join(path.dirname(dir), 'config')
+     83|     fs.mkdirSync(configDir, { recursive: true })
+     84|     fs.writeFileSync(path.join(configDir, 'test.json'), '{"hello": "wo…
+       |        ^
+     85| 
+     86|     const data = loadConfig<{ hello: string }>('test.json')
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  packages/core/src/memory.test.ts > memory > TASKS.md (background task guidelines) > ensureConfigStructure creates TASKS.md from the default template
+Error: EXDEV: cross-device link not permitted, rename '/data/memory/AGENTS.md' -> '/tmp/axiom-memory-test-1787301932754-uqd2rjsyikk/AGENTS.md'
+ ❯ ensureConfigStructure packages/core/src/memory.ts:483:10
+    481|     const legacyPath = path.join(getMemoryDir(), 'AGENTS.md')
+    482|     if (fs.existsSync(legacyPath)) {
+    483|       fs.renameSync(legacyPath, agentsPath)
+       |          ^
+    484|       console.log('[config] Migrated AGENTS.md from memory/ to config/…
+    485|     } else {
+ ❯ packages/core/src/memory.test.ts:306:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  packages/core/src/memory.test.ts > memory > TASKS.md (background task guidelines) > readTasksGuidelinesFile creates TASKS.md if missing and returns content
+AssertionError: expected false to be true // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- true[39m
+[31m+ false[39m
+
+ ❯ packages/core/src/memory.test.ts:321:57
+    319|       const content = readTasksGuidelinesFile(dir)
+    320|       expect(content).toContain('# Background Task Guidelines')
+    321|       expect(fs.existsSync(path.join(dir, 'TASKS.md'))).toBe(true)
+       |                                                         ^
+    322|     })
+    323| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  packages/core/src/memory.test.ts > memory > TASKS.md (background task guidelines) > readTasksGuidelinesFile reads existing custom content unchanged
+Error: EXDEV: cross-device link not permitted, rename '/data/memory/AGENTS.md' -> '/tmp/axiom-memory-test-1787301932774-bqzbwc29mdm/AGENTS.md'
+ ❯ ensureConfigStructure packages/core/src/memory.ts:483:10
+    481|     const legacyPath = path.join(getMemoryDir(), 'AGENTS.md')
+    482|     if (fs.existsSync(legacyPath)) {
+    483|       fs.renameSync(legacyPath, agentsPath)
+       |          ^
+    484|       console.log('[config] Migrated AGENTS.md from memory/ to config/…
+    485|     } else {
+ ❯ packages/core/src/memory.test.ts:326:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  packages/core/src/memory.test.ts > memory > TASKS.md (background task guidelines) > writeTasksGuidelinesFile persists user edits
+Error: EXDEV: cross-device link not permitted, rename '/data/memory/AGENTS.md' -> '/tmp/axiom-memory-test-1787301932775-u7cr1frq5a/AGENTS.md'
+ ❯ ensureConfigStructure packages/core/src/memory.ts:483:10
+    481|     const legacyPath = path.join(getMemoryDir(), 'AGENTS.md')
+    482|     if (fs.existsSync(legacyPath)) {
+    483|       fs.renameSync(legacyPath, agentsPath)
+       |          ^
+    484|       console.log('[config] Migrated AGENTS.md from memory/ to config/…
+    485|     } else {
+ ❯ writeTasksGuidelinesFile packages/core/src/memory.ts:751:3
+ ❯ packages/core/src/memory.test.ts:336:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  packages/core/src/memory.test.ts > memory > TASKS.md (background task guidelines) > ensureConfigStructure does not overwrite existing TASKS.md
+Error: EXDEV: cross-device link not permitted, rename '/data/memory/AGENTS.md' -> '/tmp/axiom-memory-test-1787301932776-7255mqpahkh/AGENTS.md'
+ ❯ ensureConfigStructure packages/core/src/memory.ts:483:10
+    481|     const legacyPath = path.join(getMemoryDir(), 'AGENTS.md')
+    482|     if (fs.existsSync(legacyPath)) {
+    483|       fs.renameSync(legacyPath, agentsPath)
+       |          ^
+    484|       console.log('[config] Migrated AGENTS.md from memory/ to config/…
+    485|     } else {
+ ❯ packages/core/src/memory.test.ts:345:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  2 failed | 88 passed (90)
+      Tests  6 failed | 1616 passed (1622)
+   Start at  10:45:32
+   Duration  31.18s (transform 2.44s, setup 0ms, collect 29.22s, tests 42.00s, environment 19ms, prepare 7.63s)
+
