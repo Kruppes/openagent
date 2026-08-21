@@ -219,6 +219,8 @@
     "degradedThreshold": "Degraded Threshold",
     "degradedThresholdPlaceholder": "5000",
     "degradedThresholdHint": "Latency above this value (in ms) marks the provider as degraded in health checks.",
+    "healthCheckTimeout": "Health Check Timeout",
+    "healthCheckTimeoutHint": "Hard timeout (in ms) for automated health checks. Leave empty for the default: 15000 ms, or 60000 ms for Ollama, whose model cold start can take longer than 15 s.",
     "textVerbosity": "Text verbosity",
     "textVerbosityDefault": "Default",
     "textVerbosityLow": "Low",

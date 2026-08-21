@@ -219,6 +219,8 @@
     "degradedThreshold": "Degraded-Schwellenwert",
     "degradedThresholdPlaceholder": "5000",
     "degradedThresholdHint": "Latenz über diesem Wert (in ms) kennzeichnet den Anbieter im Health-Check als degraded.",
+    "healthCheckTimeout": "Health-Check-Timeout",
+    "healthCheckTimeoutHint": "Hartes Timeout (in ms) für automatische Health-Checks. Leer lassen für den Standard: 15000 ms, bzw. 60000 ms für Ollama, dessen Modell-Kaltstart länger als 15 s dauern kann.",
     "textVerbosity": "Text-Ausführlichkeit",
     "textVerbosityDefault": "Default",
     "textVerbosityLow": "Low",

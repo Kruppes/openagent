@@ -53,6 +53,11 @@ function normalizeDegradedThresholdMs(value: unknown): number | undefined {
   return Math.max(1, Math.round(value as number))
 }
 
+function normalizeHealthCheckTimeoutMs(value: unknown): number | undefined {
+  if (value == null) return undefined
+  return Math.max(1, Math.round(value as number))
+}
+
 function normalizeExtraFields(value: unknown): Record<string, string> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
   const out: Record<string, string> = {}
@@ -250,6 +255,7 @@ export function parseProviderCreatePayload(
       apiKey,
       enabledModels,
       degradedThresholdMs: normalizeDegradedThresholdMs(body.degradedThresholdMs),
+      healthCheckTimeoutMs: normalizeHealthCheckTimeoutMs(body.healthCheckTimeoutMs),
       textVerbosity: normalizeTextVerbosity(body.textVerbosity),
       transport: normalizeTransport(body.transport),
       extraFields: normalizeExtraFields(body.extraFields),
@@ -277,6 +283,7 @@ export function parseProviderUpdatePayload(payload: unknown): ParseResult<Provid
       apiKey: asTrimmedString(body.apiKey),
       enabledModels: normalizeEnabledModels(body.enabledModels),
       degradedThresholdMs: normalizeDegradedThresholdMs(body.degradedThresholdMs),
+      healthCheckTimeoutMs: normalizeHealthCheckTimeoutMs(body.healthCheckTimeoutMs),
       textVerbosity: normalizeTextVerbosity(body.textVerbosity),
       transport: normalizeTransport(body.transport),
       extraFields: normalizeExtraFields(body.extraFields),
