@@ -58,6 +58,7 @@ import type {
 } from '@axiom/core'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { completeSimple } from '@axiom/core'
+import { getCurrentTaskProvider, getCurrentTaskAgentId } from '@axiom/core'
 import { randomUUID } from 'node:crypto'
 import { createTelegramBot, createTelegramBotPool } from '@axiom/telegram'
 import type { TelegramBot, TelegramBotPool, TelegramChatEvent } from '@axiom/telegram'
@@ -382,20 +383,57 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     }
   }
 
+  /**
+   * Resolve a "providerId" or "providerId:modelId" string to a model-pinned
+   * ProviderConfig, or null when it cannot be resolved. Shared by the task
+   * default-provider inheritance chain.
+   */
+  function resolveProviderModelString(spec: string): ProviderConfig | null {
+    const { providerId, modelId } = parseProviderModelId(spec)
+    if (!providerId) return null
+    let resolved = resolveProvider(providerId)
+    if (resolved && modelId) {
+      resolved = { ...resolved, enabledModels: [modelId] }
+    }
+    return resolved ?? null
+  }
+
+  /**
+   * Task default-provider inheritance chain (C2). Consulted by create_task when
+   * the caller does NOT pin a provider/model explicitly:
+   *   1. Parent task's model (this call runs inside a running task's ALS ctx)
+   *      — a Kimi-pinned task spawns Kimi-pinned sub-/sub-sub-tasks.
+   *   2. Per-agent/persona default (C4, multiPersona.perAgentProvider).
+   *   3. Global tasks.defaultProvider setting.
+   *   4. Active chat provider/model.
+   * (Explicit provider/model on create_task short-circuits before ever calling
+   * this, so it is the highest-priority tier.)
+   */
   function getTaskDefaultProvider(): ProviderConfig {
-    const currentTaskSettings = getCurrentTaskSettings()
-    if (currentTaskSettings.defaultProvider) {
-      const { providerId, modelId } = parseProviderModelId(currentTaskSettings.defaultProvider)
-      if (providerId) {
-        let resolved = resolveProvider(providerId)
-        if (resolved && modelId) {
-          resolved = { ...resolved, enabledModels: [modelId] }
-        }
+    // 1. Inherit the parent task's (model-pinned) provider when we are running
+    //    inside a task that itself is spawning a child task.
+    const parentTaskProvider = getCurrentTaskProvider()
+    if (parentTaskProvider) return parentTaskProvider
+
+    // 2. Per-agent/persona default (only meaningful in multi-persona mode).
+    const personaSettings = loadMultiPersonaSettings()
+    if (personaSettings.enabled && personaSettings.perAgentProvider) {
+      const agentId = agentCore?.getCurrentToolAgentId() ?? getCurrentTaskAgentId() ?? undefined
+      const spec = agentId ? personaSettings.perAgentProvider[agentId] : undefined
+      if (spec) {
+        const resolved = resolveProviderModelString(spec)
         if (resolved) return resolved
       }
     }
 
-    // "Active provider (default)": follow the live chat selection for BOTH
+    // 3. Global task default provider setting.
+    const currentTaskSettings = getCurrentTaskSettings()
+    if (currentTaskSettings.defaultProvider) {
+      const resolved = resolveProviderModelString(currentTaskSettings.defaultProvider)
+      if (resolved) return resolved
+    }
+
+    // 4. "Active provider (default)": follow the live chat selection for BOTH
     // provider and model. Downstream task creation derives the model via
     // getProviderDefaultModel() (= enabledModels[0]), so we narrow the cloned
     // provider to the active model. Without this, tasks would pick the

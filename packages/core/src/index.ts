@@ -290,6 +290,13 @@ export {
 } from './loop-detection.js'
 export type { TrackedToolCall, LoopDetectionConfig, LoopDetectionResult } from './loop-detection.js'
 export { createTaskTool, createResumeTaskTool, listTasksTool } from './task-tools.js'
+export {
+  runWithTaskExecutionContext,
+  getCurrentTaskExecutionContext,
+  getCurrentTaskProvider,
+  getCurrentTaskAgentId,
+} from './task-execution-context.js'
+export type { TaskExecutionContext } from './task-execution-context.js'
 export type { TaskToolsOptions } from './task-tools.js'
 export { createReadChatHistoryTool } from './chat-history-tools.js'
 export type { ChatHistoryToolsOptions } from './chat-history-tools.js'

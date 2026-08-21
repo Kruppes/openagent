@@ -18,6 +18,7 @@ import type { SessionManager, SessionType } from './session-manager.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
 import { estimateCost, parseProviderModelId, buildStreamFn, getProviderDefaultModel } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
+import { runWithTaskExecutionContext } from './task-execution-context.js'
 import {
   ToolCallTracker,
   buildSmartDetectionPrompt,
@@ -696,8 +697,16 @@ export class TaskRunner {
     const { taskId, agent } = runningTask
 
     try {
+      // Bind the per-task execution context for the whole agent run so any
+      // create_task the task issues (sub-task / sub-sub-task) can inherit THIS
+      // task's model when it does not pin one explicitly. AsyncLocalStorage
+      // keeps concurrent tasks isolated from each other's provider.
+      const taskAgentId = this.store.getById(taskId)?.agentId ?? null
       // Prompt the task agent with the task — the system prompt already contains the full task description
-      await agent.prompt('Begin working on the task described in your system prompt. Work autonomously and report your results when done.')
+      await runWithTaskExecutionContext(
+        { provider: runningTask.provider ?? null, agentId: taskAgentId, taskId },
+        () => agent.prompt('Begin working on the task described in your system prompt. Work autonomously and report your results when done.'),
+      )
 
       // Task completed successfully
       unsubscribe()

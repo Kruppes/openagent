@@ -222,6 +222,15 @@ export interface MultiPersonaSettings {
    * are unaffected.
    */
   scopedMemory: boolean
+  /**
+   * Per-persona default provider/model (C4, per-agent model selection).
+   * Maps an agent/persona id to a `providerId` or `providerId:modelId` string
+   * (the same format `tasks.defaultProvider` and `create_task` accept). When a
+   * task attributed to persona <id> is created WITHOUT an explicit model, this
+   * is consulted before the global task default — so main/warren/gekko/bob can
+   * each run on their own model. Absent id = fall through to the global chain.
+   */
+  perAgentProvider?: Record<string, string>
 }
 
 /**
@@ -235,6 +244,7 @@ export function loadMultiPersonaSettings(): MultiPersonaSettings {
       enabled: settings.multiPersona?.enabled ?? false,
       defaultAgentId: settings.multiPersona?.defaultAgentId ?? 'main',
       scopedMemory: settings.multiPersona?.scopedMemory ?? true,
+      perAgentProvider: settings.multiPersona?.perAgentProvider ?? undefined,
     }
   } catch {
     return { enabled: false, defaultAgentId: 'main', scopedMemory: true }
