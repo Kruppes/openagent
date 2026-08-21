@@ -315,10 +315,12 @@ export class SessionManager {
       }
     }
 
-    // Close session in DB
+    // Close session in DB. The session stopped being live at its last
+    // activity, not at server-restart time — dating it `now` would sort the
+    // divider after messages that were written days later.
     this.db.prepare(
-      `UPDATE sessions SET ended_at = datetime('now'), summary_written = ? WHERE id = ?`
-    ).run(summaryWritten ? 1 : 0, row.id)
+      `UPDATE sessions SET ended_at = datetime(? / 1000, 'unixepoch'), summary_written = ? WHERE id = ?`
+    ).run(lastActivity, summaryWritten ? 1 : 0, row.id)
 
     // Log to tool_calls for activity log visibility
     logToolCall(this.db, {
@@ -848,6 +850,12 @@ export class SessionManager {
     // to accidentally re-resolve via `this.sessions.get(userId)` at
     // callback time) when the id is also passed explicitly.
     const oldSessionId = oldSession?.id
+    // The session ends HERE, not when the background summary resolves
+    // seconds later. Everything derived from the end time (sessions.ended_at
+    // and, through it, the divider row's position in the chat history) must
+    // use this timestamp, otherwise the divider sorts after the messages the
+    // user already sent in the new session.
+    const endedAt = Date.now()
 
     if (oldSession && oldSessionId) {
       this.clearTimer(key)
@@ -865,6 +873,7 @@ export class SessionManager {
         oldSessionId,
         userId,
         'manual',
+        endedAt,
       )).catch((err) => {
         console.error(
           `[session] Background finalize failed for session ${oldSessionId}:`,
@@ -891,6 +900,7 @@ export class SessionManager {
     oldSessionId: string,
     userId: string,
     reason: SessionEndReason,
+    endedAt: number,
   ): Promise<void> {
     // `oldSessionId` is the primitive id captured at trigger time in
     // `handleNewCommandAsync` (or wherever this method is called from).
@@ -945,10 +955,10 @@ export class SessionManager {
     }
 
     this.db.prepare(
-      `UPDATE sessions SET ended_at = datetime('now'), message_count = ?, summary_written = ? WHERE id = ?`
-    ).run(session.messageCount, session.summaryWritten ? 1 : 0, oldSessionId)
+      `UPDATE sessions SET ended_at = datetime(? / 1000, 'unixepoch'), message_count = ?, summary_written = ? WHERE id = ?`
+    ).run(endedAt, session.messageCount, session.summaryWritten ? 1 : 0, oldSessionId)
 
-    const durationMs = Date.now() - session.startedAt
+    const durationMs = endedAt - session.startedAt
     logToolCall(this.db, {
       sessionId: oldSessionId,
       toolName: reason === 'timeout' ? 'session_timeout' : 'session_end',
@@ -1005,6 +1015,9 @@ export class SessionManager {
 
     console.log(`[session] Ending session ${session.id} for user ${userId} agent ${session.agentId} (${session.messageCount} messages)`)
 
+    // Captured before the (slow) summarizer call — see `handleNewCommandAsync`.
+    const endedAt = Date.now()
+
     // Clear the timeout timer
     this.clearTimer(key)
 
@@ -1032,11 +1045,11 @@ export class SessionManager {
 
     // Update SQLite with end time and summary flag
     this.db.prepare(
-      `UPDATE sessions SET ended_at = datetime('now'), message_count = ?, summary_written = ? WHERE id = ?`
-    ).run(session.messageCount, session.summaryWritten ? 1 : 0, session.id)
+      `UPDATE sessions SET ended_at = datetime(? / 1000, 'unixepoch'), message_count = ?, summary_written = ? WHERE id = ?`
+    ).run(endedAt, session.messageCount, session.summaryWritten ? 1 : 0, session.id)
 
     // Log session end to tool_calls for activity log visibility
-    const durationMs = Date.now() - session.startedAt
+    const durationMs = endedAt - session.startedAt
     logToolCall(this.db, {
       sessionId: session.id,
       toolName: reason === 'timeout' ? 'session_timeout' : 'session_end',

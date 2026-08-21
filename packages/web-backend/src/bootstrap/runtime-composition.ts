@@ -42,6 +42,8 @@ import {
   getProviderDefaultModel,
   ProviderManager,
   SessionManager,
+  createEmailApprovalService,
+  registerEmailApprovalNotifier,
   removeCronjobTool,
   TaskEventBus,
 } from '@axiom/core'
@@ -60,6 +62,8 @@ import { randomUUID } from 'node:crypto'
 import { createTelegramBot, createTelegramBotPool } from '@axiom/telegram'
 import type { TelegramBot, TelegramBotPool, TelegramChatEvent } from '@axiom/telegram'
 import { ChatEventBus } from '../chat-event-bus.js'
+import { ChatActionRegistry } from '../chat-actions.js'
+import { registerEmailApprovalChatChannel } from '../email-approval-chat.js'
 import { triggerFactExtractionForSessionEnd } from '../fact-extraction-session-end.js'
 import { HealthMonitorService } from '../health-monitor.js'
 import { MemoryConsolidationScheduler } from '../memory-consolidation-scheduler.js'
@@ -132,6 +136,7 @@ export interface RuntimeComposition {
   uploadCleanupService: UploadCleanupService
   taskEventBus: TaskEventBus
   chatEventBus: ChatEventBus
+  chatActions: ChatActionRegistry
   getAgentCore: () => AgentCore | null
   getTaskRuntime: () => TaskRuntimeBoundary
   /**
@@ -407,6 +412,22 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   const chatEventBus = new ChatEventBus()
   const taskEventBus = new TaskEventBus()
 
+  // Interactive chat messages are broadcast to every user, because approvals
+  // (the current consumer) may be answered by any authenticated user.
+  const chatActions = new ChatActionRegistry({
+    publishToClients: ({ type, message }) => {
+      const rows = db.prepare('SELECT id FROM users').all() as { id: number }[]
+      for (const row of rows) {
+        chatEventBus.broadcast({ type, userId: row.id, source: 'web', chatAction: message })
+      }
+    },
+  })
+
+  const unregisterEmailApprovalChat = registerEmailApprovalChatChannel({
+    chatActions,
+    approval: createEmailApprovalService({ db }),
+  })
+
   // Shared SessionManager dedicated to background producers (tasks,
   // heartbeat, consolidation, scheduled jobs, reminders). It only uses
   // `createSession()` to register UUID-based session rows; the per-user
@@ -421,6 +442,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   // Multi-persona mode: one TelegramBot per persona account. `telegramBot`
   // then points at the pool's primary bot for backward compatibility.
   let telegramBotPool: TelegramBotPool | null = null
+  let unregisterTelegramEmailApproval: (() => void) | null = null
 
   /**
    * Resolve the Telegram bot bound to a persona. Falls back to the primary
@@ -717,9 +739,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     })
   }
 
-  // Background task tools are built as a mutable array so that
-  // create_task / list_tasks can be pushed in after taskRuntime is
-  // available (they need taskRuntime.tasks — resolved below).
+  // Background task tools live in a mutable array that is repopulated in place
+  // by rebuildBackgroundTaskTools (see there).
   const backgroundSttEnabled = (() => { try { return loadSttSettings().enabled } catch { return false } })()
   // createBaseAgentTools builds the shared tool set (yolo, web, chat-history,
   // search-memories, agent-skills, transcribe-audio). Both the interactive
@@ -913,21 +934,30 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     getCurrentAgentId: () => agentCore?.getCurrentToolAgentId(),
   }
 
-  // Now that taskRuntime exists, push create_task / list_tasks into the
-  // background-task tool set. The task runner holds a reference to the
-  // backgroundTaskTools array, so all subsequently started tasks
-  // (heartbeat, cronjob, user-spawned) will see these tools.
   // Background tasks never have an active interactive session, so
   // getParentSessionId always returns null here.
   const backgroundTaskToolsOptions = {
     ...taskToolsOptions,
     getParentSessionId: () => null as string | null,
   }
-  backgroundTaskTools.push(
-    createTaskTool(backgroundTaskToolsOptions),
-    createResumeTaskTool(backgroundTaskToolsOptions),
-    listTasksTool({ taskRuntime: taskRuntime.tasks }),
-  )
+
+  // Task runner, heartbeat and cronjob paths capture the `backgroundTaskTools`
+  // array reference once, so this MUST mutate that array in place — reassigning
+  // it would leave every background path on the stale tool set.
+  function rebuildBackgroundTaskTools(): void {
+    backgroundTaskTools.length = 0
+    backgroundTaskTools.push(
+      ...createBaseAgentTools({
+        db,
+        builtinToolsConfig: () => loadRuntimeSettings().builtinToolsConfig,
+        sttEnabled: backgroundSttEnabled,
+      }),
+      createTaskTool(backgroundTaskToolsOptions),
+      createResumeTaskTool(backgroundTaskToolsOptions),
+      listTasksTool({ taskRuntime: taskRuntime.tasks }),
+    )
+  }
+  rebuildBackgroundTaskTools()
 
   // Wrap the schedule boundary so deleting a cronjob also evicts its
   // cached reminder session id. Without this, a cronjob deleted mid-
@@ -1280,9 +1310,17 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       // wrong id, causing the divider row + summary to be written into
       // the NEW session's transcript instead of the OLD one.
       const dividerMetadata = JSON.stringify({ type: 'session_divider', summary: summary ?? null })
+      // Date the divider at the session's end, not at `now`: a background
+      // summary lands seconds after the user already sent messages in the new
+      // session, and chat history is ordered by timestamp — a `now` divider
+      // would reappear *below* those messages after a page reload.
       db.prepare(
-        'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
-      ).run(sessionId, numericUserId, 'system', summary ?? '', dividerMetadata, agentId)
+        // RC1–3: agent_id on every INSERT (write-path discipline).
+        // Upstream 1cd455c2: date the divider at the session's end via
+        // COALESCE(ended_at, now()). Both columns kept.
+        `INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT ended_at FROM sessions WHERE id = ?), datetime('now')))`
+      ).run(sessionId, numericUserId, 'system', summary ?? '', dividerMetadata, agentId, sessionId)
 
       if (numericUserId !== null) {
         if (isBackground) {
@@ -1447,6 +1485,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       return
     }
 
+    unregisterTelegramEmailApproval?.()
+    unregisterTelegramEmailApproval = null
+
     // Stop existing pool if any
     if (telegramBotPool) {
       try {
@@ -1496,6 +1537,13 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         // Point telegramBot at the primary bot for backward compatibility
         // (reminders, status updates, single-bot callers).
         telegramBot = telegramBotPool.getPrimaryBot()
+        // Email approval notifications route through the primary bot in pool
+        // mode too, so the upstream email-approval feature keeps working when
+        // multi-persona is enabled. Cleanup is symmetric via
+        // unregisterTelegramEmailApproval in the stop/shutdown paths.
+        if (telegramBot) {
+          unregisterTelegramEmailApproval = registerEmailApprovalNotifier(telegramBot.createEmailApprovalNotifier())
+        }
         if (telegramBotPool.hasRunningBots()) {
           logger.log('[axiom] Telegram bot pool (re)started')
         } else {
@@ -1530,6 +1578,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     if (telegramBot) {
       try {
         await telegramBot.start()
+        unregisterTelegramEmailApproval = registerEmailApprovalNotifier(telegramBot.createEmailApprovalNotifier())
         logger.log('[axiom] Telegram bot (re)started')
       } catch (err) {
         logger.error('[axiom] Failed to start Telegram bot:', err)
@@ -1710,6 +1759,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     uploadCleanupService,
     taskEventBus,
     chatEventBus,
+    chatActions,
     getAgentCore: () => agentCore,
     getTaskRuntime: () => taskRuntime,
     resolveProvider,
@@ -1722,6 +1772,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       })
     },
     onActiveProviderChanged: () => {
+      // initOrUpdateAgentCore only rebuilds the interactive core.
+      rebuildBackgroundTaskTools()
       initOrUpdateAgentCore().catch((err) => {
         logger.error('[axiom] Error initializing agent core after provider change:', err)
       })
@@ -1736,6 +1788,10 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       agentHeartbeatService.stop()
       uploadCleanupService.stop()
       taskRuntime.schedules.stop()
+
+      unregisterTelegramEmailApproval?.()
+      unregisterTelegramEmailApproval = null
+      unregisterEmailApprovalChat()
 
       if (telegramBotPool) {
         try {

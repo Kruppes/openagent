@@ -231,8 +231,13 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
     // pi-ai ≥ 0.80.8 AuthInteraction contract: flow events arrive via
     // `notify()`, user input is pulled via `prompt()`. Mapping mirrors the
     // pre-0.80.8 callback behavior exactly.
+    // pi-ai 0.84.1: ProviderAuthInteraction requires a non-optional `signal`
+    // that aborts the whole login flow. This headless flow never cancels the
+    // outer login, so a bare controller signal satisfies the contract.
+    const loginAbort = new AbortController()
     oauthAuth
       .login({
+        signal: loginAbort.signal,
         notify: (event) => {
           if (event.type === 'auth_url') {
             loginState.authUrl = event.url
@@ -292,6 +297,9 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       throw new ProvidersRuntimeError(loginState.error ?? 'OAuth login failed')
     }
 
+    // Callback-server flows request a manual-code fallback synchronously after
+    // announcing the auth URL, so the resolver is set by the time this awaited
+    // continuation runs. Device-code flows never prompt for one.
     return {
       loginId,
       authUrl: authInfo.url,

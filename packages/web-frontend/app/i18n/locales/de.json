@@ -17,7 +17,8 @@
     "personas": "Personas",
     "instructions": "Anweisungen",
     "tasks": "Aufgaben",
-    "cronjobs": "Cronjobs"
+    "cronjobs": "Cronjobs",
+    "email": "E-Mail"
   },
   "roles": {
     "admin": "Admin",
@@ -35,7 +36,9 @@
     "saveFailed": "Änderungen konnten nicht gespeichert werden.",
     "deleteFailed": "Element konnte nicht gelöscht werden.",
     "language": "Sprache",
-    "back": "Zurück"
+    "back": "Zurück",
+    "close": "Schließen",
+    "refresh": "Aktualisieren"
   },
   "admin": {
     "title": "Admin-Zugriff erforderlich",
@@ -541,7 +544,9 @@
       "agentHeartbeat": "Agent Heartbeat",
       "agentHeartbeatDescription": "Periodische Hintergrundaufgaben für Gedächtnispflege, tägliche Notizen und proaktive Wartung.",
       "secrets": "Secrets",
-      "secretsDescription": "Verschlüsselte Umgebungsvariablen verwalten, die zur Laufzeit injiziert werden."
+      "secretsDescription": "Verschlüsselte Umgebungsvariablen verwalten, die zur Laufzeit injiziert werden.",
+      "email": "E-Mail",
+      "emailDescription": "IMAP/SMTP-Konten des Agenten — inklusive Berechtigungen und Sende-Regeln."
     },
     "agentHeartbeatEnabled": "Agent Heartbeat aktivieren",
     "agentHeartbeatEnabledHint": "Wenn aktiviert, führt der Agent periodisch Wartungsaufgaben aus HEARTBEAT.md durch (Gedächtnis-Updates, Hygiene-Checks).",
@@ -945,6 +950,131 @@
     },
     "triggerModelDefault": "Standard ({value})",
     "triggerModelDefaultTooltip": "Standard-Provider und -Modell aus den Task-Einstellungen."
+  },
+  "email": {
+    "title": "E-Mail",
+    "addAccount": "Neues Konto",
+    "accountMenu": "Kontomenü",
+    "empty": "Noch keine E-Mail-Konten konfiguriert.",
+    "readonly": "Nur Lesen",
+    "createTitle": "E-Mail-Konto hinzufügen",
+    "createDescription": "IMAP/SMTP-Postfach verbinden und festlegen, was der Agent damit tun darf.",
+    "editTitle": "E-Mail-Konto bearbeiten",
+    "editDescription": "Verbindungsdaten, Berechtigungen und Sende-Regeln aktualisieren.",
+    "createSuccess": "E-Mail-Konto angelegt.",
+    "updateSuccess": "E-Mail-Konto aktualisiert.",
+    "deleteSuccess": "E-Mail-Konto gelöscht.",
+    "deleteTitle": "E-Mail-Konto löschen?",
+    "deleteConfirm": "Das Konto \"{name}\" und seine Zugangsdaten werden dauerhaft entfernt.",
+    "columns": {
+      "name": "Name",
+      "permissions": "Berechtigungen",
+      "server": "Server"
+    },
+    "form": {
+      "name": "Kontoname",
+      "namePlaceholder": "z. B. Arbeitspostfach",
+      "imapSection": "IMAP (Empfangen)",
+      "smtpSection": "SMTP (Senden)",
+      "permissionsSection": "Berechtigungen",
+      "allowlistSection": "Empfänger-Allowlist",
+      "sendingSection": "Sende-Optionen",
+      "host": "Host",
+      "port": "Port",
+      "user": "Benutzername",
+      "password": "Passwort",
+      "passwordKeep": "Leer lassen, um das gespeicherte Passwort zu behalten",
+      "canSend": "Senden erlauben",
+      "canSendHelp": "Der Agent darf über dieses Konto E-Mails senden.",
+      "canManage": "Verwalten erlauben",
+      "canManageHelp": "Der Agent darf E-Mails verschieben und archivieren.",
+      "canDelete": "Löschen erlauben",
+      "canDeleteHelp": "Der Agent darf E-Mails löschen.",
+      "canDownloadAttachments": "Anhänge herunterladen erlauben",
+      "canDownloadAttachmentsHelp": "Der Agent darf Anhänge in den Workspace laden.",
+      "requireApproval": "Freigabe erforderlich",
+      "requireApprovalHelp": "E-Mails an Empfänger außerhalb der Allowlist warten auf menschliche Freigabe statt blockiert zu werden.",
+      "allowSelfSignedCert": "Selbstsigniertes Zertifikat akzeptieren",
+      "allowSelfSignedCertHelp": "Nötig für lokale Bridges wie die Proton Mail Bridge.",
+      "allowlistHelp": "Ein Eintrag pro Zeile. Jeder To/CC/BCC-Empfänger wird gegen diese Liste geprüft.",
+      "allowlistAddresses": "Adressen",
+      "allowlistDomains": "Domains",
+      "displayName": "Anzeigename",
+      "displayNamePlaceholder": "z. B. Axiom Agent",
+      "signature": "Signatur / KI-Hinweis",
+      "signaturePlaceholder": "Wird an jede gesendete E-Mail angehängt.",
+      "appendToSentFolder": "Kopie in Gesendet-Ordner",
+      "appendToSentFolderHelp": "Gesendete E-Mails per IMAP in den Gesendet-Ordner kopieren, damit sie im Mail-Client auftauchen.",
+      "allowHtml": "HTML-Mails erlauben",
+      "allowHtmlHelp": "Wenn aus, darf der Agent nur Klartext senden.",
+      "attachmentDownloadPath": "Download-Pfad für Anhänge",
+      "attachmentDownloadPathHelp": "Relativer Pfad im Workspace, in dem Anhänge gespeichert werden.",
+      "testing": "Teste …",
+      "foldersSection": "Ordner",
+      "foldersHelp": "Beschränkt, welche Ordner der Agent auflisten, lesen und als Verschiebeziel nutzen darf.",
+      "folderModeAll": "Alle Ordner",
+      "folderModeSelected": "Nur ausgewählte Ordner",
+      "loadFolders": "Ordner laden",
+      "loadingFolders": "Lädt …",
+      "noFoldersLoaded": "Noch keine Ordner geladen – auf „Ordner laden“ klicken.",
+      "security": "Verschlüsselung",
+      "securityOption": {
+        "ssl": "SSL/TLS",
+        "starttls": "STARTTLS",
+        "none": "Keine"
+      },
+      "sameCredentials": "Gleiche Zugangsdaten wie Posteingang (E-Mail + Passwort)",
+      "testImap": "Posteingang testen",
+      "testSmtp": "Postausgang testen",
+      "testImapSuccess": "IMAP-Verbindung erfolgreich.",
+      "testSmtpSuccess": "SMTP-Verbindung erfolgreich."
+    },
+    "sentLog": {
+      "status": {
+        "sent": "Gesendet",
+        "pending": "Wartet auf Freigabe",
+        "approved": "Freigegeben",
+        "rejected": "Abgelehnt",
+        "blocked": "Blockiert",
+        "failed": "Fehlgeschlagen"
+      },
+      "columns": {
+        "status": "Status",
+        "recipients": "Empfänger",
+        "subject": "Betreff",
+        "account": "Konto",
+        "createdAt": "Zeitpunkt",
+        "decision": "Entscheidung"
+      },
+      "filters": {
+        "search": "Betreff oder Inhalt suchen…",
+        "recipient": "Empfänger…",
+        "account": "Konto",
+        "allAccounts": "Alle Konten",
+        "dateFrom": "Von Datum",
+        "dateTo": "Bis Datum",
+        "reset": "Filter zurücksetzen"
+      },
+      "count": "{count} Einträge",
+      "empty": "Der Agent hat noch keinen Sendeversuch unternommen.",
+      "noResults": "Keine Sendeversuche passen zu diesen Filtern.",
+      "noSubject": "(kein Betreff)",
+      "loadMore": "Mehr laden",
+      "attachments": "Anhänge",
+      "body": "Nachricht",
+      "bodyHtml": "HTML-Inhalt",
+      "to": "An",
+      "cc": "Cc",
+      "bcc": "Bcc",
+      "actions": {
+        "approve": "Freigeben",
+        "reject": "Ablehnen",
+        "retry": "Erneut senden"
+      },
+      "approvedBy": "Freigegeben von {user}",
+      "rejectedBy": "Abgelehnt von {user}"
+    },
+    "sentLogSubtitle": "Vom Agenten gesendete oder zur Freigabe vorgemerkte Mails."
   },
   "cronjobs": {
     "pageTitle": "Cronjobs",

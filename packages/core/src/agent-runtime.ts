@@ -27,6 +27,7 @@ import { createAgentSkillTools, getAgentSkillsForPrompt, getAgentSkillsCount, ge
 import { createSearchMemoriesTool } from './memories-tool.js'
 import { createReadChatHistoryTool } from './chat-history-tools.js'
 import { sanitizeHistoryBoundaries, describeHistoryStructure } from './message-history.js'
+import { createEmailTools } from './email-tools.js'
 import type { AgentRuntimeStateSnapshot, ResponseChunk } from './agent-runtime-types.js'
 
 /**
@@ -67,6 +68,7 @@ export function createBaseAgentTools(options: BaseAgentToolsOptions): AgentTool[
       getCurrentAgentId: options.getCurrentAgentId,
     }),
     ...createAgentSkillTools(),
+    ...createEmailTools(),
     ...(options.sttEnabled ? [createTranscribeAudioTool()] : []),
   ]
 }

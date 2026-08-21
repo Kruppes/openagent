@@ -185,6 +185,26 @@ describe('provider-config', () => {
     expect(model.cost.output).toBe(10.00)
   })
 
+  it('buildModel routes GitHub Copilot to the account proxy endpoint from the token', () => {
+    const model = buildModel({
+      id: 'copilot-id',
+      name: 'copilot',
+      type: 'anthropic-messages',
+      providerType: 'github-copilot' as const,
+      provider: 'github-copilot',
+      baseUrl: '',
+      apiKey: '',
+      authMethod: 'oauth' as const,
+      enabledModels: ['claude-haiku-4.5'],
+      oauthCredentials: {
+        refresh: 'r',
+        access: 'tid=abc;exp=1;proxy-ep=proxy.enterprise.githubcopilot.com;',
+        expires: Date.now() + 60_000,
+      },
+    })
+    expect(model.baseUrl).toBe('https://api.enterprise.githubcopilot.com')
+  })
+
   it('buildModel uses configured settings price table as fallback', () => {
     setupTmpConfig()
     fs.writeFileSync(
@@ -323,7 +343,7 @@ describe('provider-config', () => {
     })
     // The module-level catalog default must stay untouched (no shared reference).
     const catalogDefault = PROVIDER_TYPE_MODEL_OVERRIDES.kimi?.find(m => m.id === 'kimi-k2.6')
-    expect(catalogDefault?.cost?.input).toBe(0.6)
+    expect(catalogDefault?.cost?.input).toBe(0.95)
     const entry = patched.models?.find(m => m.id === 'kimi-k2.6')
     expect(entry).toBeDefined()
     expect(entry?.description).toBe('Fast model for digests')
@@ -334,7 +354,7 @@ describe('provider-config', () => {
     expect(entry?.cost?.input).toBe(1.5)
     expect(entry?.cost?.output).toBe(2.5)
     // Catalog cache cost preserved when not overridden
-    expect(entry?.cost?.cacheRead).toBe(0.15)
+    expect(entry?.cost?.cacheRead).toBe(0.16)
 
     // Clearing the description removes it; cost stays
     const cleared = updateProviderModel('kimi-id', 'kimi-k2.6', { description: '   ' })

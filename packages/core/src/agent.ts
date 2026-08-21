@@ -5,7 +5,8 @@ import type { Agent as PiAgent } from '@earendil-works/pi-agent-core'
 import type { Api, ImageContent, Model } from '@earendil-works/pi-ai'
 import { completeSimple } from './pi-models.js'
 import type { Database } from './database.js'
-import { getApiKeyForProvider, buildModel, resolveModelTemperature } from './provider-config.js'
+import { getApiKeyForProvider, buildModel } from './provider-config.js'
+import { assertLlmResponseOk } from './llm-response.js'
 import type { ProviderConfig } from './provider-config.js'
 import type { ProviderManager } from './provider-manager.js'
 import { loadConfig } from './config.js'
@@ -595,7 +596,6 @@ export class AgentCore {
             const resolvedModelId = modelId ?? getProviderDefaultModel(summaryProvider)
             summaryModel = buildModel(summaryProvider, resolvedModelId)
             summaryApiKey = await getApiKeyForProvider(summaryProvider)
-            summaryProviderForTemp = summaryProvider
             console.log(`[session-summary] Using dedicated provider: ${summaryProvider.name} (${resolvedModelId})`)
           } else {
             console.warn(`[session-summary] Configured summary provider '${providerId}' not found, using active provider`)
@@ -648,11 +648,10 @@ Do NOT add this section if everything discussed was resolved or if there is noth
         }],
       }, {
         apiKey: summaryApiKey,
-        temperature: summaryProviderForTemp
-          ? resolveModelTemperature(summaryProviderForTemp, summaryModel.id, 0)
-          : 0,
         reasoning: resolveBackgroundReasoning(),
       }), 180_000, 'Session summary')
+
+      assertLlmResponseOk(response, '[session-summary] Provider rejected the summary request')
 
       const textContent = response.content.filter(c => c.type === 'text')
 
@@ -671,8 +670,11 @@ Do NOT add this section if everything discussed was resolved or if there is noth
 
       return summary || 'Empty session.'
     } catch (err) {
+      // Return no summary at all: a placeholder string would be written to
+      // the daily memory file and shown as the session's summary card,
+      // making a broken provider look like an uneventful conversation.
       console.error('Failed to generate session summary:', err)
-      return 'Session ended (summary generation failed).'
+      return ''
     }
   }
 

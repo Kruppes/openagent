@@ -55,6 +55,7 @@ vi.mock('./memory.js', () => ({
 vi.mock('./config.js', () => ({
   loadMultiPersonaSettings: vi.fn(() => ({ enabled: false, defaultAgentId: 'main' })),
   ensureConfigTemplates: vi.fn(),
+  getConfigDir: vi.fn(() => '/tmp/axiom-agent-runtime-test-config'),
   loadConfig: vi.fn(() => ({
     language: 'de',
     timezone: 'Europe/Berlin',
