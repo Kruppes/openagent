@@ -47,6 +47,7 @@ export interface ProviderContract {
   apiKeyMasked: string
   enabledModels?: string[]
   degradedThresholdMs?: number
+  healthCheckTimeoutMs?: number
   textVerbosity?: ProviderTextVerbosityContract
   transport?: ProviderTransportContract
   status?: ProviderStatusContract
@@ -196,6 +197,7 @@ export interface ProviderCreatePayloadContract {
   apiKey?: string
   enabledModels: string[]
   degradedThresholdMs?: number
+  healthCheckTimeoutMs?: number
   textVerbosity?: ProviderTextVerbosityContract | null
   transport?: ProviderTransportContract | null
   extraFields?: Record<string, string>
@@ -208,6 +210,7 @@ export interface ProviderUpdatePayloadContract {
   apiKey?: string
   enabledModels?: string[]
   degradedThresholdMs?: number
+  healthCheckTimeoutMs?: number
   textVerbosity?: ProviderTextVerbosityContract | null
   transport?: ProviderTransportContract | null
   extraFields?: Record<string, string>

@@ -684,6 +684,27 @@ export function resolveModelTemperature(
   return requested
 }
 
+/** Default hard abort timeout for automated provider health checks (ms). */
+export const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 15000
+
+/**
+ * Health-check timeout applied to newly created LOCAL providers (Ollama and
+ * its legacy aliases). A model cold start (VRAM eviction, model reload) can
+ * easily take 30–60 s; the regular 15 s default would misclassify a merely
+ * cold provider as down.
+ */
+export const LOCAL_HEALTH_CHECK_TIMEOUT_MS = 60000
+
+/**
+ * Creation-time default for `ProviderConfig.healthCheckTimeoutMs`.
+ * Only affects NEWLY created providers — existing configs without the field
+ * keep resolving to DEFAULT_HEALTH_CHECK_TIMEOUT_MS in the health check.
+ */
+export function getDefaultHealthCheckTimeoutMs(providerType: ProviderType): number {
+  const preset = PROVIDER_TYPE_PRESETS[providerType]
+  return preset?.type === 'ollama' ? LOCAL_HEALTH_CHECK_TIMEOUT_MS : DEFAULT_HEALTH_CHECK_TIMEOUT_MS
+}
+
 /**
  * Provider configuration as stored in providers.json
  */
@@ -697,6 +718,15 @@ export interface ProviderConfig {
   apiKey: string // encrypted at rest
   enabledModels?: string[] // list of model IDs enabled for this provider; first entry is the default/primary model
   degradedThresholdMs?: number
+  /**
+   * Hard abort timeout for automated health checks (ms). Absent → the
+   * health check falls back to DEFAULT_HEALTH_CHECK_TIMEOUT_MS (15000), so
+   * existing provider configs keep their exact pre-existing behavior.
+   * Local providers (Ollama) get LOCAL_HEALTH_CHECK_TIMEOUT_MS (60000) on
+   * creation because a model cold start (VRAM eviction + reload) routinely
+   * exceeds 15 s and must not be classified as "down".
+   */
+  healthCheckTimeoutMs?: number
   textVerbosity?: TextVerbosity
   transport?: ProviderTransport
   models?: ProviderModelConfig[]
@@ -1095,6 +1125,7 @@ export function addProvider(input: {
   apiKey?: string
   enabledModels: string[]
   degradedThresholdMs?: number
+  healthCheckTimeoutMs?: number
   textVerbosity?: TextVerbosity
   transport?: ProviderTransport
   extraFields?: Record<string, string>
@@ -1125,6 +1156,7 @@ export function addProvider(input: {
     apiKey: input.apiKey ? encrypt(input.apiKey) : '',
     enabledModels,
     degradedThresholdMs: input.degradedThresholdMs ?? 5000,
+    healthCheckTimeoutMs: input.healthCheckTimeoutMs ?? getDefaultHealthCheckTimeoutMs(input.providerType),
     ...(input.textVerbosity && presetSupportsTextVerbosity(input.providerType)
       && { textVerbosity: input.textVerbosity }),
     ...(input.transport && input.transport !== 'sse' && presetSupportsTransport(input.providerType)
@@ -1157,6 +1189,7 @@ export function addOAuthProvider(input: {
   providerType: ProviderType
   enabledModels: string[]
   degradedThresholdMs?: number
+  healthCheckTimeoutMs?: number
   textVerbosity?: TextVerbosity
   transport?: ProviderTransport
   oauthCredentials: OAuthCredentials
@@ -1188,6 +1221,7 @@ export function addOAuthProvider(input: {
     apiKey: '',
     enabledModels,
     degradedThresholdMs: input.degradedThresholdMs ?? 5000,
+    healthCheckTimeoutMs: input.healthCheckTimeoutMs ?? getDefaultHealthCheckTimeoutMs(input.providerType),
     ...(input.textVerbosity && presetSupportsTextVerbosity(input.providerType)
       && { textVerbosity: input.textVerbosity }),
     ...(input.transport && input.transport !== 'sse' && presetSupportsTransport(input.providerType)
@@ -1218,6 +1252,7 @@ export function updateProvider(id: string, input: {
   apiKey?: string
   enabledModels?: string[]
   degradedThresholdMs?: number
+  healthCheckTimeoutMs?: number
   textVerbosity?: TextVerbosity | null
   transport?: ProviderTransport | null
   extraFields?: Record<string, string>
@@ -1260,6 +1295,7 @@ export function updateProvider(id: string, input: {
     existing.enabledModels = input.enabledModels
   }
   if (input.degradedThresholdMs !== undefined) existing.degradedThresholdMs = input.degradedThresholdMs
+  if (input.healthCheckTimeoutMs !== undefined) existing.healthCheckTimeoutMs = input.healthCheckTimeoutMs
   if (input.extraFields !== undefined) {
     existing.extraFields = mergeExtraFieldsForUpdate(existing.providerType, existing.extraFields, input.extraFields)
   }
