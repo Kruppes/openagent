@@ -65,6 +65,75 @@ describe('provider-health', () => {
     expect(result.isRateLimited).toBe(false)
   })
 
+  describe('timeout resolution and classification', () => {
+    /** Fake fetch that only answers after `resolveAfterMs`, but honours the abort signal like real fetch. */
+    function slowFetch(resolveAfterMs: number): typeof fetch {
+      return ((_url: unknown, init?: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          const timer = setTimeout(
+            () => resolve(new Response(JSON.stringify({ ok: true }), { status: 200 })),
+            resolveAfterMs,
+          )
+          init?.signal?.addEventListener('abort', () => {
+            clearTimeout(timer)
+            const err = new Error('This operation was aborted')
+            err.name = 'AbortError'
+            reject(err)
+          })
+        })) as unknown as typeof fetch
+    }
+
+    it('uses provider.healthCheckTimeoutMs when no call option is given', async () => {
+      const result = await performProviderHealthCheck(
+        { ...provider, healthCheckTimeoutMs: 30 },
+        { fetchImpl: slowFetch(1500) },
+      )
+      expect(result.status).toBe('down')
+      expect(result.isTimeout).toBe(true)
+      expect(result.errorMessage).toBe('Connection timed out')
+      // Aborted at the provider timeout, not at the 15 s default
+      expect(result.latencyMs).toBeLessThan(1500)
+    })
+
+    it('explicit options.timeoutMs takes precedence over provider.healthCheckTimeoutMs', async () => {
+      // With the provider field (30 ms) in effect this would abort; the
+      // explicit call option (manual test path) must win.
+      const result = await performProviderHealthCheck(
+        { ...provider, healthCheckTimeoutMs: 30 },
+        { timeoutMs: 5000, fetchImpl: slowFetch(150) },
+      )
+      expect(result.status).toBe('healthy')
+      expect(result.errorMessage).toBeNull()
+    })
+
+    it('falls back to the 15 s default when neither option nor provider field is set', async () => {
+      // Would go down instantly under a tiny timeout; the default gives it room.
+      const result = await performProviderHealthCheck(provider, {
+        fetchImpl: slowFetch(100),
+      })
+      expect(result.status).toBe('healthy')
+    })
+
+    it('does not classify real HTTP errors as timeout', async () => {
+      const result = await performProviderHealthCheck(provider, {
+        fetchImpl: async () => new Response(JSON.stringify({ error: 'Server error' }), { status: 500 }),
+      })
+      expect(result.status).toBe('down')
+      expect(result.isTimeout).not.toBe(true)
+    })
+
+    it('does not classify thrown non-abort errors as timeout', async () => {
+      const result = await performProviderHealthCheck(provider, {
+        fetchImpl: async () => {
+          throw new Error('connect ECONNREFUSED 127.0.0.1:11434')
+        },
+      })
+      expect(result.status).toBe('down')
+      expect(result.isTimeout).toBe(false)
+      expect(result.errorMessage).toContain('ECONNREFUSED')
+    })
+  })
+
   it('logs history rows and activity summary in sqlite', () => {
     const db = initDatabase(':memory:')
 

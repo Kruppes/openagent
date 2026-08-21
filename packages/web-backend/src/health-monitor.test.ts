@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { initDatabase, addProvider, setActiveProvider, ProviderManager } from '@axiom/core'
+import { initDatabase, addProvider, setActiveProvider, getActiveProvider, ProviderManager } from '@axiom/core'
 import type { ProviderConfig } from '@axiom/core'
 import { HealthMonitorService } from './health-monitor.js'
 
@@ -1149,6 +1149,205 @@ describe('HealthMonitorService', () => {
       // Recovery → should trigger fallbackToHealthy (default: true)
       await service.runNow()
       expect(telegramBodies).toHaveLength(3)
+
+      db.close()
+    })
+  })
+
+  describe('cold-start timeout retry', () => {
+    /** Fake /chat/completions handler that hangs until the abort signal fires (like a cold model load). */
+    function hangUntilAborted(init?: RequestInit): Promise<Response> {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const err = new Error('This operation was aborted')
+          err.name = 'AbortError'
+          reject(err)
+        })
+      })
+    }
+
+    it('timeout down is retried once with a longer timeout and does not count as failure', async () => {
+      const db = initDatabase(':memory:')
+      const added = addProvider({
+        name: 'Primary',
+        providerType: 'openai',
+        apiKey: 'sk-test',
+        enabledModels: ['gpt-4o-mini'],
+        healthCheckTimeoutMs: 30,
+      })
+      const pm = new ProviderManager(makeProvider({ id: added.id }), makeProvider({ id: 'fb', name: 'Fallback' }))
+
+      let chatCalls = 0
+      const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.includes('/chat/completions')) {
+          chatCalls++
+          // First attempt: cold start — hangs past the 30 ms provider timeout.
+          if (chatCalls === 1) return hangUntilAborted(init)
+          // Retry: model is loaded now, answers immediately.
+          return new Response(JSON.stringify({ ok: true }), { status: 200 })
+        }
+        if (url.includes('api.telegram.org')) {
+          return new Response(JSON.stringify({ ok: true }), { status: 200 })
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      })
+
+      const service = new HealthMonitorService({
+        db,
+        providerManager: pm,
+        fetchImpl: fetchImpl as typeof fetch,
+        coldStartRetryTimeoutMs: 5000,
+      })
+
+      const result = await service.runNow()
+
+      expect(chatCalls).toBe(2)
+      expect(result.status).toBe('healthy')
+      // No failure recorded, no fallback swap, no 'error' provider status
+      expect(pm.getOperatingMode()).toBe('normal')
+      expect(pm.getConsecutiveFailures()).toBe(0)
+      expect(getActiveProvider()?.status).toBe('connected')
+
+      db.close()
+    })
+
+    it('timeout on the retry as well records down and still triggers fallback in the same cycle', async () => {
+      const db = initDatabase(':memory:')
+      const added = addProvider({
+        name: 'Primary',
+        providerType: 'openai',
+        apiKey: 'sk-test',
+        enabledModels: ['gpt-4o-mini'],
+        healthCheckTimeoutMs: 30,
+      })
+      const pm = new ProviderManager(makeProvider({ id: added.id }), makeProvider({ id: 'fb', name: 'Fallback' }))
+      const swapSpy = vi.spyOn(pm, 'swapToFallback')
+
+      let chatCalls = 0
+      const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.includes('/chat/completions')) {
+          chatCalls++
+          return hangUntilAborted(init) // hangs on every attempt
+        }
+        if (url.includes('api.telegram.org')) {
+          return new Response(JSON.stringify({ ok: true }), { status: 200 })
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      })
+
+      const service = new HealthMonitorService({
+        db,
+        providerManager: pm,
+        fetchImpl: fetchImpl as typeof fetch,
+        coldStartRetryTimeoutMs: 50,
+      })
+
+      const result = await service.runNow()
+
+      expect(chatCalls).toBe(2) // exactly one retry, then the failure counts
+      expect(result.status).toBe('down')
+      expect(result.isTimeout).toBe(true)
+      expect(swapSpy).toHaveBeenCalledOnce()
+      expect(pm.getOperatingMode()).toBe('fallback')
+
+      db.close()
+    })
+
+    it('real provider errors get no retry and keep the previous fallback behavior', async () => {
+      const db = initDatabase(':memory:')
+      const added = addProvider({
+        name: 'Primary',
+        providerType: 'openai',
+        apiKey: 'sk-test',
+        enabledModels: ['gpt-4o-mini'],
+      })
+      const pm = new ProviderManager(makeProvider({ id: added.id }), makeProvider({ id: 'fb', name: 'Fallback' }))
+      const swapSpy = vi.spyOn(pm, 'swapToFallback')
+
+      let chatCalls = 0
+      const fetchImpl = vi.fn(async (input: string | URL) => {
+        const url = String(input)
+        if (url.includes('/chat/completions')) {
+          chatCalls++
+          return new Response(JSON.stringify({ error: 'invalid api key' }), { status: 401 })
+        }
+        if (url.includes('api.telegram.org')) {
+          return new Response(JSON.stringify({ ok: true }), { status: 200 })
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      })
+
+      const service = new HealthMonitorService({
+        db,
+        providerManager: pm,
+        fetchImpl: fetchImpl as typeof fetch,
+      })
+
+      const result = await service.runNow()
+
+      expect(chatCalls).toBe(1) // no retry for real errors
+      expect(result.status).toBe('down')
+      expect(result.isTimeout).not.toBe(true)
+      expect(swapSpy).toHaveBeenCalledOnce()
+      expect(pm.getOperatingMode()).toBe('fallback')
+
+      db.close()
+    })
+
+    it('recovery check also grants the cold-start retry to the primary provider', async () => {
+      writeConfig('settings.json', {
+        healthMonitor: {
+          intervalMinutes: 1,
+          fallbackTrigger: 'down',
+          failuresBeforeFallback: 1,
+          recoveryCheckIntervalMinutes: 1,
+          successesBeforeRecovery: 1,
+        },
+      })
+
+      const db = initDatabase(':memory:')
+      const added = addProvider({
+        name: 'Primary',
+        providerType: 'openai',
+        apiKey: 'sk-test',
+        enabledModels: ['gpt-4o-mini'],
+        healthCheckTimeoutMs: 30,
+      })
+      const pm = new ProviderManager(
+        { ...makeProvider({ id: added.id }), healthCheckTimeoutMs: 30 },
+        makeProvider({ id: 'fb', name: 'Fallback' }),
+      )
+      pm.swapToFallback() // start in fallback mode
+
+      let chatCalls = 0
+      const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.includes('/chat/completions')) {
+          chatCalls++
+          if (chatCalls === 1) return hangUntilAborted(init) // primary cold-starts during recovery probe
+          return new Response(JSON.stringify({ ok: true }), { status: 200 })
+        }
+        if (url.includes('api.telegram.org')) {
+          return new Response(JSON.stringify({ ok: true }), { status: 200 })
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      })
+
+      const service = new HealthMonitorService({
+        db,
+        providerManager: pm,
+        fetchImpl: fetchImpl as typeof fetch,
+        coldStartRetryTimeoutMs: 5000,
+      })
+
+      const result = await service.runNow()
+
+      expect(chatCalls).toBe(2)
+      expect(result.status).toBe('healthy')
+      // successesBeforeRecovery=1 → the healthy retry result counts and we swap back
+      expect(pm.getOperatingMode()).toBe('normal')
 
       db.close()
     })

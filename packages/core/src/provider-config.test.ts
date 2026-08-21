@@ -677,6 +677,98 @@ describe('transport persistence guard', () => {
   })
 })
 
+describe('healthCheckTimeoutMs persistence', () => {
+  let tmpDir: string
+  const originalDataDir = process.env.DATA_DIR
+
+  afterEach(() => {
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true })
+    if (originalDataDir !== undefined) process.env.DATA_DIR = originalDataDir
+    else delete process.env.DATA_DIR
+  })
+
+  function setupEmpty(): void {
+    tmpDir = path.join(os.tmpdir(), `axiom-hct-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const configDir = path.join(tmpDir, 'config')
+    fs.mkdirSync(configDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(configDir, 'providers.json'),
+      JSON.stringify({ providers: [] }, null, 2),
+      'utf-8',
+    )
+    process.env.DATA_DIR = tmpDir
+  }
+
+  it('addProvider defaults local Ollama providers to the 60 s cold-start timeout', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'local-ollama',
+      providerType: 'ollama',
+      baseUrl: 'http://mac-studio:11434/v1',
+      enabledModels: ['qwen3:32b'],
+    })
+    expect(provider.healthCheckTimeoutMs).toBe(60000)
+  })
+
+  it('addProvider defaults remote providers to the regular 15 s timeout', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'remote-openai',
+      providerType: 'openai',
+      apiKey: 'sk-a',
+      enabledModels: ['gpt-4o'],
+    })
+    expect(provider.healthCheckTimeoutMs).toBe(15000)
+  })
+
+  it('addProvider honours an explicit healthCheckTimeoutMs over the type default', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'local-ollama',
+      providerType: 'ollama',
+      enabledModels: ['qwen3:32b'],
+      healthCheckTimeoutMs: 120000,
+    })
+    expect(provider.healthCheckTimeoutMs).toBe(120000)
+  })
+
+  it('updateProvider persists healthCheckTimeoutMs and leaves it untouched when omitted', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'remote-openai',
+      providerType: 'openai',
+      apiKey: 'sk-a',
+      enabledModels: ['gpt-4o'],
+    })
+    const updated = updateProvider(provider.id, { healthCheckTimeoutMs: 30000 })
+    expect(updated.healthCheckTimeoutMs).toBe(30000)
+
+    const untouched = updateProvider(provider.id, { name: 'renamed' })
+    expect(untouched.healthCheckTimeoutMs).toBe(30000)
+  })
+
+  it('existing provider entries without the field stay without it (no silent rewrite)', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'remote-openai',
+      providerType: 'openai',
+      apiKey: 'sk-a',
+      enabledModels: ['gpt-4o'],
+    })
+    // Simulate a pre-existing config entry created before the field existed
+    const file = loadProviders()
+    delete file.providers.find(p => p.id === provider.id)!.healthCheckTimeoutMs
+    fs.writeFileSync(
+      path.join(tmpDir, 'config', 'providers.json'),
+      JSON.stringify(file, null, 2),
+      'utf-8',
+    )
+
+    const updated = updateProvider(provider.id, { name: 'renamed' })
+    expect(updated.healthCheckTimeoutMs).toBeUndefined()
+  })
+})
+
 describe('encryption', () => {
   it('encrypt/decrypt roundtrip works', () => {
     const plaintext = 'sk-test-api-key-12345'
