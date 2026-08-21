@@ -1,5 +1,6 @@
 import type { Database, ProviderConfig, ProviderHealthCheckResult, ProviderHealthStatus, OperatingMode } from '@axiom/core'
 import {
+  DEFAULT_HEALTH_CHECK_TIMEOUT_MS,
   getActiveProvider,
   getProviderDefaultModel,
   performProviderHealthCheck,
@@ -79,6 +80,13 @@ export interface HealthMonitorServiceOptions {
   providerManager?: ProviderManager | null
   fetchImpl?: typeof fetch
   now?: () => Date
+  /**
+   * Timeout for the single cold-start retry that runs when a health check
+   * failed with a pure timeout (see checkProviderWithColdStartRetry).
+   * Defaults to max(60s, 2× the provider's effective health-check timeout).
+   * Exposed mainly so tests can keep the retry fast.
+   */
+  coldStartRetryTimeoutMs?: number
 }
 
 export class HealthMonitorService {
@@ -93,12 +101,14 @@ export class HealthMonitorService {
   private activeProviderId: string | null = null
   private checkInFlight: Promise<ProviderHealthCheckResult> | null = null
   private primaryLastHealthStatus: ProviderHealthStatus | null = null
+  private coldStartRetryTimeoutMs: number | undefined
 
   constructor(options: HealthMonitorServiceOptions) {
     this.db = options.db
     this.providerManager = options.providerManager ?? null
     this.fetchImpl = options.fetchImpl ?? fetch
     this.now = options.now ?? (() => new Date())
+    this.coldStartRetryTimeoutMs = options.coldStartRetryTimeoutMs
     this.settings = this.loadHealthMonitorSettings()
   }
 
@@ -258,6 +268,42 @@ export class HealthMonitorService {
     return this.executeNormalCheck()
   }
 
+  /**
+   * Runs a health check and, when the result is `down` caused purely by the
+   * hard timeout (result.isTimeout), retries ONCE with a longer timeout
+   * before anything is recorded. Rationale: a local model cold start (Ollama
+   * VRAM eviction + reload) can exceed the regular timeout exactly once —
+   * after the retry the model is loaded. A cold provider must neither be
+   * marked `down`/`error` nor feed the failure counter that triggers the
+   * fallback swap. Real outages (HTTP 401/5xx, connection refused) do not
+   * produce timeouts and keep the exact pre-existing single-check behavior;
+   * a genuinely hanging provider still fails the retry and is recorded as
+   * down within the same check cycle.
+   */
+  private async checkProviderWithColdStartRetry(
+    provider: ProviderConfig | null,
+  ): Promise<ProviderHealthCheckResult> {
+    const result = await performProviderHealthCheck(provider, {
+      fetchImpl: this.fetchImpl,
+    })
+
+    if (!provider || result.status !== 'down' || result.isTimeout !== true) {
+      return result
+    }
+
+    const baseTimeoutMs = provider.healthCheckTimeoutMs ?? DEFAULT_HEALTH_CHECK_TIMEOUT_MS
+    const retryTimeoutMs = this.coldStartRetryTimeoutMs ?? Math.max(60_000, baseTimeoutMs * 2)
+    console.warn(
+      `[axiom] Health check for provider "${provider.name}" timed out after ${baseTimeoutMs}ms `
+      + `— retrying once with ${retryTimeoutMs}ms cold-start grace before recording a failure`,
+    )
+
+    return performProviderHealthCheck(provider, {
+      fetchImpl: this.fetchImpl,
+      timeoutMs: retryTimeoutMs,
+    })
+  }
+
   private async executeNormalCheck(): Promise<ProviderHealthCheckResult> {
     const provider = getActiveProvider()
 
@@ -267,9 +313,7 @@ export class HealthMonitorService {
     }
 
     const previousStatus = this.lastCheck?.status ?? null
-    const result = await performProviderHealthCheck(provider, {
-      fetchImpl: this.fetchImpl,
-    })
+    const result = await this.checkProviderWithColdStartRetry(provider)
 
     result.checkedAt = this.now().toISOString()
 
@@ -326,9 +370,7 @@ export class HealthMonitorService {
     const primary = this.providerManager!.getPrimaryProvider()
 
     const previousStatus = this.lastCheck?.status ?? null
-    const result = await performProviderHealthCheck(primary, {
-      fetchImpl: this.fetchImpl,
-    })
+    const result = await this.checkProviderWithColdStartRetry(primary)
 
     result.checkedAt = this.now().toISOString()
 
