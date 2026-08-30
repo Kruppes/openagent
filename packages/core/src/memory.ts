@@ -467,9 +467,21 @@ export function ensureMemoryStructure(memoryDir?: string): void {
 /**
  * Ensure the config directory structure exists with all default files.
  * Migrates files from /data/memory/ to /data/config/ if they exist in the old location.
+ *
+ * The legacy migration only runs when operating on the real config directory.
+ * `getMemoryDir()` resolves from `DATA_DIR` and ignores the `configDir`
+ * argument, so a caller passing an explicit directory (tests, tooling) would
+ * otherwise reach into the live `/data/memory` and try to *move* real files
+ * into that directory. Across filesystems that fails with EXDEV, which merely
+ * hides the problem instead of preventing it; on a single filesystem the live
+ * files would actually be moved away. Scope the migration accordingly.
  */
 export function ensureConfigStructure(configDir?: string): void {
   const dir = configDir ?? getConfigDir()
+
+  // Only migrate when this is the real config dir, never for an injected one.
+  const isRealConfigDir = path.resolve(dir) === path.resolve(getConfigDir())
+  const legacyDir = getMemoryDir()
 
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true })
@@ -478,8 +490,8 @@ export function ensureConfigStructure(configDir?: string): void {
   // Migrate AGENTS.md from memory dir to config dir if needed
   const agentsPath = path.join(dir, 'AGENTS.md')
   if (!fs.existsSync(agentsPath)) {
-    const legacyPath = path.join(getMemoryDir(), 'AGENTS.md')
-    if (fs.existsSync(legacyPath)) {
+    const legacyPath = path.join(legacyDir, 'AGENTS.md')
+    if (isRealConfigDir && fs.existsSync(legacyPath)) {
       fs.renameSync(legacyPath, agentsPath)
       console.log('[config] Migrated AGENTS.md from memory/ to config/')
     } else {
@@ -490,8 +502,8 @@ export function ensureConfigStructure(configDir?: string): void {
   // Migrate HEARTBEAT.md from memory dir to config dir if needed
   const heartbeatPath = path.join(dir, 'HEARTBEAT.md')
   if (!fs.existsSync(heartbeatPath)) {
-    const legacyPath = path.join(getMemoryDir(), 'HEARTBEAT.md')
-    if (fs.existsSync(legacyPath)) {
+    const legacyPath = path.join(legacyDir, 'HEARTBEAT.md')
+    if (isRealConfigDir && fs.existsSync(legacyPath)) {
       fs.renameSync(legacyPath, heartbeatPath)
       console.log('[config] Migrated HEARTBEAT.md from memory/ to config/')
     } else {

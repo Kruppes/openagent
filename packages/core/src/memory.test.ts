@@ -350,6 +350,69 @@ describe('memory', () => {
     })
   })
 
+  describe('ensureConfigStructure legacy migration scope', () => {
+    // Regression: ensureConfigStructure() takes an explicit configDir, but the
+    // legacy source path came from getMemoryDir(), which resolves from DATA_DIR
+    // and ignores that argument. Calling it with an injected directory would
+    // therefore renameSync() the *live* /data/memory files into that directory.
+    // On a separate filesystem that failed with EXDEV (masking the bug); on a
+    // shared filesystem it silently moved real user files away.
+    it('never moves files out of the live memory dir when given an explicit configDir', () => {
+      const prevDataDir = process.env.DATA_DIR
+      const dataDir = makeTmpDir()
+      const liveMemoryDir = path.join(dataDir, 'memory')
+      fs.mkdirSync(liveMemoryDir, { recursive: true })
+
+      // Legacy files present in the live memory dir, on the SAME filesystem as
+      // the target dir - so a stray renameSync would succeed instead of EXDEV.
+      const liveAgents = path.join(liveMemoryDir, 'AGENTS.md')
+      const liveHeartbeat = path.join(liveMemoryDir, 'HEARTBEAT.md')
+      fs.writeFileSync(liveAgents, '# Live agent rules\n', 'utf-8')
+      fs.writeFileSync(liveHeartbeat, '# Live heartbeat\n', 'utf-8')
+
+      process.env.DATA_DIR = dataDir
+      try {
+        const injectedConfigDir = path.join(dataDir, 'injected-config')
+        ensureConfigStructure(injectedConfigDir)
+
+        // The live files must still be there, with their original content.
+        expect(fs.existsSync(liveAgents)).toBe(true)
+        expect(fs.existsSync(liveHeartbeat)).toBe(true)
+        expect(fs.readFileSync(liveAgents, 'utf-8')).toBe('# Live agent rules\n')
+        expect(fs.readFileSync(liveHeartbeat, 'utf-8')).toBe('# Live heartbeat\n')
+
+        // The injected dir gets fresh templates, not the migrated live content.
+        const injectedAgents = fs.readFileSync(path.join(injectedConfigDir, 'AGENTS.md'), 'utf-8')
+        expect(injectedAgents).not.toBe('# Live agent rules\n')
+        expect(injectedAgents).toContain('# Agent Contract')
+      } finally {
+        if (prevDataDir === undefined) delete process.env.DATA_DIR
+        else process.env.DATA_DIR = prevDataDir
+      }
+    })
+
+    it('still migrates legacy files when operating on the real config dir', () => {
+      const prevDataDir = process.env.DATA_DIR
+      const dataDir = makeTmpDir()
+      const liveMemoryDir = path.join(dataDir, 'memory')
+      fs.mkdirSync(liveMemoryDir, { recursive: true })
+      fs.writeFileSync(path.join(liveMemoryDir, 'AGENTS.md'), '# Legacy rules\n', 'utf-8')
+
+      process.env.DATA_DIR = dataDir
+      try {
+        // No configDir argument: the real config dir under DATA_DIR is used.
+        ensureConfigStructure()
+
+        const migrated = path.join(dataDir, 'config', 'AGENTS.md')
+        expect(fs.readFileSync(migrated, 'utf-8')).toBe('# Legacy rules\n')
+        expect(fs.existsSync(path.join(liveMemoryDir, 'AGENTS.md'))).toBe(false)
+      } finally {
+        if (prevDataDir === undefined) delete process.env.DATA_DIR
+        else process.env.DATA_DIR = prevDataDir
+      }
+    })
+  })
+
   describe('assembleSystemPrompt', () => {
     it('combines all memory tiers into a coherent prompt', () => {
       const dir = makeTmpDir()
