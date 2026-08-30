@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     sudo \
     gosu \
+    tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js
@@ -106,4 +107,7 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:3000/health || exit 1
 
-ENTRYPOINT ["/entrypoint.sh"]
+# tini as PID 1: reaps orphaned processes and forwards signals.
+# Without it npm becomes PID 1 and never calls wait() on foreign orphans,
+# so every orphaned tool process (esbuild, chrome, ssh, ...) leaks as a zombie.
+ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
