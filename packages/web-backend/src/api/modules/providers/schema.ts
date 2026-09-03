@@ -83,6 +83,12 @@ function normalizeTransport(
   return undefined
 }
 
+function normalizePromptProfile(value: unknown): 'full' | 'slim' | null | undefined {
+  if (value === null || value === '') return null
+  if (value === 'full' || value === 'slim') return value
+  return undefined
+}
+
 function isValidProviderType(providerType: string): boolean {
   return VALID_PROVIDER_TYPES.includes(providerType)
 }
@@ -258,6 +264,7 @@ export function parseProviderCreatePayload(
       healthCheckTimeoutMs: normalizeHealthCheckTimeoutMs(body.healthCheckTimeoutMs),
       textVerbosity: normalizeTextVerbosity(body.textVerbosity),
       transport: normalizeTransport(body.transport),
+      promptProfile: normalizePromptProfile(body.promptProfile),
       extraFields: normalizeExtraFields(body.extraFields),
     },
   }
@@ -286,6 +293,7 @@ export function parseProviderUpdatePayload(payload: unknown): ParseResult<Provid
       healthCheckTimeoutMs: normalizeHealthCheckTimeoutMs(body.healthCheckTimeoutMs),
       textVerbosity: normalizeTextVerbosity(body.textVerbosity),
       transport: normalizeTransport(body.transport),
+      promptProfile: normalizePromptProfile(body.promptProfile),
       extraFields: normalizeExtraFields(body.extraFields),
     },
   }

@@ -916,7 +916,21 @@ export function assembleSystemPrompt(options?: {
   memoryDir?: string
   configDir?: string
   baseInstructions?: string
+  /**
+   * Number of recent daily memory files to inject (default 3). Set to a
+   * lower value (or 0) for slim prompt profiles on slow/local providers.
+   */
   recentDays?: number
+  /**
+   * Include the `<wiki_pages>` listing (default true). Slim prompt profiles
+   * disable it to save tokens; the agent can still read wiki files on demand.
+   */
+  includeWikiPages?: boolean
+  /**
+   * Include the `<axiom_docs>` discovery block (default true). Slim prompt
+   * profiles disable it to save tokens.
+   */
+  includeAxiomDocs?: boolean
   language?: string
   timezone?: string
   channel?: string
@@ -1111,8 +1125,10 @@ ${providerLines.join('\n')}
     }
   }
 
-  // 8. Wiki pages (LLM-maintained knowledge base)
-  const wikiPages = listWikiPages(memoryDir)
+  // 8. Wiki pages (LLM-maintained knowledge base).
+  // Skipped entirely when the prompt profile disables it (slim profiles for
+  // slow/local providers) — the agent can still read wiki files on demand.
+  const wikiPages = options?.includeWikiPages === false ? [] : listWikiPages(memoryDir)
   if (wikiPages.length > 0) {
     const pageLines = wikiPages.map(n => {
       const aliasStr = n.aliases.length > 0 ? ` (aliases: ${n.aliases.join(', ')})` : ''
@@ -1158,7 +1174,8 @@ Config files:
   // every time the docs are reorganized. Instead we point at the three
   // top-level directories and let the agent discover via list_files +
   // filename matching, which costs one extra tool call but never lies.
-  {
+  // Skipped when the prompt profile disables it (slim profiles).
+  if (options?.includeAxiomDocs !== false) {
     const readmePath = getReadmePath()
     const docsPath = getDocsPath()
     sections.push(`<axiom_docs>

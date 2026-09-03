@@ -99,6 +99,35 @@ describe('providers schema', () => {
     if (cleared.ok) expect(cleared.value.transport).toBeNull()
   })
 
+  it('parses promptProfile field on create and update payloads (full / slim / null)', () => {
+    const presets = PROVIDER_TYPE_PRESETS as unknown as typeof PROVIDER_TYPE_PRESETS
+    const base = { name: 'local', providerType: 'ollama', enabledModels: ['llama3'] }
+
+    for (const value of ['full', 'slim'] as const) {
+      const result = parseProviderCreatePayload({ ...base, promptProfile: value }, presets)
+      expect(result.ok).toBe(true)
+      if (result.ok) expect(result.value.promptProfile).toBe(value)
+    }
+
+    // null / empty string → explicit clear
+    const cleared = parseProviderCreatePayload({ ...base, promptProfile: null }, presets)
+    expect(cleared.ok).toBe(true)
+    if (cleared.ok) expect(cleared.value.promptProfile).toBeNull()
+
+    // unknown values are dropped (undefined), not echoed back unchecked
+    const garbage = parseProviderCreatePayload({ ...base, promptProfile: 'tiny' }, presets)
+    expect(garbage.ok).toBe(true)
+    if (garbage.ok) expect(garbage.value.promptProfile).toBeUndefined()
+
+    const updated = parseProviderUpdatePayload({ promptProfile: 'slim' })
+    expect(updated.ok).toBe(true)
+    if (updated.ok) expect(updated.value.promptProfile).toBe('slim')
+
+    const updateCleared = parseProviderUpdatePayload({ promptProfile: null })
+    expect(updateCleared.ok).toBe(true)
+    if (updateCleared.ok) expect(updateCleared.value.promptProfile).toBeNull()
+  })
+
   it('parses provider extra fields on create and update payloads', () => {
     const create = parseProviderCreatePayload({
       name: 'OpenCode Go',

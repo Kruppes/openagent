@@ -112,8 +112,9 @@ export {
   CLAUDE_CODE_VERSION,
   getProviderExtraFieldDefs,
   maskProviderExtraFields,
+  resolvePromptProfileOptions,
 } from './provider-config.js'
-export type { ProviderConfig, MaskedProviderConfig, MaskedProvidersFile, ProviderModelConfig, ProvidersFile, ProviderType, ProviderTypePreset, ProviderExtraFieldDef, AuthMethod, TextVerbosity, AvailableModel, OAuthCredentialsStored, TokenPriceTable } from './provider-config.js'
+export type { ProviderConfig, MaskedProviderConfig, MaskedProvidersFile, ProviderModelConfig, ProvidersFile, ProviderType, ProviderTypePreset, ProviderExtraFieldDef, AuthMethod, TextVerbosity, ProviderTransport, PromptProfile, PromptProfileOptions, AvailableModel, OAuthCredentialsStored, TokenPriceTable } from './provider-config.js'
 // Replacements for the deprecated @earendil-works/pi-ai/compat free functions.
 // Re-exported so packages outside core (web-backend) can reach them, since
 // core is only consumable through this index.

@@ -186,6 +186,39 @@ describe('AgentRuntime boundary', () => {
       { name: 'Enabled skill', description: 'desc', location: '/skills/enabled' },
       { name: 'recent skill', description: 'desc', location: '/skills-agent/recent' },
     ]))
+    // No promptProfile configured → historical full-prompt defaults.
+    expect(latestCall?.recentDays).toBe(3)
+    expect(latestCall?.includeWikiPages).toBe(true)
+    expect(latestCall?.includeAxiomDocs).toBe(true)
+  })
+
+  it('applies the provider promptProfile "slim" to system prompt assembly', () => {
+    const db = initDatabase(':memory:')
+    const runtime = createAgentRuntime({
+      model: makeModel(),
+      apiKey: 'sk-primary',
+      db,
+      tools: [],
+      providerConfig: {
+        id: 'local-1',
+        name: 'Local Ollama',
+        type: 'openai-completions',
+        providerType: 'ollama',
+        provider: 'ollama',
+        baseUrl: 'http://localhost:11434/v1',
+        apiKey: '',
+        enabledModels: ['llama3'],
+        promptProfile: 'slim',
+      },
+    })
+
+    runtime.refreshSystemPrompt()
+
+    const latestCall = vi.mocked(assembleSystemPrompt).mock.calls.at(-1)?.[0]
+    expect(latestCall).toBeDefined()
+    expect(latestCall?.recentDays).toBe(1)
+    expect(latestCall?.includeWikiPages).toBe(false)
+    expect(latestCall?.includeAxiomDocs).toBe(false)
   })
 
   it('orchestrates prompt execution events into runtime response chunks', async () => {

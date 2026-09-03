@@ -577,6 +577,101 @@ describe('memory', () => {
       expect(prompt).not.toContain('<wiki_pages>')
     })
 
+    it('default options produce a byte-identical prompt to the explicit full profile', () => {
+      const dir = makeTmpDir()
+      ensureMemoryStructure(dir)
+      appendToDailyFile('\n## Session\n\nWorked on deployment\n', undefined, dir)
+      const wikiDir = path.join(dir, 'wiki')
+      fs.writeFileSync(path.join(wikiDir, 'axiom.md'), '# Project: Axiom\n', 'utf-8')
+
+      // No profile options at all ≡ explicit full-profile values. Guards the
+      // guarantee that providers without `promptProfile` keep today's prompt.
+      const implicitDefault = assembleSystemPrompt({ memoryDir: dir })
+      const explicitFull = assembleSystemPrompt({
+        memoryDir: dir,
+        recentDays: 3,
+        includeWikiPages: true,
+        includeAxiomDocs: true,
+      })
+
+      expect(explicitFull).toBe(implicitDefault)
+    })
+
+    it('includeWikiPages: false drops the wiki_pages block even when pages exist', () => {
+      const dir = makeTmpDir()
+      ensureMemoryStructure(dir)
+      const wikiDir = path.join(dir, 'wiki')
+      fs.writeFileSync(path.join(wikiDir, 'axiom.md'), '# Project: Axiom\n', 'utf-8')
+
+      const prompt = assembleSystemPrompt({ memoryDir: dir, includeWikiPages: false })
+
+      expect(prompt).not.toContain('<wiki_pages>')
+      // The wiki directory path must still be listed in memory_paths so the
+      // agent can read/write wiki files on demand.
+      expect(prompt).toContain('Wiki pages directory')
+    })
+
+    it('includeAxiomDocs: false drops the axiom_docs block', () => {
+      const dir = makeTmpDir()
+      ensureMemoryStructure(dir)
+
+      const prompt = assembleSystemPrompt({ memoryDir: dir, includeAxiomDocs: false })
+
+      expect(prompt).not.toContain('<axiom_docs>')
+    })
+
+    it('recentDays: 1 injects only today\'s daily file', () => {
+      const dir = makeTmpDir()
+      ensureMemoryStructure(dir)
+
+      const yesterday = new Date()
+      yesterday.setDate(yesterday.getDate() - 1)
+      appendToDailyFile('\n## Session\n\nYesterday: reviewed the backup strategy\n', yesterday, dir)
+      appendToDailyFile('\n## Session\n\nToday: debugged the webhook\n', undefined, dir)
+
+      const prompt = assembleSystemPrompt({ memoryDir: dir, recentDays: 1 })
+
+      expect(prompt).toContain('<recent_memory>')
+      expect(prompt).toContain('Today: debugged the webhook')
+      expect(prompt).not.toContain('Yesterday: reviewed')
+    })
+
+    it('recentDays: 0 drops the recent_memory block entirely', () => {
+      const dir = makeTmpDir()
+      ensureMemoryStructure(dir)
+      appendToDailyFile('\n## Session\n\nToday: debugged the webhook\n', undefined, dir)
+
+      const prompt = assembleSystemPrompt({ memoryDir: dir, recentDays: 0 })
+
+      expect(prompt).not.toContain('<recent_memory>')
+    })
+
+    it('slim-profile options keep all core sections intact', () => {
+      const dir = makeTmpDir()
+      ensureMemoryStructure(dir)
+      appendToDailyFile('\n## Session\n\nToday: debugged the webhook\n', undefined, dir)
+
+      // Mirrors resolvePromptProfileOptions('slim') in provider-config.ts.
+      const prompt = assembleSystemPrompt({
+        memoryDir: dir,
+        recentDays: 1,
+        includeWikiPages: false,
+        includeAxiomDocs: false,
+      })
+
+      // Core knowledge must survive every profile.
+      expect(prompt).toContain('<personality>')
+      expect(prompt).toContain('<agent_rules>')
+      expect(prompt).toContain('<core_memory>')
+      expect(prompt).toContain('<available_tools>')
+      expect(prompt).toContain('<memory_paths>')
+      expect(prompt).toContain('<task_system>')
+      expect(prompt).toContain('<recent_memory>')
+      // Trimmed blocks
+      expect(prompt).not.toContain('<axiom_docs>')
+      expect(prompt).not.toContain('<wiki_pages>')
+    })
+
     it('includes custom AGENTS.md content in agent_rules', () => {
       const dir = makeTmpDir()
       fs.mkdirSync(dir, { recursive: true })

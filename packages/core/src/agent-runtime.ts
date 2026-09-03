@@ -7,7 +7,7 @@ import type { Api, AssistantMessage, Message, ImageContent, Model } from '@earen
 import { Type } from '@earendil-works/pi-ai'
 import type { Database } from './database.js'
 import { logTokenUsage, logToolCall } from './token-logger.js'
-import { estimateCost, getApiKeyForProvider, buildModel, buildStreamFn, loadProvidersDecrypted, parseProviderModelId, getProviderDefaultModel } from './provider-config.js'
+import { estimateCost, getApiKeyForProvider, buildModel, buildStreamFn, loadProvidersDecrypted, parseProviderModelId, getProviderDefaultModel, resolvePromptProfileOptions } from './provider-config.js'
 import type { ProviderConfig } from './provider-config.js'
 import type { ProviderManager } from './provider-manager.js'
 import type { SettingsThinkingLevel } from './contracts/settings.js'
@@ -892,9 +892,18 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
       availableProviders = undefined
     }
 
+    // Per-provider prompt profile: 'slim' shrinks the prompt for slow/local
+    // providers (fewer dailies, no wiki listing, no docs block). Without a
+    // configured profile this resolves to the historical defaults, keeping
+    // the prompt byte-identical for existing providers.
+    const profileOptions = resolvePromptProfileOptions(this.providerConfig?.promptProfile)
+
     let prompt = assembleSystemPrompt({
       memoryDir: this.memoryDir,
       baseInstructions: this.baseInstructions,
+      recentDays: profileOptions.recentDays,
+      includeWikiPages: profileOptions.includeWikiPages,
+      includeAxiomDocs: profileOptions.includeAxiomDocs,
       language,
       timezone,
       channel,

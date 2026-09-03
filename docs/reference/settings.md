@@ -364,11 +364,41 @@ LLM provider catalog. UI-managed via the [Providers page](../web-ui/providers); 
 | `degradedThresholdMs`    | `number?`                                       | Latency threshold for `healthy → degraded` transitions in [Health Monitor](../settings/health-monitor). |
 | `textVerbosity`          | `"low" \| "medium" \| "high"` (optional)          | Response verbosity for supported OpenAI Codex/Responses-style providers. Omit to use the provider default (pi-ai currently defaults Codex to `low`). Configure via [Providers UI](../web-ui/providers#add-edit-dialog). |
 | `transport`              | `"sse" \| "websocket" \| "websocket-cached" \| "auto"` (optional) | Wire-level streaming transport. **Only honoured by the OpenAI Codex / Responses apiType today** — silently ignored on every other provider type and dropped on persist. Omit (or set to `"sse"`) to use the default HTTP+SSE streaming. See [Transport modes](#transport-modes) below. |
+| `promptProfile`          | `"full" \| "slim"` (optional)                     | System-prompt size profile for this provider. Omit (or `"full"`, which is dropped on persist) for the complete prompt — the historical behavior. `"slim"` shrinks the prompt for slow/local providers. See [Prompt profiles](#prompt-profiles) below. |
 | `models`                 | `ProviderModelConfig[]?`                        | Per-model overrides — context window, max tokens, reasoning support, fixed temperature, custom cost. |
 | `status`                 | `"connected" \| "error" \| "untested"`          | Last-known result of an explicit "test connection" click.                                      |
 | `modelStatuses`          | `Record<modelId, status>`                       | Per-model variant of `status`.                                                                 |
 | `authMethod`             | `"apiKey" \| "oauth"`                           | Determines whether `apiKey` or `oauthCredentials` is used.                                     |
 | `oauthCredentials`       | `OAuthCredentialsStored?` (**encrypted**)       | `{ refresh, access, expires, extra }` — only present when `authMethod === "oauth"`.            |
+
+### Prompt profiles
+
+The `promptProfile` field controls how much context is assembled into the
+system prompt when this provider is active. Local models (e.g. an Ollama
+server) often evaluate prompts at only a few hundred tokens per second, so a
+large system prompt can add a minute or more of latency to the first message
+of every session. The `"slim"` profile trades some ambient context for a much
+smaller prompt:
+
+| Prompt section                                | `"full"` (default)  | `"slim"`  |
+|-----------------------------------------------|---------------------|-----------|
+| `SOUL.md`, `AGENTS.md`, `MEMORY.md`           | included            | included  |
+| User profile, tools overview, memory paths    | included            | included  |
+| Recent daily memory files                     | 3 days              | 1 day     |
+| `<wiki_pages>` listing                        | included            | omitted   |
+| `<axiom_docs>` discovery block                | included            | omitted   |
+
+Core knowledge is never dropped: every profile keeps `SOUL.md`, `AGENTS.md`,
+`MEMORY.md`, the user profile, and the tools overview. The agent can still
+read wiki pages, docs, and older daily files on demand via `read_file` — the
+slim profile only removes the up-front listings, not the access.
+
+Without the field the prompt is byte-identical to previous releases, so
+existing (cloud) providers are unaffected. The profile is per provider: a
+fast cloud provider and a slim-profiled local provider can coexist, and the
+prompt follows whichever provider is active. Configure by editing
+`providers.json` directly or via the provider create/update API
+(`promptProfile: "slim"`; `null` or `"full"` clears the field).
 
 ### Transport modes
 

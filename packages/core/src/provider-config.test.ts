@@ -27,6 +27,7 @@ import {
   presetSupportsTextVerbosity,
   presetSupportsTransport,
   refreshOAuthCredentialsLocked,
+  resolvePromptProfileOptions,
 } from './provider-config.js'
 import { encrypt, decrypt, maskApiKey } from './encryption.js'
 import fs from 'node:fs'
@@ -674,6 +675,116 @@ describe('transport persistence guard', () => {
     const provider = addProvider({ name: 'primary', providerType: 'openai', apiKey: 'sk-a', enabledModels: ['gpt-4o'] })
     const updated = updateProvider(provider.id, { transport: 'websocket-cached' })
     expect(updated.transport).toBeUndefined()
+  })
+})
+
+describe('promptProfile persistence + resolution', () => {
+  let tmpDir: string
+  const originalDataDir = process.env.DATA_DIR
+
+  afterEach(() => {
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true })
+    if (originalDataDir !== undefined) process.env.DATA_DIR = originalDataDir
+    else delete process.env.DATA_DIR
+  })
+
+  function setupEmpty(): void {
+    tmpDir = path.join(os.tmpdir(), `axiom-pp-${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    const configDir = path.join(tmpDir, 'config')
+    fs.mkdirSync(configDir, { recursive: true })
+    fs.writeFileSync(
+      path.join(configDir, 'providers.json'),
+      JSON.stringify({ providers: [] }, null, 2),
+      'utf-8',
+    )
+    process.env.DATA_DIR = tmpDir
+  }
+
+  it('addProvider persists promptProfile "slim"', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'local-ollama',
+      providerType: 'ollama',
+      enabledModels: ['llama3'],
+      promptProfile: 'slim',
+    })
+    expect(provider.promptProfile).toBe('slim')
+    const reloaded = loadProviders().providers.find(p => p.id === provider.id)
+    expect(reloaded?.promptProfile).toBe('slim')
+  })
+
+  it('addProvider does NOT persist the default "full" profile', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'local-ollama',
+      providerType: 'ollama',
+      enabledModels: ['llama3'],
+      promptProfile: 'full',
+    })
+    expect(provider.promptProfile).toBeUndefined()
+  })
+
+  it('addProvider leaves promptProfile absent when not configured', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'cloud',
+      providerType: 'openai',
+      apiKey: 'sk-a',
+      enabledModels: ['gpt-4o'],
+    })
+    expect(provider.promptProfile).toBeUndefined()
+    expect('promptProfile' in provider).toBe(false)
+  })
+
+  it('updateProvider sets and clears promptProfile', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'local-ollama',
+      providerType: 'ollama',
+      enabledModels: ['llama3'],
+    })
+    const slim = updateProvider(provider.id, { promptProfile: 'slim' })
+    expect(slim.promptProfile).toBe('slim')
+
+    // Explicit null clears the field
+    const cleared = updateProvider(provider.id, { promptProfile: null })
+    expect(cleared.promptProfile).toBeUndefined()
+
+    // 'full' is the default and is dropped rather than persisted
+    updateProvider(provider.id, { promptProfile: 'slim' })
+    const full = updateProvider(provider.id, { promptProfile: 'full' })
+    expect(full.promptProfile).toBeUndefined()
+  })
+
+  it('updateProvider leaves promptProfile untouched when omitted', () => {
+    setupEmpty()
+    const provider = addProvider({
+      name: 'local-ollama',
+      providerType: 'ollama',
+      enabledModels: ['llama3'],
+      promptProfile: 'slim',
+    })
+    const updated = updateProvider(provider.id, { name: 'renamed' })
+    expect(updated.promptProfile).toBe('slim')
+  })
+
+  it('resolvePromptProfileOptions maps profiles to prompt options', () => {
+    // Absent field and explicit 'full' both resolve to the historical defaults
+    expect(resolvePromptProfileOptions(undefined)).toEqual({
+      recentDays: 3,
+      includeWikiPages: true,
+      includeAxiomDocs: true,
+    })
+    expect(resolvePromptProfileOptions('full')).toEqual({
+      recentDays: 3,
+      includeWikiPages: true,
+      includeAxiomDocs: true,
+    })
+    expect(resolvePromptProfileOptions('slim')).toEqual({
+      recentDays: 1,
+      includeWikiPages: false,
+      includeAxiomDocs: false,
+    })
   })
 })
 

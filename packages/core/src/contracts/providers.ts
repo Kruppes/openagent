@@ -35,6 +35,12 @@ export interface ProviderQuotaContract {
 export type ProviderAuthMethodContract = 'api-key' | 'oauth'
 export type ProviderTextVerbosityContract = 'low' | 'medium' | 'high'
 export type ProviderTransportContract = 'sse' | 'websocket' | 'websocket-cached' | 'auto'
+/**
+ * System-prompt size profile. `'full'` (default) keeps the complete prompt;
+ * `'slim'` reduces it for slow/local providers (1 daily file instead of 3,
+ * no wiki listing, no docs block). Core memory files are always included.
+ */
+export type ProviderPromptProfileContract = 'full' | 'slim'
 
 export interface ProviderContract {
   id: string
@@ -50,6 +56,7 @@ export interface ProviderContract {
   healthCheckTimeoutMs?: number
   textVerbosity?: ProviderTextVerbosityContract
   transport?: ProviderTransportContract
+  promptProfile?: ProviderPromptProfileContract
   status?: ProviderStatusContract
   modelStatuses?: Record<string, ProviderStatusContract>
   authMethod?: ProviderAuthMethodContract
@@ -201,6 +208,7 @@ export interface ProviderCreatePayloadContract {
   healthCheckTimeoutMs?: number
   textVerbosity?: ProviderTextVerbosityContract | null
   transport?: ProviderTransportContract | null
+  promptProfile?: ProviderPromptProfileContract | null
   extraFields?: Record<string, string>
 }
 
@@ -214,6 +222,7 @@ export interface ProviderUpdatePayloadContract {
   healthCheckTimeoutMs?: number
   textVerbosity?: ProviderTextVerbosityContract | null
   transport?: ProviderTransportContract | null
+  promptProfile?: ProviderPromptProfileContract | null
   extraFields?: Record<string, string>
 }
 

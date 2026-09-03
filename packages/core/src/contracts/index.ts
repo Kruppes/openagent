@@ -59,6 +59,9 @@ export type {
 export type {
   ProviderStatusContract,
   ProviderAuthMethodContract,
+  ProviderTextVerbosityContract,
+  ProviderTransportContract,
+  ProviderPromptProfileContract,
   ProviderQuotaKindContract,
   ProviderQuotaWindowContract,
   ProviderQuotaContract,

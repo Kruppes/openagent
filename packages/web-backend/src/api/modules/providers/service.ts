@@ -398,6 +398,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
         healthCheckTimeoutMs: payload.healthCheckTimeoutMs,
         textVerbosity: payload.textVerbosity ?? undefined,
         transport: payload.transport ?? undefined,
+        promptProfile: payload.promptProfile ?? undefined,
         extraFields: payload.extraFields,
       })
 
@@ -425,6 +426,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
         healthCheckTimeoutMs: payload.healthCheckTimeoutMs,
         textVerbosity: payload.textVerbosity,
         transport: payload.transport,
+        promptProfile: payload.promptProfile,
         extraFields: payload.extraFields,
       })
 

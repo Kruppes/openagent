@@ -30,6 +30,44 @@ export type AuthMethod = 'api-key' | 'oauth'
 export type TextVerbosity = 'low' | 'medium' | 'high'
 export type ProviderTransport = Transport
 
+/**
+ * System-prompt size profile for a provider.
+ *
+ * - `'full'` (default): the complete system prompt — identical to the
+ *   behavior before this field existed. Absent field ≡ `'full'`.
+ * - `'slim'`: a reduced prompt for slow/local providers (e.g. an Ollama
+ *   server whose prompt evaluation runs at a few hundred tokens per second).
+ *   Slim keeps all core knowledge (SOUL.md, AGENTS.md, MEMORY.md, user
+ *   profile, tools overview) but only injects 1 recent daily file instead of
+ *   3 and drops the wiki page listing and the docs discovery block.
+ */
+export type PromptProfile = 'full' | 'slim'
+
+/**
+ * Prompt-assembly knobs derived from a {@link PromptProfile}. Consumed by
+ * `AgentRuntime.buildSystemPrompt()` and forwarded to `assembleSystemPrompt`.
+ */
+export interface PromptProfileOptions {
+  /** Number of recent daily memory files injected into the prompt. */
+  recentDays: number
+  /** Whether the `<wiki_pages>` listing is included. */
+  includeWikiPages: boolean
+  /** Whether the `<axiom_docs>` discovery block is included. */
+  includeAxiomDocs: boolean
+}
+
+/**
+ * Map a provider's `promptProfile` to concrete prompt-assembly options.
+ * `undefined` and `'full'` both resolve to the historical defaults, so
+ * providers without the field keep producing a byte-identical prompt.
+ */
+export function resolvePromptProfileOptions(profile?: PromptProfile): PromptProfileOptions {
+  if (profile === 'slim') {
+    return { recentDays: 1, includeWikiPages: false, includeAxiomDocs: false }
+  }
+  return { recentDays: 3, includeWikiPages: true, includeAxiomDocs: true }
+}
+
 export interface ProviderTypePreset {
   type: ProviderType
   label: string
@@ -729,6 +767,15 @@ export interface ProviderConfig {
   healthCheckTimeoutMs?: number
   textVerbosity?: TextVerbosity
   transport?: ProviderTransport
+  /**
+   * System-prompt size profile for this provider. Absent or `'full'` → the
+   * complete prompt (historical behavior). `'slim'` → reduced prompt for
+   * slow/local providers: 1 daily file instead of 3, no wiki page listing,
+   * no docs discovery block. Core knowledge (SOUL.md, AGENTS.md, MEMORY.md,
+   * user profile, tools) is always included. Only `'slim'` is persisted —
+   * `'full'` is dropped on save since it is the default.
+   */
+  promptProfile?: PromptProfile
   models?: ProviderModelConfig[]
   status?: 'connected' | 'error' | 'untested'
   modelStatuses?: Record<string, 'connected' | 'error' | 'untested'>
@@ -1136,6 +1183,7 @@ export function addProvider(input: {
   healthCheckTimeoutMs?: number
   textVerbosity?: TextVerbosity
   transport?: ProviderTransport
+  promptProfile?: PromptProfile
   extraFields?: Record<string, string>
 }): ProviderConfig {
   const preset = PROVIDER_TYPE_PRESETS[input.providerType]
@@ -1169,6 +1217,8 @@ export function addProvider(input: {
       && { textVerbosity: input.textVerbosity }),
     ...(input.transport && input.transport !== 'sse' && presetSupportsTransport(input.providerType)
       && { transport: input.transport }),
+    // 'full' is the default — only persist the non-default 'slim' value.
+    ...(input.promptProfile === 'slim' && { promptProfile: input.promptProfile }),
     ...((() => {
       const extra = sanitizeExtraFieldsForStorage(input.providerType, input.extraFields)
       return extra ? { extraFields: extra } : {}
@@ -1263,6 +1313,7 @@ export function updateProvider(id: string, input: {
   healthCheckTimeoutMs?: number
   textVerbosity?: TextVerbosity | null
   transport?: ProviderTransport | null
+  promptProfile?: PromptProfile | null
   extraFields?: Record<string, string>
 }): ProviderConfig {
   const file = loadProviders()
@@ -1334,6 +1385,15 @@ export function updateProvider(id: string, input: {
     // Provider type was switched to one that does not support transport
     // — strip the now-orphaned value so it does not silently persist.
     delete existing.transport
+  }
+  if (input.promptProfile !== undefined) {
+    if (input.promptProfile === null || input.promptProfile === 'full') {
+      // Caller explicitly cleared the value or asked for the default — drop
+      // the field rather than persisting a no-op.
+      delete existing.promptProfile
+    } else {
+      existing.promptProfile = input.promptProfile
+    }
   }
 
   // For providers with fixed URLs, always sync from preset
