@@ -73,6 +73,13 @@ const API_IMPLEMENTATIONS: Partial<Record<Api, () => ProviderStreams>> = {
   'mistral-conversations': mistralConversationsApi,
 }
 
+/**
+ * Wire APIs this module can dispatch to. A model whose `api` is missing fails
+ * only at request time (as a stream error), so `pi-models.test.ts` locks this
+ * set against every reachable preset/catalog api.
+ */
+export const SUPPORTED_APIS: ReadonlySet<Api> = new Set(Object.keys(API_IMPLEMENTATIONS) as Api[])
+
 function buildApiMap(): Partial<Record<Api, ProviderStreams>> {
   const map: Partial<Record<Api, ProviderStreams>> = {}
   for (const api of Object.keys(API_IMPLEMENTATIONS) as Api[]) {

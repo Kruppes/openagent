@@ -42,6 +42,44 @@ route -> controller -> service -> schema/mapper
 
 - Agent runtime is encapsulated via `createAgentRuntime`/`AgentRuntimeBoundary`.
 - Task runtime is encapsulated via `createTaskRuntime`/`TaskRuntimeBoundary`.
+- Chat turns are encapsulated via `TurnRunner` (`core/src/turn-runner.ts`). It owns
+  the turn lifecycle (streaming, chunk persistence, stall watchdog, abort)
+  independently of any connection, buffers the active turn in memory and replays
+  it to consumers that attach mid-turn. Channels (`ws-chat`, Telegram) only
+  dispatch into it and forward its events — they must not own stream state.
+  Turns are never recovered across a process restart.
+  There is exactly **one** runner per process, built in
+  `web-backend/src/bootstrap/runtime-composition.ts` and handed to both the
+  WebSocket chat and the Telegram bot, so a turn started in one channel streams
+  into the other and a manual retry cannot race a second, channel-local runner.
+  Turns are keyed by `agentUserId` (the identity the agent sees); the numeric
+  `userId` is only used for persistence and may be `null` for an approved but
+  unlinked Telegram chat, which then streams without persisting.
+- Provider stalls are channel-agnostic: the watchdog emits `stall_warning` /
+  `stall_resolved` chunks and persists a single `provider_stall` chat row
+  (`core/src/provider-stall.ts`) that is updated in place on resolution. Channels
+  render that row, they do not invent their own stall messaging. Thresholds come
+  from `settings.json → watchdog` and are read at turn start.
+- Terminal turn failures are persisted the same way: the runner writes a
+  `turn_error` chat row (`core/src/turn-error.ts`) carrying the full provider
+  error text plus `cause` / `retryable` / `attempts`, and emits the matching
+  `error` chunk with the row id. Channels render that row — a failed turn must
+  never end silently.
+- Manual retry is a chat action (`core/src/turn-retry-action.ts`): every error row
+  carries a `retryActionId` that channels register in the chat-action registry
+  (`web-backend/src/turn-retry-chat.ts`). The handler validates freshness against
+  the database (session still open, no newer user/assistant/tool row, no running
+  turn) and restarts the turn via `TurnRunner.retryTurn`, which continues the
+  existing transcript instead of re-sending the user message. The registry is
+  in-memory, so buttons minted before a restart answer "no longer available".
+  Resolutions cross channel boundaries through `core/src/turn-retry-notifier.ts`
+  (same pattern as `email-approval-notifier.ts`): whoever answers first wins, and
+  every other channel disables its own button with the same wording. Telegram
+  renders the button as an inline keyboard whose `callback_data` carries the
+  error row id (`telegram/src/turn-retry.ts`).
+- Telegram's provider-stall / auto-retry notices are opt-in
+  (`telegram.json → sendStallWarnings`, default off). The terminal error and its
+  Retry button are always delivered.
 - Integrations (e.g., Heartbeat, Consolidation Scheduler, Task Tools) use boundary contracts instead of low-level wiring.
 
 ## 4) Frontend Convention

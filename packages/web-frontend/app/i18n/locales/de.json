@@ -78,6 +78,9 @@
     "filterThinking": "Thinking-Blöcke",
     "sessionSummary": "Sitzungszusammenfassung",
     "thinking": "Überlegung",
+    "turnError": "Anfrage fehlgeschlagen",
+    "turnErrorRetried": "{count}× wiederholt",
+    "turnErrorRetry": "Erneut versuchen",
     "scrollToBottom": "Nach unten scrollen",
     "attachments": {
       "openOriginal": "Original öffnen",
@@ -105,7 +108,12 @@
     "micError": "Mikrofonfehler",
     "micPermissionDenied": "Mikrofonzugriff verweigert",
     "micTooShort": "Aufnahme zu kurz — länger halten",
-    "dropFilesHere": "Dateien zum Anhängen hier ablegen"
+    "dropFilesHere": "Dateien zum Anhängen hier ablegen",
+    "skillAutocomplete": {
+      "label": "Skill laden",
+      "installed": "installiert",
+      "hint": "↑↓ zum Navigieren · Tab/Enter zum Auswählen · Esc zum Schließen · Prompt hinter dem Namen anhängen, um direkt loszulegen"
+    }
   },
   "status": {
     "online": "Online",
@@ -260,6 +268,7 @@
     "addModelSearch": "Modelle suchen…",
     "addModelCustom": "Modell „{name}“ hinzufügen",
     "addModelEmpty": "Keine Modelle gefunden.",
+    "addModelContext": "{size} Kontext",
     "addModelSelected": "{count} ausgewählt",
     "addModelButton": "Hinzufügen",
     "addModelSuccess": "Modelle hinzugefügt",
@@ -468,6 +477,8 @@
     "batchingDelayHint": "Telegram-Nachrichten innerhalb dieses Fensters werden vor der Antwort gruppiert.",
     "telegramSendVoiceReply": "Sprachantworten senden",
     "telegramSendVoiceReplyHint": "Antwort des Agents zusätzlich zum Text als Sprachnachricht senden.",
+    "telegramSendStallWarnings": "Stall-Warnungen senden",
+    "telegramSendStallWarningsHint": "In Telegram melden, wenn der Provider nicht mehr antwortet. Standardmäßig aus — Fehlermeldungen und der Retry-Button werden immer zugestellt.",
     "telegramSection": "Telegram",
     "telegramSectionDescription": "Verwalten Sie das Bot-Token der Telegram-Integration.",
     "telegramEnabled": "Telegram-Bot aktivieren",
@@ -529,7 +540,21 @@
     "storageSectionDescription": "Aufräumarbeiten für Dateien, die Nutzer über den Chat hochladen.",
     "uploadRetention": "Upload-Aufbewahrung",
     "uploadRetentionHint": "Geladene Dateien nach so vielen Tagen automatisch löschen. Bei 0 werden sie beim nächsten Cleanup sofort entfernt.",
+    "resilienceSection": "Resilienz",
+    "resilienceSectionDescription": "Wie der Agent auf Provider-Fehler und hängende Antworten reagiert.",
+    "retryEnabled": "Automatischer Retry",
+    "retryEnabledHint": "Einen Turn nach einem vorübergehenden Provider-Fehler (Rate Limit, Serverfehler, Timeout, Stall) automatisch wiederholen. Standard: an.",
+    "retryMaxRetries": "Maximale Wiederholungen",
+    "retryMaxRetriesHint": "Wie oft ein fehlgeschlagener Turn wiederholt wird, bevor eine Fehlermeldung erscheint. Standard: 3.",
+    "retryBaseDelay": "Basis-Verzögerung",
+    "retryBaseDelayHint": "Wartezeit vor dem ersten Retry, danach jeweils verdoppelt (Standard 2000 ms). Aktueller Ablauf: {schedule}.",
+    "watchdogStallWarn": "Schwelle für Stall-Warnung",
+    "watchdogStallWarnHint": "Warnung im Chat anzeigen, wenn der Provider so lange nichts gesendet hat. Standard: 30000 ms.",
+    "watchdogStallAbort": "Schwelle für Stall-Abbruch",
+    "watchdogStallAbortHint": "Versuch abbrechen, wenn der Provider so lange stumm bleibt. Gilt als wiederholbarer Fehler. Standard: 90000 ms.",
+    "watchdogStallAbortInvalid": "Die Abbruch-Schwelle muss größer oder gleich der Warn-Schwelle sein.",
     "days": "Tage",
+    "attemptsUnit": "Versuche",
     "messagesUnit": "Nachrichten",
     "oClock": " Uhr",
     "tabs": {
@@ -872,7 +897,7 @@
       "requests": "Anfragen",
       "requestsPerDay": "~{count} pro Tag",
       "totalTokens": "Gesamt-Tokens",
-      "tokenBreakdown": "{prompt} Prompt · {completion} Completion",
+      "tokenBreakdown": "{prompt} Input · {completion} Output",
       "estimatedCost": "Geschätzte Kosten",
       "costPerRequest": "~{cost} pro Anfrage"
     },
@@ -883,8 +908,8 @@
     "chart": {
       "title": "Tägliches Token-Volumen",
       "description": "Tag-für-Tag Token-Verbrauch im ausgewählten Zeitraum.",
-      "prompt": "Prompt (Eingabe)",
-      "completion": "Completion (Ausgabe)",
+      "prompt": "Input",
+      "completion": "Output",
       "empty": "Für die aktuellen Filter gibt es keine tägliche Nutzung."
     },
     "sourceChart": {
@@ -893,6 +918,20 @@
       "mainAgent": "Haupt-Agent",
       "taskAgent": "Aufgaben-Agent",
       "heartbeat": "Heartbeat"
+    },
+    "stalls": {
+      "title": "Provider-Aussetzer",
+      "description": "Turns, in denen der Provider lange genug stumm blieb, um den Watchdog auszulösen — im gewählten Zeitraum.",
+      "empty": "Keine Provider-Aussetzer in diesem Zeitraum.",
+      "total": "Aussetzer",
+      "allResolved": "Alle abgeschlossen",
+      "unresolved": "{count} offen",
+      "avgDuration": "Ø Stille",
+      "longest": "Längster {duration}",
+      "recovered": "Erholt",
+      "aborted": "Abgebrochen",
+      "share": "{percent}% der Aussetzer",
+      "avgShort": "ø {duration}"
     },
     "table": {
       "title": "Anbieter- & Modell-Aufschlüsselung",
@@ -903,9 +942,11 @@
         "provider": "Anbieter",
         "model": "Modell",
         "requests": "Anfragen",
-        "promptTokens": "Prompt",
-        "completionTokens": "Completion",
-        "totalTokens": "Gesamt-Tokens",
+        "promptTokens": "Input",
+        "completionTokens": "Output",
+        "cacheRead": "Cache-Lesen",
+        "cacheWrite": "Cache-Schreiben",
+        "cacheHitRate": "Cache-Treffer",
         "cost": "Gesch. Kosten"
       }
     }
@@ -925,6 +966,7 @@
       "allTriggers": "Alle Auslöser",
       "allProviders": "Alle Provider",
       "defaultProvider": "Standard",
+      "button": "Filter",
       "fromDate": "Von",
       "toDate": "Bis"
     },
@@ -951,7 +993,14 @@
       "consolidation": "Konsolidierung"
     },
     "triggerModelDefault": "Standard ({value})",
-    "triggerModelDefaultTooltip": "Standard-Provider und -Modell aus den Task-Einstellungen."
+    "triggerModelDefaultTooltip": "Standard-Provider und -Modell aus den Task-Einstellungen.",
+    "tokensTooltip": {
+      "input": "Input",
+      "output": "Output",
+      "cacheRead": "Cache-Lesen",
+      "cacheWrite": "Cache-Schreiben",
+      "cacheHitRate": "Cache-Trefferquote"
+    }
   },
   "email": {
     "title": "E-Mail",
@@ -1092,6 +1141,23 @@
     "deleteConfirmDescription": "Die geplante Aufgabe wird dauerhaft entfernt. Laufende Instanzen werden nicht beeinflusst.",
     "runNow": "Jetzt ausführen",
     "triggerSuccess": "Cronjob \"{name}\" erfolgreich ausgelöst.",
+    "noFilterMatchesTitle": "Keine Cronjobs für diese Filter",
+    "noFilterMatchesDescription": "Passe die Filter an oder setze sie zurück, um mehr Cronjobs zu sehen.",
+    "filters": {
+      "button": "Filter",
+      "reset": "Filter zurücksetzen",
+      "search": "Cronjobs durchsuchen…",
+      "allStates": "Alle Zustände",
+      "enabled": "Nur aktive",
+      "disabled": "Nur inaktive",
+      "allActions": "Alle Aktionen",
+      "allProviders": "Alle Provider",
+      "allLastRuns": "Alle letzten Läufe",
+      "neverRan": "Nie gelaufen",
+      "allSchedules": "Alle Zeitpläne",
+      "recurring": "Wiederkehrend",
+      "fixedDate": "Festes Datum"
+    },
     "defaultProvider": "Standard",
     "actionTypeTask": "Task",
     "actionTypeInjection": "Injection",
@@ -1154,6 +1220,8 @@
     "thinking": "Überlegung",
     "resultSummary": "Task-Ergebnis",
     "noSummary": "Task ohne Zusammenfassung abgeschlossen.",
+    "autoScroll": "Autoscroll",
+    "autoScrollHint": "Neuen Events automatisch folgen. Wird beim Hochscrollen deaktiviert.",
     "restartButton": "Bearbeiten & Neustart",
     "restartButtonHint": "Prompt / Provider bearbeiten und neu starten. Der ursprüngliche Task bleibt in der Historie.",
     "restartDisabled": {

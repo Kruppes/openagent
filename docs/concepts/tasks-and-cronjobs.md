@@ -6,7 +6,7 @@ Axiom has three related but distinct ways to run work *outside the current chat 
 |---|---|---|---|
 | Trigger | Fire-and-forget, on demand | Recurring on a 5-field cron schedule | One-shot at a future time |
 | Spawns an agent? | Always | Only when `action_type: "task"` | Never — static text |
-| Tools / skills available? | Full registry | Full registry (task type only) | None |
+| Tools / skills available? | Full registry, plus optional `attached_skills` | Full registry (task type only), plus optional `attached_skills` | None |
 | Typical use | "Build this app." "Refactor X across the repo." | "Every weekday at 9, summarize my GitHub notifications." | "Remind me at 17:30 to leave for the train." |
 
 Defaults — provider, max duration, loop detection, telegram delivery, status updates, background thinking level — live in **Settings → Tasks** (see [Settings → Tasks](./../settings/tasks)). Everything below is the *mechanism*: how each flavor actually runs, what guarantees Axiom makes, and what to expect when things go wrong.
@@ -40,7 +40,7 @@ Every task runs in its own agent instance with its own session ID — separate f
 
 - **No chat history.** It cannot read what was said in the conversation that triggered it. Anything it needs has to be in the `prompt` field.
 - **A different system prompt.** Built by [`buildTaskSystemPrompt`](https://github.com/meteyou/axiom/blob/main/packages/core/src/task-runner.ts) — it tells the agent *"You are a background task agent. You are NOT a chatbot — you are an autonomous worker"*, points at `/workspace`, injects the user-editable `<task_guidelines>` block from [`TASKS.md`](./instructions#tasks-md), and enforces the `STATUS: … / SUMMARY: …` final-message format described below.
-- **The full toolset and skill index.** Same `<available_tools>` and `<available_skills>` as a chat agent. Cronjobs can additionally pin specific skills via `attached_skills` (see below).
+- **The full toolset and skill index.** Same `<available_tools>` and `<available_skills>` as a chat agent. Both `create_task` and `create_cronjob` can additionally pin specific skills via [`attached_skills`](#attached-skills).
 - **A fresh provider/model session.** The task either uses the configured task default provider (Settings → Tasks) or whatever was explicitly pinned at creation time.
 
 ### Triggers
@@ -112,6 +112,8 @@ If both checks pass, the task transitions back to `running` and the next `<task_
 
 The flag `is_default_model` records whether the resulting `(provider, model)` pair came from the system default or was explicitly pinned — useful when you change the default later and want to know which historical tasks were on the old default.
 
+`create_task` also accepts [`attached_skills`](#attached-skills) — the same mechanism cronjobs use, applied once at spawn time. Because a one-off task has no schedule row to persist the selection in, the resolved `SKILL.md` contents are injected when the task starts and are not stored on the `tasks` row; restarting a task from the Tasks page therefore starts it without attached skills.
+
 ### Loop detection, status updates, killing
 
 These are operational safeguards documented in detail under [Settings → Tasks](./../settings/tasks). Briefly:
@@ -162,14 +164,39 @@ A specific date/time cron like `30 11 30 3 *` ("March 30 at 11:30") fires every 
 
 ### `attached_skills`
 
-`create_cronjob` and `edit_cronjob` accept an optional `attached_skills` array — names of agent skills under `/data/skills_agent/<name>/` (or installed user skills). On each firing, the runner reads each `SKILL.md` and concatenates them into the spawned task's system prompt under an `<attached_skills>` block, *before* the task starts.
+`create_task`, `create_cronjob`, and `edit_cronjob` accept an optional `attached_skills` array — names of agent skills under `/data/skills_agent/<name>/` (or installed user skills as `owner/name`). Before the task agent starts, the runner reads each `SKILL.md` and concatenates them into the task's system prompt under an `<attached_skills>` block. For cronjobs this happens on every firing; for a one-off task it happens once, at `create_task` time.
+
+All three tools go through the same helpers in [`packages/core/src/attached-skills.ts`](https://github.com/meteyou/axiom/blob/main/packages/core/src/attached-skills.ts), so resolution, normalization (trim, de-duplicate, drop empties), and error handling are identical.
 
 This is the deterministic alternative to relying on the agent's routing decision. Use it when:
 
-- The cronjob's reliability depends on a skill (e.g. a daily Nitter scrape that needs the `nitter` skill's URL conventions). Without `attached_skills`, the task agent might or might not route to the skill on a given run; with it, the skill rules are guaranteed to be in the prompt.
-- You want skill rules baked in at *cronjob authoring time*, so future edits to the cronjob don't drift from what the user originally agreed to.
+- The run's reliability depends on a skill (e.g. a daily Nitter scrape that needs the `nitter` skill's URL conventions). Without `attached_skills`, the task agent might or might not route to the skill on a given run; with it, the skill rules are guaranteed to be in the prompt.
+- You want skill rules baked in at *authoring time*, so future edits to the cronjob don't drift from what the user originally agreed to.
 
-Missing `SKILL.md` files are skipped with a console warning — the task still runs. Pass `attached_skills: []` to `edit_cronjob` to clear the list.
+Missing `SKILL.md` files are skipped with a console warning — the task still runs. Pass `attached_skills: []` to `edit_cronjob` to clear a cronjob's list.
+
+One difference between the two: a cronjob stores its list in `scheduled_tasks.attached_skills`, so every firing re-reads the current `SKILL.md`. A one-off task resolves the list at spawn time only and does not persist it.
+
+### Persistent state across runs (continuity)
+
+Every `task`-type cronjob firing spawns a fresh, isolated task agent with no chat history and no memory of previous runs (see [Isolation](#isolation)). Run N+1 knows nothing about what run N did. For digest, monitor, and watch jobs this is a problem: without any shared state the job re-reports the same items on every tick.
+
+Axiom does not solve this with a platform feature. There is no run-result injection or dedupe flag on `scheduled_tasks`. Instead, continuity is a prompt-level pattern that reuses tools the task agent already has. The cronjob prompt names a fixed "brain" file that the task reads at the start of the run (what is already known or reported) and updates at the end (new facts, last-seen markers). The job dedupes against its own state.
+
+There are two places to keep that state, and the choice matters:
+
+- **`/data/memory/state/<job-name>.json` or `.md`** holds compact, machine-readable job state such as last-seen IDs, timestamps, or cursors. This is the right place for pure dedupe markers.
+- **A wiki page** (`/data/memory/wiki/<topic>.md`) holds curated, human-readable knowledge that the job enriches over time. The daily social-media digest that appends facts to a wiki page is an example of this pattern already in use.
+
+This approach needs no code, follows the same file conventions as the rest of the [memory system](./memory), and composes with `attached_skills`: attached skills bake in the rules a run must follow, while the brain file carries the state from one run to the next.
+
+#### Keeping the brain file bounded
+
+A state file that a cronjob writes to on every run grows unnoticed, and that growth has a sharp failure mode. A single `read_file` on an oversized file can silently exhaust the run's token budget and terminate it. In one real incident a hub page grew to 756 KB and killed the run on a low token budget at high cost. Three habits keep this safe:
+
+1. **Set a size budget** for the file, on the order of 60 KB. When it outgrows the budget, move raw material into monthly archives or sub-pages and keep only a compact summary or the current state in the main file.
+2. **Do not blindly load a large state file.** Instead of `read_file` on the whole file, `grep` for the specific marker you need and append new entries with a shell redirect (`>>`).
+3. **Keep the split clean.** Compact machine state belongs in `/data/memory/state/`; curated knowledge belongs in the wiki.
 
 ### Editing, listing, removing
 

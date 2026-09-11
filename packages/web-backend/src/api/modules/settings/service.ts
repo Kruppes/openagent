@@ -8,10 +8,12 @@ import {
   mergeFactExtraction,
   mergeHealthMonitor,
   mergeMultiPersona,
+  mergeRetry,
   mergeStt,
   mergeTasks,
   mergeTts,
   mergeUploads,
+  mergeWatchdog,
   normalizeSettingsPayload,
   validateEnum,
   validateNonEmptyString,
@@ -134,6 +136,12 @@ export function createSettingsService(options: SettingsRouterOptions = {}): Sett
     const uploadsMerge = mergeUploads(body, settingsRaw)
     if (uploadsMerge.error) throw new SettingsValidationError(uploadsMerge.error)
 
+    const watchdogMerge = mergeWatchdog(body, settingsRaw)
+    if (watchdogMerge.error) throw new SettingsValidationError(watchdogMerge.error)
+
+    const retryMerge = mergeRetry(body, settingsRaw)
+    if (retryMerge.error) throw new SettingsValidationError(retryMerge.error)
+
     const telegramBody = body.telegram as Record<string, unknown> | undefined
     if (telegramBody !== undefined) {
       if (telegramBody.enabled !== undefined) {
@@ -155,6 +163,10 @@ export function createSettingsService(options: SettingsRouterOptions = {}): Sett
 
       if (telegramBody.sendVoiceReply !== undefined) {
         telegram.sendVoiceReply = !!telegramBody.sendVoiceReply
+      }
+
+      if (telegramBody.sendStallWarnings !== undefined) {
+        telegram.sendStallWarnings = !!telegramBody.sendStallWarnings
       }
     }
 

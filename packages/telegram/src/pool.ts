@@ -35,6 +35,12 @@ export interface TelegramBotPoolOptions {
   onActiveProviderChanged?: TelegramBotOptions['onActiveProviderChanged']
   onTaskAction?: TelegramBotOptions['onTaskAction']
   draftTaskPlan?: TelegramBotOptions['draftTaskPlan']
+  /**
+   * Upstream 0.27.0: the shared process-wide TurnRunner. Passing it lets every
+   * persona bot reuse the same runner (turns are keyed by agentUserId, so
+   * personas stay isolated) and keeps 'main' cross-channel with web chat.
+   */
+  turnRunner?: TelegramBotOptions['turnRunner']
 }
 
 /**
@@ -149,6 +155,7 @@ export class TelegramBotPool {
           onActiveProviderChanged: this.options.onActiveProviderChanged,
           onTaskAction: this.options.onTaskAction,
           draftTaskPlan: this.options.draftTaskPlan,
+          turnRunner: this.options.turnRunner,
         })
 
         await bot.start()

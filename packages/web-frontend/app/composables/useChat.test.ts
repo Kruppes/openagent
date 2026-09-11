@@ -1,0 +1,299 @@
+import { describe, expect, it } from 'vitest'
+import {
+  buildTurnRetryAction,
+  stripFailedAttempt,
+  stripTrailingTurn,
+  turnErrorFromHistoryMetadata,
+  upsertErrorMessage,
+  upsertStallMessage,
+} from './useChat'
+import type { ChatMessage, ChatStallInfo, ChatTurnErrorInfo } from './useChat'
+
+function msg(role: ChatMessage['role'], content: string): ChatMessage {
+  return { role, content }
+}
+
+function stall(overrides: Partial<ChatStallInfo> = {}): ChatStallInfo {
+  return {
+    messageId: 42,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    durationMs: 30_000,
+    ...overrides,
+  }
+}
+
+describe('stripTrailingTurn', () => {
+  it('removes the partial turn rendered after the last user message', () => {
+    const list = [
+      msg('user', 'first question'),
+      msg('assistant', 'first answer'),
+      msg('user', 'second question'),
+      msg('assistant', 'thinking…'),
+      msg('tool', 'Tool: search'),
+      msg('assistant', 'partial answer'),
+    ]
+
+    expect(stripTrailingTurn(list).map(m => m.content)).toEqual([
+      'first question',
+      'first answer',
+      'second question',
+    ])
+  })
+
+  it('keeps plain system messages that were interleaved into the running turn', () => {
+    const list = [
+      msg('user', 'question'),
+      msg('system', 'Task aborted. No queued messages.'),
+      msg('assistant', 'partial'),
+    ]
+
+    expect(stripTrailingTurn(list).map(m => m.role)).toEqual(['user', 'system'])
+  })
+
+  it('strips a stall notice together with the turn it belongs to', () => {
+    const list: ChatMessage[] = [
+      msg('user', 'question'),
+      msg('assistant', 'thinking…'),
+      { role: 'system', content: '⏳ Provider has not responded for 30s…', stallInfo: stall() },
+      msg('assistant', 'partial'),
+    ]
+
+    expect(stripTrailingTurn(list).map(m => m.role)).toEqual(['user'])
+  })
+
+  it('strips a terminal error notice so the replay rebuilds it exactly once', () => {
+    const list: ChatMessage[] = [
+      msg('user', 'question'),
+      msg('assistant', 'partial'),
+      {
+        id: 77,
+        role: 'system',
+        content: '❌ Provider error: 401 Unauthorized',
+        errorInfo: {
+          messageId: 77,
+          cause: 'non_retryable',
+          error: '401 Unauthorized',
+          attempts: 0,
+          retryable: false,
+          occurredAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+    ]
+
+    expect(stripTrailingTurn(list).map(m => m.role)).toEqual(['user'])
+  })
+})
+
+describe('stripFailedAttempt', () => {
+  it('removes the partial answer of the discarded attempt', () => {
+    const list = [
+      msg('user', 'question'),
+      msg('assistant', 'thinking…'),
+      msg('tool', 'Tool: search'),
+      msg('assistant', 'half an answer'),
+    ]
+
+    expect(stripFailedAttempt(list).map(m => m.content)).toEqual(['question'])
+  })
+
+  it('keeps stall notices, which stay part of the persisted history', () => {
+    const list: ChatMessage[] = [
+      msg('user', 'question'),
+      { role: 'system', content: '⚠️ Provider stopped responding', stallInfo: stall({ outcome: 'aborted' }) },
+      msg('assistant', 'half an answer'),
+    ]
+
+    expect(stripFailedAttempt(list).map(m => m.role)).toEqual(['user', 'system'])
+  })
+
+  it('stops at the user message of an earlier, completed turn', () => {
+    const list = [
+      msg('user', 'first question'),
+      msg('assistant', 'first answer'),
+      msg('user', 'second question'),
+      msg('assistant', 'half an answer'),
+    ]
+
+    expect(stripFailedAttempt(list).map(m => m.content)).toEqual([
+      'first question',
+      'first answer',
+      'second question',
+    ])
+  })
+})
+
+function turnError(overrides: Partial<ChatTurnErrorInfo> = {}): ChatTurnErrorInfo {
+  return {
+    messageId: 77,
+    cause: 'non_retryable',
+    error: '401 Unauthorized: API key expired',
+    attempts: 0,
+    retryable: false,
+    occurredAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+describe('upsertErrorMessage', () => {
+  it('appends the terminal error as a system notice', () => {
+    const updated = upsertErrorMessage(
+      [msg('user', 'question')],
+      turnError(),
+      '❌ Provider error: 401 Unauthorized: API key expired',
+    )
+
+    expect(updated.map(m => m.role)).toEqual(['user', 'system'])
+    expect(updated[1]!.content).toContain('401 Unauthorized')
+    expect(updated[1]!.errorInfo?.cause).toBe('non_retryable')
+    expect(updated[1]!.id).toBe(77)
+  })
+
+  it('updates the notice restored from history instead of duplicating it', () => {
+    const fromHistory: ChatMessage[] = [
+      msg('user', 'question'),
+      { id: 77, role: 'system', content: 'old text', errorInfo: turnError() },
+    ]
+
+    const updated = upsertErrorMessage(fromHistory, turnError(), '❌ Provider error: 401 Unauthorized: API key expired')
+    expect(updated).toHaveLength(2)
+    expect(updated[1]!.content).toContain('401 Unauthorized')
+  })
+
+  it('appends an error that was not persisted', () => {
+    const once = upsertErrorMessage([], turnError({ messageId: undefined }), 'boom')
+    const twice = upsertErrorMessage(once, turnError({ messageId: undefined }), 'boom')
+    expect(twice).toHaveLength(2)
+  })
+
+  it('hangs the retry button off the error notice', () => {
+    const updated = upsertErrorMessage([], turnError({ retryActionId: 'turn-retry-1' }), 'boom')
+
+    expect(updated[0]!.chatAction).toMatchObject({
+      messageId: 'turn-retry-1',
+      kind: 'turn_retry',
+      refId: '77',
+      actions: [{ actionId: 'retry' }],
+    })
+  })
+
+  it('keeps an already-resolved retry resolved when the turn is replayed', () => {
+    const resolved = upsertErrorMessage([], turnError({ retryActionId: 'turn-retry-1' }), 'boom')
+    resolved[0]!.chatAction!.resolution = '🔄 Retrying…'
+
+    const replayed = upsertErrorMessage(resolved, turnError({ retryActionId: 'turn-retry-1' }), 'boom')
+    expect(replayed[0]!.chatAction?.resolution).toBe('🔄 Retrying…')
+  })
+})
+
+describe('buildTurnRetryAction', () => {
+  it('builds the button from the persisted action id', () => {
+    expect(buildTurnRetryAction(turnError({ retryActionId: 'turn-retry-9' }), 'boom')).toEqual({
+      messageId: 'turn-retry-9',
+      kind: 'turn_retry',
+      refId: '77',
+      text: 'boom',
+      actions: [{ actionId: 'retry', label: 'Retry', style: 'primary' }],
+    })
+  })
+
+  it('omits the button for errors without a persisted row or action id', () => {
+    expect(buildTurnRetryAction(turnError(), 'boom')).toBeUndefined()
+    expect(buildTurnRetryAction(turnError({ messageId: undefined, retryActionId: 'x' }), 'boom')).toBeUndefined()
+  })
+})
+
+describe('turnErrorFromHistoryMetadata', () => {
+  it('rebuilds the error details of a persisted turn_error row', () => {
+    const info = turnErrorFromHistoryMetadata({
+      kind: 'turn_error',
+      cause: 'retry_exhausted',
+      error: '502 Bad Gateway',
+      attempts: 3,
+      retryable: true,
+      occurredAt: '2026-01-01T00:00:00.000Z',
+    }, 12)
+
+    expect(info).toEqual({
+      messageId: 12,
+      cause: 'retry_exhausted',
+      error: '502 Bad Gateway',
+      attempts: 3,
+      retryable: true,
+      occurredAt: '2026-01-01T00:00:00.000Z',
+    })
+  })
+
+  it('ignores rows of other kinds', () => {
+    expect(turnErrorFromHistoryMetadata({ kind: 'provider_stall' }, 1)).toBeNull()
+    expect(turnErrorFromHistoryMetadata({}, 1)).toBeNull()
+    expect(turnErrorFromHistoryMetadata(null, 1)).toBeNull()
+  })
+
+  it('falls back to a non-retryable cause for unknown values', () => {
+    const info = turnErrorFromHistoryMetadata({ kind: 'turn_error', cause: 'weird', error: 'boom' }, 3)
+    expect(info).toMatchObject({ cause: 'non_retryable', attempts: 0, retryable: false })
+  })
+
+  it('restores the retry action id so the button survives a reload', () => {
+    const info = turnErrorFromHistoryMetadata({
+      kind: 'turn_error',
+      error: 'boom',
+      retryActionId: 'turn-retry-42',
+    }, 5)
+    expect(info?.retryActionId).toBe('turn-retry-42')
+  })
+})
+
+describe('upsertStallMessage', () => {
+  it('appends the warning before trailing streaming messages', () => {
+    const list: ChatMessage[] = [
+      msg('user', 'question'),
+      { role: 'assistant', content: 'partial', streaming: true },
+    ]
+
+    const updated = upsertStallMessage(list, stall(), '⏳ Provider has not responded for 30s…')
+    expect(updated.map(m => m.role)).toEqual(['user', 'system', 'assistant'])
+    expect(updated[1]!.content).toContain('has not responded for 30s')
+    expect(updated[1]!.stallInfo?.outcome).toBeUndefined()
+  })
+
+  it('updates the existing notice in place when the stall resolves', () => {
+    const warned = upsertStallMessage([msg('user', 'question')], stall(), '⏳ Provider has not responded for 30s…')
+    const resolved = upsertStallMessage(warned, stall({
+      resolvedAt: '2026-01-01T00:00:45.000Z',
+      durationMs: 45_000,
+      outcome: 'recovered',
+    }), '✅ Provider recovered after 45s of silence')
+
+    expect(resolved).toHaveLength(2)
+    expect(resolved[1]!.stallInfo?.outcome).toBe('recovered')
+    expect(resolved[1]!.content).toContain('recovered after 45s')
+  })
+
+  it('matches a notice restored from history by its persisted row id', () => {
+    const fromHistory: ChatMessage[] = [
+      msg('user', 'question'),
+      {
+        id: 42,
+        role: 'system',
+        content: '⏳ Provider has not responded for 30s…',
+        stallInfo: stall(),
+      },
+    ]
+
+    const resolved = upsertStallMessage(
+      fromHistory,
+      stall({ durationMs: 60_000, outcome: 'aborted' }),
+      '⚠️ Provider stopped responding — aborted after 60s of silence',
+    )
+    expect(resolved).toHaveLength(2)
+    expect(resolved[1]!.content).toContain('stopped responding')
+  })
+
+  it('appends a notice that has no persisted row id', () => {
+    const updated = upsertStallMessage([msg('user', 'question')], stall({ messageId: undefined }), 'stalled')
+    expect(updated).toHaveLength(2)
+    const twice = upsertStallMessage(updated, stall({ messageId: undefined }), 'stalled')
+    expect(twice).toHaveLength(3)
+  })
+})

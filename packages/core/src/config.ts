@@ -52,6 +52,15 @@ const TEMPLATES: Record<string, object> = {
     uploads: {
       retentionDays: 30,
     },
+    watchdog: {
+      stallWarnMs: 30000,
+      stallAbortMs: 90000,
+    },
+    retry: {
+      enabled: true,
+      maxRetries: 3,
+      baseDelayMs: 2000,
+    },
     tokenPriceTable: {
       'gpt-4o': { input: 2.5, output: 10 },
       'gpt-4o-mini': { input: 0.15, output: 0.6 },
@@ -117,6 +126,7 @@ const TEMPLATES: Record<string, object> = {
     webhookUrl: '',
     batchingDelayMs: 2500,
     sendVoiceReply: false,
+    sendStallWarnings: false,
   },
 }
 
@@ -249,6 +259,22 @@ export function loadMultiPersonaSettings(): MultiPersonaSettings {
   } catch {
     return { enabled: false, defaultAgentId: 'main', scopedMemory: true }
   }
+}
+
+const reportedConfigFailures = new Set<string>()
+
+/**
+ * Report a config file that could not be read or parsed, for callers that fall
+ * back to defaults instead of failing the operation. Deduplicated per process:
+ * these run per turn, and a corrupt `settings.json` must be visible in the log
+ * without flooding it.
+ */
+export function warnConfigReadFailed(filename: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err)
+  const key = `${filename}:${message}`
+  if (reportedConfigFailures.has(key)) return
+  reportedConfigFailures.add(key)
+  console.warn(`[config] Failed to read ${filename}, using defaults: ${message}`)
 }
 
 export function ensureConfigTemplates(configDir?: string): void {

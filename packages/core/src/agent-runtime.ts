@@ -28,6 +28,8 @@ import { createSearchMemoriesTool } from './memories-tool.js'
 import { createReadChatHistoryTool } from './chat-history-tools.js'
 import { sanitizeHistoryBoundaries, describeHistoryStructure } from './message-history.js'
 import { createEmailTools } from './email-tools.js'
+import { createProviderQuotaTool } from './quota-tool.js'
+import type { QuotaServiceLike } from './quota-tool.js'
 import type { AgentRuntimeStateSnapshot, ResponseChunk } from './agent-runtime-types.js'
 
 /**
@@ -47,6 +49,7 @@ export interface BaseAgentToolsOptions {
    * and callers that omit this stay unscoped (orchestrator behavior).
    */
   getCurrentAgentId?: () => string | undefined
+  quotaService?: QuotaServiceLike
 }
 
 /**
@@ -70,7 +73,24 @@ export function createBaseAgentTools(options: BaseAgentToolsOptions): AgentTool[
     ...createAgentSkillTools(),
     ...createEmailTools(),
     ...(options.sttEnabled ? [createTranscribeAudioTool()] : []),
+    ...(options.quotaService
+      ? [createProviderQuotaTool({
+          quotaService: options.quotaService,
+          isAuthorized: () => isQuotaVisibleToUser(options.db, options.getCurrentUserId?.()),
+        })]
+      : []),
   ]
+}
+
+/**
+ * Provider quota is admin-only on the HTTP API, so the tool must not widen that
+ * boundary. Background agents (heartbeat, cronjobs, tasks) run without an
+ * interactive user and stay allowed.
+ */
+function isQuotaVisibleToUser(db: Database, userId: number | undefined): boolean {
+  if (userId === undefined) return true
+  const row = db.prepare('SELECT role FROM users WHERE id = ?').get(userId) as { role?: string } | undefined
+  return row?.role === 'admin'
 }
 
 export interface AgentRuntimeOptions {
@@ -84,6 +104,7 @@ export interface AgentRuntimeOptions {
   providerConfig?: ProviderConfig
   providerManager?: ProviderManager
   getCurrentToolUserId?: () => number | undefined
+  quotaService?: QuotaServiceLike
   /**
    * Reasoning / thinking level applied to every LLM turn. Defaults to the value
    * stored in `settings.json` (`thinkingLevel`), or `off` if not configured.
@@ -99,6 +120,15 @@ export interface AgentRuntimeOptions {
 
 export interface AgentRuntimeBoundary {
   streamPrompt(text: string, sessionId: string, images?: ImageContent[]): AsyncIterable<ResponseChunk>
+  /**
+   * Re-run the last assistant turn after it failed. The trailing failed
+   * assistant message is dropped and the turn continues from the existing
+   * transcript, so the user message is never sent (and billed) twice. Falls
+   * back to a normal prompt when the transcript has no continuable tail.
+   */
+  retryLastTurn(text: string, sessionId: string, images?: ImageContent[]): AsyncIterable<ResponseChunk>
+  // Fork: persona-aware system prompt refresh (agentId selects the persona's
+  // instructions). Kept over upstream's 2-arg version.
   refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void
   getCurrentTimeContext(): string
   swapProvider(provider: ProviderConfig, apiKey: string, modelId?: string): void
@@ -627,6 +657,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         // Each runtime is permanently bound to one persona — scope its
         // history/memory tools to that persona (main stays unscoped).
         getCurrentAgentId: () => this.agentId,
+        quotaService: options.quotaService,
       }),
       ...askAgentTools,
     ]
@@ -685,6 +716,32 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     return this.executePromptWithRetry(text, sessionId, false, images)
   }
 
+  retryLastTurn(text: string, sessionId: string, images?: ImageContent[]): AsyncIterable<ResponseChunk> {
+    const continuable = this.dropFailedAssistantTail()
+    return this.executePromptWithRetry(text, sessionId, false, images, continuable)
+  }
+
+  /**
+   * Drop the trailing assistant messages left behind by a failed turn so the
+   * transcript ends on the user (or tool-result) message the assistant still
+   * owes an answer to. Returns false when no such tail exists — then the
+   * caller must re-prompt instead of continuing.
+   */
+  private dropFailedAssistantTail(): boolean {
+    const messages = this.agent.state.messages
+    let end = messages.length
+    while (end > 0 && (messages[end - 1] as { role?: string }).role === 'assistant') end--
+    if (end === 0) return false
+
+    const last = messages[end - 1] as { role?: string }
+    if (last.role !== 'user' && last.role !== 'toolResult') return false
+
+    if (end !== messages.length) this.agent.state.messages = messages.slice(0, end)
+    return true
+  }
+
+  // Fork: persona-aware refresh (agentId selects the persona's instructions,
+  // defaulting to this runtime's bound persona).
   refreshSystemPrompt(channel?: string, currentUser?: { username: string }, agentId?: string): void {
     this.agent.state.systemPrompt = this.buildSystemPrompt(channel, currentUser, agentId ?? this.agentId)
   }
@@ -930,7 +987,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
   /**
    * Execute a prompt with optional fallback retry on pre-stream errors.
    */
-  private async *executePromptWithRetry(text: string, sessionId: string, isRetry: boolean = false, images?: ImageContent[]): AsyncIterable<ResponseChunk> {
+  private async *executePromptWithRetry(text: string, sessionId: string, isRetry: boolean = false, images?: ImageContent[], continueTranscript = false): AsyncIterable<ResponseChunk> {
     const eventQueue: AgentEvent[] = []
     let resolveWaiting: (() => void) | null = null
     let done = false
@@ -946,7 +1003,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
     })
 
     // Start the prompt (non-blocking)
-    const promptPromise = this.agent.prompt(text, images).then(() => {
+    const started = continueTranscript ? this.agent.continue() : this.agent.prompt(text, images)
+    const promptPromise = started.then(() => {
       done = true
       if (resolveWaiting) {
         resolveWaiting()
@@ -1152,7 +1210,7 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
         this.swapProvider(fallback, apiKey)
 
         // Retry once with fallback
-        yield* this.executePromptWithRetry(text, sessionId, true, images)
+        yield* this.executePromptWithRetry(text, sessionId, true, images, continueTranscript)
         return
       }
 
@@ -1209,6 +1267,8 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
             model: assistantMsg.model,
             promptTokens: assistantMsg.usage.input,
             completionTokens: assistantMsg.usage.output,
+            cacheRead: assistantMsg.usage.cacheRead,
+            cacheWrite: assistantMsg.usage.cacheWrite,
             estimatedCost: finalCost,
             sessionId,
           })
@@ -1218,11 +1278,18 @@ class PiAgentRuntime implements AgentRuntimeBoundary, AgentRuntimePiAgentAccess 
           // only `errorMessage`/`stopReason` set — the event sequence looks
           // like a clean turn. Without surfacing this, the user gets pure
           // silence (incident 2026-07-20, overnight empty turns).
+          // Fork version kept: it is a superset of upstream's stopReason-only
+          // check (also catches errorMessage-without-stopReason) and logs.
           const failure = assistantMsg as { stopReason?: string; errorMessage?: string }
           if (failure.errorMessage || failure.stopReason === 'error') {
             const errText = failure.errorMessage ?? 'Unknown model error'
             console.error(`[agent-runtime] Assistant message carries error (stopReason=${failure.stopReason ?? 'n/a'}, session ${sessionId}): ${errText}`)
-            chunks.push({ type: 'error', error: `Modellfehler: ${errText}` })
+            // Merge note: the RAW provider error goes into `chunk.error` so the
+            // TurnRunner's retry classifier (isRetryableTurnError, upstream
+            // 0.27.0) sees the untouched provider message. The human-readable
+            // "Modellfehler:" prefix lives in `text` for plain-text channels
+            // that render it directly instead of via the runner.
+            chunks.push({ type: 'error', error: errText, text: `Modellfehler: ${errText}` })
           }
         }
         break

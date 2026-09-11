@@ -304,6 +304,109 @@
                   <p class="text-xs text-muted-foreground">{{ $t('settings.uploadRetentionHint') }}</p>
                 </div>
 
+                <!-- ─── Resilience (retry + watchdog) ─── -->
+                <Separator />
+
+                <div>
+                  <h3 class="text-base font-semibold tracking-tight text-foreground">
+                    {{ $t('settings.resilienceSection') }}
+                  </h3>
+                  <p class="mt-1 text-sm text-muted-foreground">
+                    {{ $t('settings.resilienceSectionDescription') }}
+                  </p>
+                </div>
+
+                <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
+                  <div class="flex flex-col gap-0.5 pr-4">
+                    <Label for="retry-enabled" class="cursor-pointer">
+                      {{ $t('settings.retryEnabled') }}
+                    </Label>
+                    <p class="text-xs text-muted-foreground">
+                      {{ $t('settings.retryEnabledHint') }}
+                    </p>
+                  </div>
+                  <Switch
+                    id="retry-enabled"
+                    v-model:checked="form.retry.enabled"
+                  />
+                </div>
+
+                <template v-if="form.retry.enabled">
+                  <div class="flex flex-col gap-8">
+                    <div class="flex flex-col gap-2">
+                      <Label for="retry-max-retries">{{ $t('settings.retryMaxRetries') }}</Label>
+                      <div class="flex items-center gap-2">
+                        <Input
+                          id="retry-max-retries"
+                          v-model.number="form.retry.maxRetries"
+                          type="number"
+                          min="0"
+                          max="10"
+                          class="w-full"
+                        />
+                        <span class="text-sm text-muted-foreground">{{ $t('settings.attemptsUnit') }}</span>
+                      </div>
+                      <p class="text-xs text-muted-foreground">{{ $t('settings.retryMaxRetriesHint') }}</p>
+                    </div>
+
+                    <div class="flex flex-col gap-2">
+                      <Label for="retry-base-delay">{{ $t('settings.retryBaseDelay') }}</Label>
+                      <div class="flex items-center gap-2">
+                        <Input
+                          id="retry-base-delay"
+                          v-model.number="form.retry.baseDelayMs"
+                          type="number"
+                          min="100"
+                          max="60000"
+                          step="100"
+                          class="w-full"
+                        />
+                        <span class="text-sm text-muted-foreground">ms</span>
+                      </div>
+                      <p class="text-xs text-muted-foreground">
+                        {{ $t('settings.retryBaseDelayHint', { schedule: retryBackoffSchedule }) }}
+                      </p>
+                    </div>
+                  </div>
+                </template>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="watchdog-warn">{{ $t('settings.watchdogStallWarn') }}</Label>
+                  <div class="flex items-center gap-2">
+                    <Input
+                      id="watchdog-warn"
+                      v-model.number="form.watchdog.stallWarnMs"
+                      type="number"
+                      min="1000"
+                      max="600000"
+                      step="1000"
+                      class="w-full"
+                    />
+                    <span class="text-sm text-muted-foreground">ms</span>
+                  </div>
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.watchdogStallWarnHint') }}</p>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                  <Label for="watchdog-abort">{{ $t('settings.watchdogStallAbort') }}</Label>
+                  <div class="flex items-center gap-2">
+                    <Input
+                      id="watchdog-abort"
+                      v-model.number="form.watchdog.stallAbortMs"
+                      type="number"
+                      min="1000"
+                      max="3600000"
+                      step="1000"
+                      class="w-full"
+                    />
+                    <span class="text-sm text-muted-foreground">ms</span>
+                  </div>
+                  <p class="text-xs text-muted-foreground">{{ $t('settings.watchdogStallAbortHint') }}</p>
+                  <p v-if="watchdogThresholdInvalid" class="text-xs text-destructive">
+                    {{ $t('settings.watchdogStallAbortInvalid') }}
+                  </p>
+                </div>
+
               </div>
             </div>
 
@@ -912,6 +1015,22 @@
                   <Switch
                     id="telegram-send-voice-reply"
                     v-model:checked="form.telegram.sendVoiceReply"
+                  />
+                </div>
+
+                <!-- Stall warnings -->
+                <div class="flex items-center justify-between rounded-lg border border-border px-4 py-3">
+                  <div class="flex flex-col gap-0.5 pr-4">
+                    <Label for="telegram-send-stall-warnings" class="cursor-pointer">
+                      {{ $t('settings.telegramSendStallWarnings') }}
+                    </Label>
+                    <p class="text-xs text-muted-foreground">
+                      {{ $t('settings.telegramSendStallWarningsHint') }}
+                    </p>
+                  </div>
+                  <Switch
+                    id="telegram-send-stall-warnings"
+                    v-model:checked="form.telegram.sendStallWarnings"
                   />
                 </div>
 
@@ -1962,9 +2081,10 @@
 
 <script setup lang="ts">
 import { canonicalizeProviderModelRef, SETTINGS_THINKING_LEVELS, type SettingsThinkingLevel } from '@axiom/core/contracts'
+import { buildProviderModelOptions } from '~/utils/providerModelOptions'
 import { useSettingsApi } from '~/api/settings'
 import EmailAccountsWorkspace from '~/features/email/components/EmailAccountsWorkspace.vue'
-import type { MemoryConsolidationSettings, FactExtractionSettings, HealthMonitorNotificationToggles, HealthMonitorSettings, AgentHeartbeatSettings, TasksSettings, TtsSettings, SttSettings, UploadsSettings, TelegramSettings } from '~/composables/useSettings'
+import type { MemoryConsolidationSettings, FactExtractionSettings, HealthMonitorNotificationToggles, HealthMonitorSettings, AgentHeartbeatSettings, TasksSettings, TtsSettings, SttSettings, UploadsSettings, TelegramSettings, WatchdogSettings, RetrySettings } from '~/composables/useSettings'
 import type { TelegramUser } from '~/composables/useTelegramUsers'
 
 /* ── Auth ── */
@@ -2068,19 +2188,7 @@ async function handleActivateProvider(value: string) {
 }
 
 /** Flattened list of provider+model combinations for all provider select dropdowns */
-const providerModelOptions = computed(() => {
-  const options: { value: string; label: string }[] = []
-  for (const p of providers.value) {
-    const models = p.enabledModels ?? []
-    for (const modelId of models) {
-      options.push({
-        value: `${p.id}:${modelId}`,
-        label: `${p.name} (${modelId})`,
-      })
-    }
-  }
-  return options
-})
+const providerModelOptions = computed(() => buildProviderModelOptions(providers.value))
 
 /* ── Users (for telegram user assignment) ── */
 const { users, fetchUsers } = useUsers()
@@ -2281,6 +2389,8 @@ interface SettingsForm {
   thinkingLevel: SettingsThinkingLevel
   healthMonitorIntervalMinutes: number
   uploads: UploadsSettings
+  watchdog: WatchdogSettings
+  retry: RetrySettings
   telegram: TelegramSettings
   healthMonitor: HealthMonitorSettings
   memoryConsolidation: MemoryConsolidationSettings
@@ -2317,6 +2427,8 @@ function hydrateForm() {
     thinkingLevel: s.thinkingLevel,
     healthMonitorIntervalMinutes: s.healthMonitorIntervalMinutes,
     uploads: { ...s.uploads },
+    watchdog: { ...s.watchdog },
+    retry: { ...s.retry },
     telegram: { ...s.telegram },
     healthMonitor: {
       enabled: s.healthMonitor.enabled,
@@ -2822,9 +2934,28 @@ const notificationToggles = computed(() => [
   { key: 'fallbackToHealthy' as keyof HealthMonitorNotificationToggles, label: t('settings.healthMonitorNotifyFallbackToHealthy') },
 ])
 
+/* ── Resilience helpers ── */
+const retryBackoffSchedule = computed(() => {
+  const retry = form.value?.retry
+  if (!retry || !retry.baseDelayMs || retry.maxRetries < 1) return '—'
+  return Array.from({ length: Math.min(retry.maxRetries, 10) }, (_, i) =>
+    `${Math.round((retry.baseDelayMs * 2 ** i) / 100) / 10}s`,
+  ).join(' · ')
+})
+
+const watchdogThresholdInvalid = computed(() => {
+  const watchdog = form.value?.watchdog
+  if (!watchdog) return false
+  return watchdog.stallAbortMs < watchdog.stallWarnMs
+})
+
 /* ── Save ── */
 async function handleSave() {
   if (!form.value) return
+  if (watchdogThresholdInvalid.value) {
+    error.value = t('settings.watchdogStallAbortInvalid')
+    return
+  }
   const success = await updateSettings(form.value)
   if (!success) return
 

@@ -1,86 +1,58 @@
 <template>
-  <!-- Task Viewer (detail mode) -->
-  <TaskEventsViewer
-    v-if="selectedTaskId"
-    :task-id="selectedTaskId"
-    @back="closeViewer"
-    @restarted="onTaskRestarted"
-  />
-
-  <div v-else class="flex h-full flex-col overflow-hidden">
+  <div class="flex h-full flex-col overflow-hidden">
     <PageHeader :title="$t('tasks.title')" :subtitle="$t('tasks.subtitle')" />
 
-    <!-- Filter toolbar -->
-    <div class="flex-shrink-0 border-b border-border px-5 py-3">
-      <div class="flex flex-col gap-2 lg:flex-row lg:items-center">
+    <!-- Filter toolbar. On mobile the fields live in a popover so the list
+         gets the screen; the badge shows how many filters deviate from default. -->
+    <div class="flex-shrink-0 border-b border-border px-3 py-2 md:px-5 md:py-3">
+      <div class="flex items-center gap-2 md:hidden">
+        <Popover>
+          <PopoverTrigger as-child>
+            <Button variant="outline" class="flex-1 justify-start gap-2">
+              <AppIcon name="filter" size="sm" />
+              {{ $t('tasks.filters.button') }}
+              <Badge v-if="activeFilterCount > 0" variant="default" class="ml-auto px-1.5 py-0 text-[10px]">
+                {{ activeFilterCount }}
+              </Badge>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" class="flex w-[calc(100vw-1.5rem)] max-w-sm flex-col gap-2">
+            <TaskFilterFields
+              v-model:status="filters.status"
+              v-model:trigger-type="filters.triggerType"
+              v-model:provider-filter="filters.providerFilter"
+              v-model:created-from="filters.createdFrom"
+              v-model:created-to="filters.createdTo"
+              :has-default-provider-option="hasDefaultProviderFilter"
+              :provider-model-options="providerModelFilterOptions"
+              @change="onFilterChange"
+            />
+          </PopoverContent>
+        </Popover>
+
+        <Button
+          variant="outline"
+          size="icon"
+          :disabled="loading"
+          :title="$t('tasks.refresh')"
+          @click="loadTasks(pagination.page)"
+        >
+          <AppIcon name="refresh" size="sm" />
+        </Button>
+      </div>
+
+      <div class="hidden flex-col gap-2 md:flex lg:flex-row lg:items-center">
         <div class="flex flex-1 flex-wrap items-center gap-2">
-          <Select v-model="filters.status" @update:model-value="onFilterChange">
-            <SelectTrigger class="w-full sm:w-[160px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="">{{ $t('tasks.filters.allStatuses') }}</SelectItem>
-              <SelectItem value="running">{{ $t('tasks.status.running') }}</SelectItem>
-              <SelectItem value="paused">{{ $t('tasks.status.paused') }}</SelectItem>
-              <SelectItem value="completed">{{ $t('tasks.status.completed') }}</SelectItem>
-              <SelectItem value="failed">{{ $t('tasks.status.failed') }}</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select v-model="filters.triggerType" @update:model-value="onFilterChange">
-            <SelectTrigger class="w-full sm:w-[160px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="">{{ $t('tasks.filters.allTriggers') }}</SelectItem>
-              <SelectItem value="user">{{ $t('tasks.trigger.user') }}</SelectItem>
-              <SelectItem value="agent">{{ $t('tasks.trigger.agent') }}</SelectItem>
-              <SelectItem value="cronjob">{{ $t('tasks.trigger.cronjob') }}</SelectItem>
-              <SelectItem value="heartbeat">{{ $t('tasks.trigger.heartbeat') }}</SelectItem>
-              <SelectItem value="consolidation">{{ $t('tasks.trigger.consolidation') }}</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select v-model="filters.providerFilter" @update:model-value="onFilterChange">
-            <SelectTrigger class="w-full sm:w-[240px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="">{{ $t('tasks.filters.allProviders') }}</SelectItem>
-              <SelectItem v-if="hasDefaultProviderFilter" :value="TASK_DEFAULT_PROVIDER_FILTER">
-                {{ $t('tasks.filters.defaultProvider') }}
-              </SelectItem>
-              <SelectItem
-                v-for="option in providerModelFilterOptions"
-                :key="option.value"
-                :value="option.value"
-              >
-                {{ option.label }}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-
-          <div class="flex items-center gap-2">
-            <span class="text-xs text-muted-foreground">{{ $t('tasks.filters.fromDate') }}</span>
-            <Input
-              v-model="filters.createdFrom"
-              type="date"
-              class="w-[145px]"
-              :aria-label="$t('tasks.filters.fromDate')"
-              @change="onFilterChange"
-            />
-          </div>
-
-          <div class="flex items-center gap-2">
-            <span class="text-xs text-muted-foreground">{{ $t('tasks.filters.toDate') }}</span>
-            <Input
-              v-model="filters.createdTo"
-              type="date"
-              class="w-[145px]"
-              :aria-label="$t('tasks.filters.toDate')"
-              @change="onFilterChange"
-            />
-          </div>
+          <TaskFilterFields
+            v-model:status="filters.status"
+            v-model:trigger-type="filters.triggerType"
+            v-model:provider-filter="filters.providerFilter"
+            v-model:created-from="filters.createdFrom"
+            v-model:created-to="filters.createdTo"
+            :has-default-provider-option="hasDefaultProviderFilter"
+            :provider-model-options="providerModelFilterOptions"
+            @change="onFilterChange"
+          />
         </div>
 
         <Button variant="outline" :disabled="loading" class="gap-2" @click="loadTasks(pagination.page)">
@@ -122,119 +94,159 @@
         <p class="max-w-md text-sm text-muted-foreground">{{ $t('tasks.emptyDescription') }}</p>
       </div>
 
-      <!-- Tasks table -->
-      <div v-else class="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead
-                class="cursor-pointer select-none hover:text-foreground"
-                @click="sortBy('name')"
-              >
-                <span class="inline-flex items-center gap-1">
-                  {{ $t('tasks.columns.name') }}
-                  <SortIndicator :field="'name'" :sort-field="sortField" :sort-direction="sortDirection" />
-                </span>
-              </TableHead>
-              <TableHead>{{ $t('tasks.columns.status') }}</TableHead>
-              <TableHead>{{ $t('tasks.columns.trigger') }}</TableHead>
-              <TableHead
-                class="cursor-pointer select-none text-right hover:text-foreground"
-                @click="sortBy('duration')"
-              >
-                <span class="inline-flex items-center justify-end gap-1">
-                  {{ $t('tasks.columns.duration') }}
-                  <SortIndicator :field="'duration'" :sort-field="sortField" :sort-direction="sortDirection" />
-                </span>
-              </TableHead>
-              <TableHead
-                class="cursor-pointer select-none text-right hover:text-foreground"
-                @click="sortBy('promptTokens')"
-              >
-                <span class="inline-flex items-center justify-end gap-1">
-                  {{ $t('tasks.columns.tokens') }}
-                  <SortIndicator :field="'promptTokens'" :sort-field="sortField" :sort-direction="sortDirection" />
-                </span>
-              </TableHead>
-              <TableHead
-                class="cursor-pointer select-none text-right hover:text-foreground"
-                @click="sortBy('estimatedCost')"
-              >
-                <span class="inline-flex items-center justify-end gap-1">
-                  {{ $t('tasks.columns.cost') }}
-                  <SortIndicator :field="'estimatedCost'" :sort-field="sortField" :sort-direction="sortDirection" />
-                </span>
-              </TableHead>
-              <TableHead
-                class="cursor-pointer select-none text-right hover:text-foreground"
-                @click="sortBy('createdAt')"
-              >
-                <span class="inline-flex items-center justify-end gap-1">
-                  {{ $t('tasks.columns.created') }}
-                  <SortIndicator :field="'createdAt'" :sort-field="sortField" :sort-direction="sortDirection" />
-                </span>
-              </TableHead>
-              <TableHead class="w-[70px]" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            <TableRow
-              v-for="task in sortedTasks"
-              :key="task.id"
-              class="cursor-pointer"
-              @click="openViewer(task.id)"
-            >
-              <TableCell class="max-w-[240px] truncate font-medium">
-                {{ task.name }}
-              </TableCell>
-              <TableCell>
-                <Badge :variant="statusVariant(task.status)">
-                  {{ $t(`tasks.status.${task.status}`) }}
-                </Badge>
-              </TableCell>
-              <TableCell>
-                <div class="flex flex-col items-start gap-1">
-                  <Badge variant="outline">
-                    {{ $t(`tasks.trigger.${task.triggerType}`) }}
-                  </Badge>
-                  <span
-                    v-if="formatTriggerModel(task)"
-                    class="text-xs text-muted-foreground"
-                    :title="task.isDefaultModel ? $t('tasks.triggerModelDefaultTooltip') : undefined"
-                  >
-                    {{ formatTriggerModel(task) }}
-                  </span>
-                </div>
-              </TableCell>
-              <TableCell class="text-right tabular-nums text-muted-foreground">
-                {{ formatDuration(task) }}
-              </TableCell>
-              <TableCell class="text-right tabular-nums text-muted-foreground">
-                <span :title="`Prompt: ${formatNumber(task.promptTokens)} · Completion: ${formatNumber(task.completionTokens)}`">
-                  {{ formatNumber(task.promptTokens + task.completionTokens) }}
-                </span>
-              </TableCell>
-              <TableCell class="text-right tabular-nums text-muted-foreground">
-                {{ formatCurrency(task.estimatedCost) }}
-              </TableCell>
-              <TableCell class="text-right text-sm text-muted-foreground">
-                {{ formatTimestamp(task.createdAt) }}
-              </TableCell>
-              <TableCell class="text-right">
-                <Button
-                  v-if="task.status === 'running'"
-                  variant="ghost"
-                  size="sm"
-                  class="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  :title="$t('tasks.killButton')"
-                  @click.stop="confirmKill(task)"
+      <template v-else>
+        <!-- Mobile card list -->
+        <div class="flex flex-col gap-2 p-3 md:hidden">
+          <TaskListCard
+            v-for="task in sortedTasks"
+            :key="task.id"
+            :task="task"
+            @open="openViewer(task.id)"
+            @kill="confirmKill(task)"
+          />
+        </div>
+
+        <!-- Desktop table -->
+        <div class="hidden overflow-x-auto md:block">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead
+                  class="cursor-pointer select-none hover:text-foreground"
+                  @click="sortBy('name')"
                 >
-                  <AppIcon name="kill" size="sm" />
-                </Button>
-              </TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
+                  <span class="inline-flex items-center gap-1">
+                    {{ $t('tasks.columns.name') }}
+                    <SortIndicator :field="'name'" :sort-field="sortField" :sort-direction="sortDirection" />
+                  </span>
+                </TableHead>
+                <TableHead>{{ $t('tasks.columns.status') }}</TableHead>
+                <TableHead>{{ $t('tasks.columns.trigger') }}</TableHead>
+                <TableHead
+                  class="cursor-pointer select-none text-right hover:text-foreground"
+                  @click="sortBy('duration')"
+                >
+                  <span class="inline-flex items-center justify-end gap-1">
+                    {{ $t('tasks.columns.duration') }}
+                    <SortIndicator :field="'duration'" :sort-field="sortField" :sort-direction="sortDirection" />
+                  </span>
+                </TableHead>
+                <TableHead
+                  class="cursor-pointer select-none text-right hover:text-foreground"
+                  @click="sortBy('promptTokens')"
+                >
+                  <span class="inline-flex items-center justify-end gap-1">
+                    {{ $t('tasks.columns.tokens') }}
+                    <SortIndicator :field="'promptTokens'" :sort-field="sortField" :sort-direction="sortDirection" />
+                  </span>
+                </TableHead>
+                <TableHead
+                  class="cursor-pointer select-none text-right hover:text-foreground"
+                  @click="sortBy('estimatedCost')"
+                >
+                  <span class="inline-flex items-center justify-end gap-1">
+                    {{ $t('tasks.columns.cost') }}
+                    <SortIndicator :field="'estimatedCost'" :sort-field="sortField" :sort-direction="sortDirection" />
+                  </span>
+                </TableHead>
+                <TableHead
+                  class="cursor-pointer select-none text-right hover:text-foreground"
+                  @click="sortBy('createdAt')"
+                >
+                  <span class="inline-flex items-center justify-end gap-1">
+                    {{ $t('tasks.columns.created') }}
+                    <SortIndicator :field="'createdAt'" :sort-field="sortField" :sort-direction="sortDirection" />
+                  </span>
+                </TableHead>
+                <TableHead class="w-[70px]" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              <TableRow
+                v-for="task in sortedTasks"
+                :key="task.id"
+                class="cursor-pointer"
+                @click="openViewer(task.id)"
+              >
+                <TableCell class="max-w-[240px] truncate font-medium">
+                  {{ task.name }}
+                </TableCell>
+                <TableCell>
+                  <Badge :variant="taskStatusVariant(task.status)">
+                    {{ $t(`tasks.status.${task.status}`) }}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <div class="flex flex-col items-start gap-1">
+                    <Badge variant="outline">
+                      {{ $t(`tasks.trigger.${task.triggerType}`) }}
+                    </Badge>
+                    <span
+                      v-if="formatTaskTriggerModel(task, t)"
+                      class="text-xs text-muted-foreground"
+                      :title="task.isDefaultModel ? $t('tasks.triggerModelDefaultTooltip') : undefined"
+                    >
+                      {{ formatTaskTriggerModel(task, t) }}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell class="text-right tabular-nums text-muted-foreground">
+                  {{ formatTaskDuration(task) }}
+                </TableCell>
+                <TableCell class="text-right tabular-nums text-muted-foreground">
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <div class="flex flex-col items-end">
+                        <span>{{ formatNumber(task.promptTokens + task.completionTokens) }}</span>
+                        <span
+                          v-if="hasCacheTokens(task)"
+                          class="text-xs text-muted-foreground"
+                        >
+                          {{ cacheSummary(task) }}
+                        </span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="left" class="max-w-none px-3 py-2">
+                      <div class="grid grid-cols-[auto_auto] gap-x-5 gap-y-1 tabular-nums">
+                        <span class="opacity-70">{{ $t('tasks.tokensTooltip.input') }}</span>
+                        <span class="text-right">{{ formatNumber(task.promptTokens) }}</span>
+                        <span class="opacity-70">{{ $t('tasks.tokensTooltip.output') }}</span>
+                        <span class="text-right">{{ formatNumber(task.completionTokens) }}</span>
+                        <span class="opacity-70">{{ $t('tasks.tokensTooltip.cacheRead') }}</span>
+                        <span class="text-right">{{ formatNumber(task.cacheRead) }}</span>
+                        <span class="opacity-70">{{ $t('tasks.tokensTooltip.cacheWrite') }}</span>
+                        <span class="text-right">{{ formatNumber(task.cacheWrite) }}</span>
+                        <template v-if="cacheHitRate(task) !== null">
+                          <span class="col-span-2 my-0.5 border-t border-background/20" />
+                          <span class="opacity-70">{{ $t('tasks.tokensTooltip.cacheHitRate') }}</span>
+                          <span class="text-right">{{ cacheHitRate(task)!.toFixed(1) }}%</span>
+                        </template>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TableCell>
+                <TableCell class="text-right tabular-nums text-muted-foreground">
+                  {{ formatCurrency(task.estimatedCost) }}
+                </TableCell>
+                <TableCell class="text-right text-sm text-muted-foreground">
+                  {{ formatTimestamp(task.createdAt) }}
+                </TableCell>
+                <TableCell class="text-right">
+                  <Button
+                    v-if="task.status === 'running'"
+                    variant="ghost"
+                    size="sm"
+                    class="h-8 w-8 p-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    :title="$t('tasks.killButton')"
+                    @click.stop="confirmKill(task)"
+                  >
+                    <AppIcon name="kill" size="sm" />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
 
         <!-- Pagination -->
         <div
@@ -263,7 +275,7 @@
             </Button>
           </div>
         </div>
-      </div>
+      </template>
     </div>
 
     <!-- Kill confirmation dialog -->
@@ -282,9 +294,17 @@
 
 <script setup lang="ts">
 import type { Task } from '~/api/tasks'
-import TaskEventsViewer from '~/features/tasks/components/TaskEventsViewer.vue'
+import TaskFilterFields from '~/features/tasks/components/TaskFilterFields.vue'
+import TaskListCard from '~/features/tasks/components/TaskListCard.vue'
 import {
-  TASK_DEFAULT_PROVIDER_FILTER,
+  cacheHitRate,
+  cacheSummary,
+  formatTaskDuration,
+  formatTaskTriggerModel,
+  hasCacheTokens,
+  taskStatusVariant,
+} from '~/features/tasks/utils/taskFormat'
+import {
   encodeTaskProviderModelFilter,
   useTasksList,
 } from '~/features/tasks/composables/useTasksList'
@@ -292,25 +312,8 @@ import {
 const { t } = useI18n()
 const { formatNumber, formatCurrency, formatTimestamp } = useFormat()
 
-const selectedTaskId = ref<string | null>(null)
-
 function openViewer(taskId: string) {
-  selectedTaskId.value = taskId
-}
-
-function closeViewer() {
-  selectedTaskId.value = null
-  loadTasks(pagination.value.page)
-}
-
-// After a successful restart, swap the viewer to the new task so the user
-// can watch it run. We also refresh the list in the background so the new
-// row shows up when they navigate back.
-function onTaskRestarted(newTaskId: string) {
-  selectedTaskId.value = newTaskId
-  loadTasks(1).catch(() => {
-    // Background refresh — errors are already surfaced by useTasksList.
-  })
+  navigateTo(`/tasks/${taskId}`)
 }
 
 const {
@@ -321,6 +324,7 @@ const {
   error,
   pagination,
   filters,
+  activeFilterCount,
   sortField,
   sortDirection,
   loadTasks,
@@ -375,51 +379,6 @@ async function executeKill() {
 
 function onFilterChange() {
   loadTasks(1)
-}
-
-function statusVariant(status: string): 'default' | 'success' | 'destructive' | 'warning' | 'muted' {
-  switch (status) {
-    case 'running': return 'default'
-    case 'completed': return 'success'
-    case 'failed': return 'destructive'
-    case 'paused': return 'warning'
-    default: return 'muted'
-  }
-}
-
-function formatTriggerModel(task: Task): string | null {
-  const provider = task.provider
-  const model = task.model
-  if (!provider && !model) return null
-
-  const parts = [provider, model].filter(Boolean).join(' – ')
-  if (task.isDefaultModel === true) {
-    return t('tasks.triggerModelDefault', { value: parts })
-  }
-  return parts
-}
-
-function formatDuration(task: Task): string {
-  const start = task.startedAt ? new Date(task.startedAt.replace(' ', 'T') + 'Z').getTime() : null
-  if (!start) return '—'
-
-  const end = task.completedAt
-    ? new Date(task.completedAt.replace(' ', 'T') + 'Z').getTime()
-    : Date.now()
-
-  const diffMs = end - start
-  if (diffMs < 0) return '—'
-
-  const seconds = Math.floor(diffMs / 1000)
-  if (seconds < 60) return `${seconds}s`
-
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`
-
-  const hours = Math.floor(minutes / 60)
-  const remainingMinutes = minutes % 60
-  return `${hours}h ${remainingMinutes}m`
 }
 
 onMounted(async () => {

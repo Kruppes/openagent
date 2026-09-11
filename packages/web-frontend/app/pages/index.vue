@@ -104,11 +104,11 @@
             // Mobile: messages fill the available width (minus avatar + gap
             // or the pl-11 offset for tool cards). On sm+ screens we cap them
             // so bubbles don't span edge-to-edge on wider viewports.
-            msg.role === 'divider' ? 'w-full' : (msg.role === 'tool' || (msg.role === 'system' && (msg.isTaskResult || msg.isTaskStatusUpdate || msg.picker || msg.chatAction)) || msg.isThinking) ? 'self-start w-full max-w-full sm:max-w-[75%] pl-11' : 'flex max-w-full gap-3 sm:max-w-[75%]',
+            msg.role === 'divider' ? 'w-full' : (msg.role === 'tool' || (msg.role === 'system' && (msg.isTaskResult || msg.isTaskStatusUpdate || msg.stallInfo || msg.errorInfo || msg.picker || msg.chatAction)) || msg.isThinking) ? 'self-start w-full max-w-full sm:max-w-[75%] pl-11' : 'flex max-w-full gap-3 sm:max-w-[75%]',
             {
               'self-end flex-row-reverse': msg.role === 'user',
               'self-start': msg.role === 'assistant' && !msg.isThinking,
-              'self-center max-w-full sm:max-w-[85%]': msg.role === 'system' && !msg.isTaskResult && !msg.isTaskStatusUpdate && !msg.picker && !msg.chatAction,
+              'self-center max-w-full sm:max-w-[85%]': msg.role === 'system' && !msg.isTaskResult && !msg.isTaskStatusUpdate && !msg.stallInfo && !msg.errorInfo && !msg.picker && !msg.chatAction,
             },
           ]"
         >
@@ -122,13 +122,13 @@
                   :class="{ 'rounded-b-lg': !expandedSummaries.has(String(msg.id ?? i)) }"
                   @click="toggleSummary(String(msg.id ?? i))"
                 >
-                  <svg
-                    class="h-3 w-3 shrink-0 transition-transform duration-200"
-                    :class="{ 'rotate-90': expandedSummaries.has(String(msg.id ?? i)) }"
-                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-                  ><polyline points="9 18 15 12 9 6" /></svg>
                   <AppIcon name="file" size="sm" class="h-3 w-3 shrink-0 opacity-50" />
                   <span class="font-medium">{{ $t('chat.sessionSummary') }}</span>
+                  <span class="flex-1" />
+                  <AppIcon
+                    :name="expandedSummaries.has(String(msg.id ?? i)) ? 'chevronDown' : 'chevronRight'"
+                    class="h-3 w-3 shrink-0"
+                  />
                 </button>
                 <div
                   v-if="expandedSummaries.has(String(msg.id ?? i))"
@@ -155,38 +155,43 @@
 
           <!-- Thinking card (clickable/expandable) -->
           <template v-else-if="msg.isThinking">
-            <div class="w-full overflow-hidden rounded-lg border border-border">
-              <button
-                class="group flex w-full items-center gap-2 bg-muted/30 px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60"
-                :class="{ 'border-b border-border': expandedThinking.has(String(msg.id ?? i)) }"
-                @click="toggleThinking(String(msg.id ?? i))"
-              >
-                <svg class="h-3 w-3 shrink-0 transition-transform duration-200" :class="{ 'rotate-90': expandedThinking.has(String(msg.id ?? i)) }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6" /></svg>
-                <AppIcon name="sparkles" class="h-3 w-3 shrink-0 opacity-60" />
+            <ChatCollapsibleCard
+              icon="sparkles"
+              :expanded="expandedThinking.has(String(msg.id ?? i))"
+              @toggle="toggleThinking(String(msg.id ?? i))"
+            >
+              <template #header>
                 <span class="font-medium">{{ $t('chat.thinking') }}</span>
                 <span v-if="msg.streaming" class="ml-2 inline-flex items-center gap-1">
                   <span class="h-1 w-1 animate-pulse rounded-full bg-current opacity-60" />
                   <span class="h-1 w-1 animate-pulse rounded-full bg-current opacity-60" />
                   <span class="h-1 w-1 animate-pulse rounded-full bg-current opacity-60" />
                 </span>
-              </button>
-              <div v-if="expandedThinking.has(String(msg.id ?? i))" class="bg-background text-xs">
-                <div class="max-h-80 overflow-y-auto px-3 py-2">
-                  <p class="whitespace-pre-wrap break-words text-muted-foreground">{{ msg.content }}</p>
-                </div>
+              </template>
+              <div class="max-h-80 overflow-y-auto px-3 py-2">
+                <p class="whitespace-pre-wrap break-words text-muted-foreground">{{ msg.content }}</p>
               </div>
-            </div>
+            </ChatCollapsibleCard>
           </template>
 
           <!-- Tool call card (clickable/expandable) -->
           <template v-else-if="msg.role === 'tool' && msg.toolData">
-            <div class="w-full overflow-hidden rounded-lg border border-border">
-              <button class="group flex w-full items-center gap-2 bg-muted/30 px-3 py-1.5 text-left text-xs text-muted-foreground" :class="{ 'border-b border-border': expandedTools.has(msg.toolData!.toolCallId) }" @click="toggleTool(msg.toolData!.toolCallId)">
-                <svg class="h-3 w-3 shrink-0 transition-transform duration-200" :class="{ 'rotate-90': expandedTools.has(msg.toolData!.toolCallId) }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6" /></svg>
-                <AppIcon :name="toolIconName(msg.toolData!)" class="h-3 w-3 shrink-0 opacity-60" />
-                <span class="font-medium">{{ toolDisplayName(msg.toolData!) }}</span>
-              </button>
-              <div v-if="expandedTools.has(msg.toolData!.toolCallId)" class="bg-background text-xs">
+            <ChatCollapsibleCard
+              :icon="toolIconName(msg.toolData!)"
+              :expanded="expandedTools.has(msg.toolData!.toolCallId)"
+              @toggle="toggleTool(msg.toolData!.toolCallId)"
+            >
+              <template #header>
+                <span class="shrink-0 font-medium">{{ toolDisplayName(msg.toolData!) }}</span>
+                <span
+                  v-if="toolSummary(msg.toolData!)"
+                  class="min-w-0 truncate font-mono text-muted-foreground/70"
+                  :title="toolSummary(msg.toolData!)!"
+                >
+                  {{ toolSummary(msg.toolData!) }}
+                </span>
+              </template>
+              <div>
                 <div v-if="!isToolSkillLoad(msg.toolData!) && !hasMemoryView(msg.toolData!)" class="border-b border-border px-3 py-2"><p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Input</p><ToolDataDisplay :data="msg.toolData!.toolArgs" /></div>
                 <template v-if="isEditFileTool(msg.toolData!) && getToolEdits(msg.toolData!) && getToolMemoryInfo(msg.toolData!).isMemoryFile">
                   <div class="max-h-80 overflow-y-auto">
@@ -209,7 +214,7 @@
                   <p class="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Output</p><ToolDataDisplay :data="msg.toolData!.toolResult" :is-error="msg.toolData!.toolIsError" />
                 </div>
               </div>
-            </div>
+            </ChatCollapsibleCard>
           </template>
 
           <!-- Periodic task heartbeat (compact, non-collapsible progress row).
@@ -231,20 +236,81 @@
             </div>
           </template>
 
+          <!-- Provider stall notice. Backed by a persisted chat row, so it
+               survives a reload; the same bubble flips to the resolved state
+               in place when the provider recovers or the turn is aborted. -->
+          <template v-else-if="msg.role === 'system' && msg.stallInfo">
+            <div
+              class="w-full overflow-hidden rounded-lg border px-3 py-1.5 text-xs"
+              :class="msg.stallInfo.outcome === 'recovered'
+                ? 'border-emerald-500/30 bg-emerald-500/5 text-muted-foreground'
+                : msg.stallInfo.outcome === 'aborted'
+                  ? 'border-destructive/30 bg-destructive/5 text-muted-foreground'
+                  : 'border-amber-500/30 bg-amber-500/5 text-muted-foreground'"
+            >
+              <div class="flex items-center gap-2">
+                <AppIcon
+                  :name="msg.stallInfo.outcome === 'recovered' ? 'check' : msg.stallInfo.outcome === 'aborted' ? 'warning' : 'clock'"
+                  class="h-3 w-3 shrink-0 opacity-70"
+                />
+                <span class="min-w-0 flex-1 break-words text-foreground/80">{{ msg.content }}</span>
+                <span class="shrink-0 text-[10px] text-muted-foreground/80">
+                  {{ formatStallDuration(msg.stallInfo.durationMs) }}
+                </span>
+              </div>
+            </div>
+          </template>
+
+          <!-- Terminal turn error. Backed by a persisted chat row (full
+               provider text included), so the failure is still visible after a
+               reload instead of the turn dying silently. -->
+          <template v-else-if="msg.role === 'system' && msg.errorInfo">
+            <div class="w-full overflow-hidden rounded-lg border border-destructive/40 bg-destructive/5">
+              <div class="flex items-center gap-2 border-b border-destructive/20 px-3 py-1.5 text-xs">
+                <AppIcon name="warning" class="h-3 w-3 shrink-0 text-destructive" />
+                <span class="font-medium text-destructive">{{ $t('chat.turnError') }}</span>
+                <span v-if="msg.errorInfo.attempts > 0" class="ml-auto shrink-0 text-[10px] text-muted-foreground/80">
+                  {{ $t('chat.turnErrorRetried', { count: msg.errorInfo.attempts }) }}
+                </span>
+              </div>
+              <div class="whitespace-pre-wrap break-words px-3 py-2 text-xs text-foreground/90">{{ msg.content }}</div>
+              <!-- Manual retry. Answered by the backend against the persisted
+                   error row, so it survives a reload and disables itself once
+                   the conversation moved on. -->
+              <template v-if="msg.chatAction">
+                <div
+                  v-if="msg.chatAction.resolution"
+                  class="border-t border-destructive/20 px-3 py-2 text-xs text-muted-foreground"
+                >{{ msg.chatAction.resolution }}</div>
+                <div v-else class="flex flex-wrap gap-1.5 border-t border-destructive/20 p-1.5">
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1.5 rounded-md border border-primary/30 px-2.5 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
+                    :disabled="pendingChatActions.has(msg.chatAction.messageId)"
+                    @click="handleChatAction(msg.chatAction!.messageId, 'retry')"
+                  >
+                    <AppIcon name="refresh" class="h-3 w-3 shrink-0" />
+                    {{ $t('chat.turnErrorRetry') }}
+                  </button>
+                </div>
+              </template>
+            </div>
+          </template>
+
           <!-- Task result notification (collapsible card) -->
           <template v-else-if="msg.role === 'system' && msg.isTaskResult">
-            <div class="w-full overflow-hidden rounded-lg border border-border">
-              <button
-                class="group flex w-full items-center gap-2 bg-muted/30 px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/60"
-                :class="{ 'border-b border-border': expandedInjections.has(i) }"
-                @click="toggleInjection(i)"
-              >
-                <svg class="h-3 w-3 shrink-0 transition-transform duration-200" :class="{ 'rotate-90': expandedInjections.has(i) }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6" /></svg>
-                <AppIcon name="zap" class="h-3 w-3 shrink-0 opacity-60" />
+            <ChatCollapsibleCard
+              icon="zap"
+              :expanded="expandedInjections.has(i)"
+              @toggle="toggleInjection(i)"
+            >
+              <template #header>
                 <span class="font-medium">{{ msg.taskResultName ?? 'Background Task' }}</span>
                 <span v-if="msg.taskResultDuration" class="ml-1 text-[10px] text-muted-foreground/60">({{ msg.taskResultDuration }}min)</span>
+              </template>
+              <template #trailing>
                 <span
-                  class="ml-auto rounded px-1.5 py-0.5 text-[10px] font-medium"
+                  class="rounded px-1.5 py-0.5 text-[10px] font-medium"
                   :class="msg.taskResultStatus === 'failed'
                     ? 'bg-destructive/10 text-destructive'
                     : msg.taskResultStatus === 'question'
@@ -253,13 +319,11 @@
                 >
                   {{ msg.taskResultStatus === 'failed' ? 'Failed' : msg.taskResultStatus === 'question' ? 'Question' : 'Completed' }}
                 </span>
-              </button>
-              <div v-if="expandedInjections.has(i)" class="bg-background text-xs">
-                <div class="max-h-60 overflow-y-auto px-3 py-2">
-                  <div class="prose-chat break-words text-xs text-foreground" v-html="renderMarkdown(taskResultBody(msg.content))" />
-                </div>
+              </template>
+              <div class="max-h-60 overflow-y-auto px-3 py-2">
+                <div class="prose-chat break-words text-xs text-foreground" v-html="renderMarkdown(taskResultBody(msg.content))" />
               </div>
-            </div>
+            </ChatCollapsibleCard>
           </template>
 
           <!-- Interactive action message (e.g. an email waiting for approval).
@@ -425,7 +489,14 @@
     </Transition>
 
     <div class="shrink-0 border-t border-border bg-background p-3">
-      <form class="flex flex-col gap-2" @submit.prevent="handleSend">
+      <form class="relative flex flex-col gap-2" @submit.prevent="handleSend">
+        <ChatSkillAutocomplete
+          v-if="skillAutocomplete.active.value"
+          :suggestions="skillAutocomplete.suggestions.value"
+          :selected-index="skillAutocomplete.selectedIndex.value"
+          @select="handleSkillSelect"
+          @hover="skillAutocomplete.selectedIndex.value = $event"
+        />
         <!-- Pending files row -->
         <div v-if="pendingFiles.length" class="flex flex-wrap gap-2">
           <div
@@ -502,7 +573,7 @@
               :class="isAdmin ? 'pl-2' : 'pl-3'"
               :placeholder="$t('chat.placeholder')"
               rows="1"
-              @keydown.enter.exact.prevent="handleSend"
+              @keydown="handleComposerKeydown"
               @input="autoResize"
             />
 
@@ -564,6 +635,7 @@
 
 <script setup lang="ts">
 import type { ChatMessage, ToolCallData } from '~/composables/useChat'
+import type { LoadableSkill } from '~/composables/useSkillAutocomplete'
 import { SETTINGS_THINKING_LEVELS, type SettingsThinkingLevel } from '@axiom/core/contracts'
 import { useSettingsApi } from '~/api/settings'
 const { t } = useI18n()
@@ -644,7 +716,13 @@ function toolDisplayName(toolData: ToolCallData): string {
   if (isToolSkillLoad(toolData)) return `Load Skill: ${getSkillName(toolData.toolArgs)}`
   const memInfo = getToolMemoryInfo(toolData)
   if (memInfo.isMemoryFile) return memInfo.label
-  return toolData.toolName
+  return formatToolName(toolData.toolName)
+}
+function toolSummary(toolData: ToolCallData): string | null {
+  if (isToolSkillLoad(toolData)) return null
+  const memInfo = getToolMemoryInfo(toolData)
+  if (memInfo.isMemoryFile) return memInfo.displayPath
+  return extractMemoryRelativePath(toolData.toolArgs) ?? getToolCallSummary(toolData.toolName, toolData.toolArgs)
 }
 function toolIconName(toolData: ToolCallData): string {
   if (isToolSkillLoad(toolData)) return 'puzzle'
@@ -711,6 +789,12 @@ function formatTokenCount(count: number): string {
   if (count >= 1000) return `${(count / 1000).toFixed(1)}k`
   return String(count)
 }
+// Stall duration badge: 45000 -> "45s", 125000 -> "2m 5s".
+function formatStallDuration(durationMs: number): string {
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1000))
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`
+}
 const { messages, connectionStatus, isStreaming, connect, disconnect, sendMessage, newSession, stopTask, resolvePicker, submitChatAction } = useChat()
 
 /** Message ids with an in-flight action click, so buttons can't be double-fired. */
@@ -757,7 +841,19 @@ const isNearBottom = ref(true)
 const SCROLL_THRESHOLD = 120
 function onMessagesScroll() { const el = messagesContainer.value; if (!el) return; isNearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight <= SCROLL_THRESHOLD }
 function jumpToBottom() { isNearBottom.value = true; nextTick(() => scrollToBottom()) }
-onMounted(async () => { connect(); await Promise.all([loadHistory(), fetchTtsSettings(), fetchSttSettings(), loadThinkingLevel()]) })
+// History must be in place before the socket opens: connecting attaches to a
+// still-running turn and replays it, and a later history load would wipe that
+// replayed tail. A failed history load must never keep the socket closed —
+// chatting still works, the transcript just starts empty.
+onMounted(async () => {
+  try {
+    await loadHistory()
+  } catch (err) {
+    console.error('[chat] history load failed:', err)
+  }
+  connect()
+  await Promise.all([fetchTtsSettings(), fetchSttSettings(), loadThinkingLevel()])
+})
 onUnmounted(() => { disconnect(); ttsStop(); sttCleanup() })
 watch(() => messages.value.length, () => {
   if (isNearBottom.value) nextTick(() => scrollToBottom())
@@ -824,6 +920,37 @@ async function loadHistory() {
           } as ChatMessage
         }
 
+        // Provider-stall notices (system rows with metadata.kind ===
+        // 'provider_stall'). The row is written when the watchdog warns and
+        // updated in place on recovery/abort, so history always reflects the
+        // final state — that's what makes the warning survive a refresh.
+        if (m.role === 'system' && meta.kind === 'provider_stall') {
+          return {
+            id: m.id, role: 'system' as const, content: m.content, timestamp: m.timestamp, source,
+            stallInfo: {
+              messageId: m.id,
+              startedAt: meta.startedAt,
+              resolvedAt: meta.resolvedAt ?? undefined,
+              durationMs: typeof meta.durationMs === 'number' ? meta.durationMs : 0,
+              outcome: meta.outcome ?? undefined,
+            },
+          } as ChatMessage
+        }
+
+        // Terminal turn errors (system rows with metadata.kind ===
+        // 'turn_error'). Persisted with the full provider error text so the
+        // failure — and, later, its retry button — survives a page reload.
+        const turnError = m.role === 'system' ? turnErrorFromHistoryMetadata(meta, m.id) : null
+        if (turnError) {
+          return {
+            id: m.id, role: 'system' as const, content: m.content, timestamp: m.timestamp, source,
+            errorInfo: turnError,
+            // The Retry button is resolved server-side against the persisted
+            // row, so it keeps working after this reload.
+            chatAction: buildTurnRetryAction(turnError, m.content),
+          } as ChatMessage
+        }
+
         // Parse thinking blocks (assistant messages with metadata.kind === 'thinking').
         // Persisted live by ws-chat so they survive a page reload.
         if (m.role === 'assistant' && meta.kind === 'thinking') {
@@ -851,6 +978,21 @@ async function loadHistory() {
     }
   } finally { loadingHistory.value = false; nextTick(() => scrollToBottom()) }
 }
+const skillAutocomplete = useSkillAutocomplete(inputText)
+
+function handleSkillSelect(skill: LoadableSkill) {
+  skillAutocomplete.select(skill)
+  inputRef.value?.focus()
+}
+
+function handleComposerKeydown(event: KeyboardEvent) {
+  if (skillAutocomplete.handleKeydown(event)) return
+  if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && !event.isComposing) {
+    event.preventDefault()
+    void handleSend()
+  }
+}
+
 async function handleSend() {
   const files = [...pendingFiles.value]
   const text = inputText.value

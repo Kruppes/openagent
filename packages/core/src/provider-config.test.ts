@@ -9,6 +9,7 @@ import {
   clearFallbackProvider,
   getAvailableModels,
   syncNewCatalogModels,
+  isDynamicCatalogProvider,
   buildModel,
   estimateCost,
   resolveModelTemperature,
@@ -367,6 +368,47 @@ describe('provider-config', () => {
     expect(() => updateProviderModel('no-such', 'kimi-k2.6', { description: 'x' })).toThrowError(
       'Provider not found: no-such',
     )
+  })
+
+  it('updateProviderModel persists name/contextWindow/cost for models outside the bundled catalog', () => {
+    // Merge note (upstream 0.27.0 test on fork pi-ai 0.85.1): the original id
+    // `qwen/qwen3.8-flash` is now PART of the pi-ai 0.85.1 openrouter catalog,
+    // so updateProviderModel correctly enriches it (maxTokens/reasoning/cache
+    // cost) via findPiAiCatalogModel. To keep the test's intent — a model NOT
+    // in the bundled catalog — we use a synthetic id that is genuinely absent.
+    setupTmpConfig({
+      providers: [
+        {
+          id: 'or-id',
+          name: 'OpenRouter',
+          type: 'openai-completions',
+          providerType: 'openrouter',
+          provider: 'openrouter',
+          baseUrl: 'https://openrouter.ai/api/v1',
+          apiKey: 'sk-or',
+          enabledModels: ['acme/custom-model-xyz'],
+        },
+      ],
+    })
+
+    const patched = updateProviderModel('or-id', 'acme/custom-model-xyz', {
+      name: 'Acme Custom XYZ',
+      contextWindow: 1_000_000,
+      cost: { input: 0.15, output: 0.47 },
+    })
+    const entry = patched.models?.find(m => m.id === 'acme/custom-model-xyz')
+    expect(entry).toEqual({
+      id: 'acme/custom-model-xyz',
+      name: 'Acme Custom XYZ',
+      contextWindow: 1_000_000,
+      cost: { input: 0.15, output: 0.47 },
+    })
+
+    const model = buildModel(patched, 'acme/custom-model-xyz')
+    expect(model.name).toBe('Acme Custom XYZ')
+    expect(model.contextWindow).toBe(1_000_000)
+    expect(model.cost.input).toBe(0.15)
+    expect(model.cost.output).toBe(0.47)
   })
 })
 
@@ -1375,6 +1417,12 @@ describe('getAvailableModels', () => {
     expect(models.length).toBeGreaterThan(0)
     expect(models[0]).toHaveProperty('id')
     expect(models[0]).toHaveProperty('name')
+  })
+
+  it('marks openrouter as a dynamic-catalog provider and others as static', () => {
+    expect(isDynamicCatalogProvider('openrouter')).toBe(true)
+    expect(isDynamicCatalogProvider('openai')).toBe(false)
+    expect(isDynamicCatalogProvider('ollama')).toBe(false)
   })
 
   it('returns models for deepseek provider type', () => {

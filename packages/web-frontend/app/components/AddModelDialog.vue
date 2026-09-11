@@ -36,7 +36,7 @@
         </div>
 
         <!-- Model list -->
-        <div v-else class="flex flex-col gap-0 rounded-md border border-border overflow-hidden max-h-72 overflow-y-auto">
+        <div v-else class="flex flex-col gap-0 divide-y divide-border rounded-md border border-border overflow-hidden max-h-72 overflow-y-auto">
           <template v-if="filteredModels.length > 0">
             <label
               v-for="model in filteredModels"
@@ -54,8 +54,17 @@
                 class="h-4 w-4 rounded border-border text-primary focus:ring-primary"
                 @change="toggleSelected(model.id)"
               >
-              <span class="flex-1 truncate">{{ model.name }}</span>
-              <span class="font-mono text-[10px] text-muted-foreground truncate">{{ model.id }}</span>
+              <span class="flex min-w-0 flex-1 flex-col">
+                <span class="truncate">{{ model.name }}</span>
+                <span class="font-mono text-[10px] text-muted-foreground truncate">{{ model.id }}</span>
+              </span>
+              <span
+                v-if="model.contextWindow || model.cost"
+                class="flex shrink-0 flex-col items-end text-[10px] text-muted-foreground tabular-nums"
+              >
+                <span v-if="model.contextWindow">{{ $t('providers.addModelContext', { size: formatContextWindow(model.contextWindow) }) }}</span>
+                <span v-if="model.cost">${{ formatModelCost(model.cost.input) }} / ${{ formatModelCost(model.cost.output) }}</span>
+              </span>
               <span v-if="isAlreadyEnabled(model.id)" class="text-[10px] text-muted-foreground shrink-0">
                 {{ $t('providers.addModelAlreadyEnabled') }}
               </span>
@@ -86,10 +95,12 @@
               <AppIcon v-if="selected.has(search.trim())" name="check" class="h-3 w-3" />
               <span v-else class="text-xs leading-none">+</span>
             </span>
-            <span class="flex-1 truncate">
-              {{ $t('providers.addModelCustom', { name: search.trim() }) }}
+            <span class="flex min-w-0 flex-1 flex-col">
+              <span class="truncate">
+                {{ $t('providers.addModelCustom', { name: search.trim() }) }}
+              </span>
+              <span class="font-mono text-[10px] text-muted-foreground truncate">{{ search.trim() }}</span>
             </span>
-            <span class="font-mono text-[10px] text-muted-foreground truncate">{{ search.trim() }}</span>
           </button>
         </div>
 
@@ -117,6 +128,9 @@
 <script setup lang="ts">
 import type { Provider, AvailableModel } from '~/features/providers/composables/useProviders'
 import type { ProviderUpdatePayloadContract } from '@axiom/core/contracts'
+import { formatContextWindow, formatModelCost } from '~/utils/modelFormat'
+import { useProvidersApi } from '~/api/providers'
+import { buildCatalogModelPatch } from '~/utils/catalogModelPatch'
 
 const props = defineProps<{
   open: boolean
@@ -128,7 +142,8 @@ const emit = defineEmits<{
   added: []
 }>()
 
-const { fetchModels, updateProvider } = useProviders()
+const { fetchModels, fetchLiveModels, updateProvider, presets } = useProviders()
+const providersApi = useProvidersApi()
 const { t } = useI18n()
 
 const search = ref('')
@@ -138,14 +153,15 @@ const loadError = ref(false)
 const selected = ref<Set<string>>(new Set())
 const saving = ref(false)
 
+// Multi-term search: every whitespace-separated term must match somewhere in
+// the id or name (e.g. "nvidia free" finds "nvidia/…:free" models).
 const filteredModels = computed(() => {
-  const query = search.value.trim().toLowerCase()
-  if (!query) return catalog.value
-  return catalog.value.filter(
-    model =>
-      model.id.toLowerCase().includes(query) ||
-      model.name.toLowerCase().includes(query),
-  )
+  const terms = search.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (terms.length === 0) return catalog.value
+  return catalog.value.filter((model) => {
+    const haystack = `${model.id} ${model.name}`.toLowerCase()
+    return terms.every(term => haystack.includes(term))
+  })
 })
 
 // The custom-model fallback row is shown only when the search text does not
@@ -177,7 +193,12 @@ async function loadCatalog() {
   loading.value = true
   loadError.value = false
   try {
-    catalog.value = await fetchModels(props.provider.providerType)
+    // Dynamic-catalog providers (e.g. OpenRouter) serve their model list live
+    // from the provider's own /models endpoint; the backend falls back to the
+    // curated catalog if that fetch fails.
+    catalog.value = presets.value[props.provider.providerType]?.dynamicCatalog
+      ? await fetchLiveModels(props.provider.id)
+      : await fetchModels(props.provider.providerType)
   } catch {
     loadError.value = true
     catalog.value = []
@@ -186,13 +207,33 @@ async function loadCatalog() {
   }
 }
 
+// Models from a live catalog (e.g. OpenRouter) are usually absent from the
+// bundled pi-ai catalog, so their pricing/context window would otherwise be
+// unknown to buildModel(). Persist that metadata as per-model overrides.
+async function persistLiveCatalogMetadata(provider: Provider, modelIds: string[]) {
+  if (!presets.value[provider.providerType]?.dynamicCatalog) return
+
+  const patches = catalog.value
+    .filter(entry => modelIds.includes(entry.id))
+    .map(entry => ({ modelId: entry.id, patch: buildCatalogModelPatch(entry) }))
+
+  // Best-effort enrichment: a failed patch must not block enabling the model.
+  await Promise.allSettled(
+    patches
+      .filter(({ patch }) => patch !== null)
+      .map(({ modelId, patch }) => providersApi.updateProviderModel(provider.id, modelId, patch!)),
+  )
+}
+
 async function handleAdd() {
   if (!props.provider || selected.value.size === 0) return
   saving.value = true
   try {
     const current = props.provider.enabledModels ?? []
-    const merged = Array.from(new Set([...current, ...selected.value]))
+    const added = Array.from(selected.value).filter(id => !current.includes(id))
+    const merged = Array.from(new Set([...current, ...added]))
     const payload: ProviderUpdatePayloadContract = { enabledModels: merged }
+    await persistLiveCatalogMetadata(props.provider, added)
     const result = await updateProvider(props.provider.id, payload)
     if (result) {
       emit('added')

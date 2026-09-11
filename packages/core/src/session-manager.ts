@@ -1172,9 +1172,11 @@ export class SessionManager {
     session_user: string | null
     prompt_tokens: number
     completion_tokens: number
+    cache_read: number
+    cache_write: number
   } | undefined {
     return this.db.prepare(
-      `SELECT id, started_at, ended_at, message_count, summary_written, source, type, parent_session_id, last_activity, session_user, prompt_tokens, completion_tokens
+      `SELECT id, started_at, ended_at, message_count, summary_written, source, type, parent_session_id, last_activity, session_user, prompt_tokens, completion_tokens, cache_read, cache_write
        FROM sessions WHERE id = ?`
     ).get(sessionId) as {
       id: string
@@ -1189,6 +1191,8 @@ export class SessionManager {
       session_user: string | null
       prompt_tokens: number
       completion_tokens: number
+      cache_read: number
+      cache_write: number
     } | undefined
   }
 }

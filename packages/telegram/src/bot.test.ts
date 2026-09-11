@@ -107,7 +107,32 @@ vi.mock('@axiom/core', async (importOriginal) => {
 
 import { TelegramBot, createTelegramBot, extractReplyContext, buildAgentMessage } from './bot.js'
 import type { TelegramConfig, TelegramChatEvent } from './bot.js'
-import { loadConfig } from '@axiom/core'
+import { clearTurnRetryNotifiers, initDatabase, loadConfig, notifyTurnRetryResolved, TurnRunner } from '@axiom/core'
+
+async function* errorStream(error: string): AsyncGenerator<ResponseChunk> {
+  yield { type: 'error', error }
+}
+
+async function* textStream(text: string): AsyncGenerator<ResponseChunk> {
+  yield { type: 'text', text }
+  yield { type: 'done' }
+}
+
+/**
+ * The watchdog's own timing is covered in the core turn-runner tests; here the
+ * stall chunks are emitted directly so the assertions are about Telegram's
+ * opt-in delivery, not about thresholds.
+ */
+async function* stallThenAnswerStream(): AsyncGenerator<ResponseChunk> {
+  yield { type: 'stall_warning', text: '\u23F3 Provider has not responded for 30s\u2026' }
+  yield { type: 'text', text: 'Late answer' }
+  yield { type: 'done' }
+}
+
+async function* stallThenErrorStream(): AsyncGenerator<ResponseChunk> {
+  yield { type: 'stall_warning', text: '\u23F3 Provider has not responded for 30s\u2026' }
+  yield { type: 'error', error: 'invalid_api_key' }
+}
 
 function createMockAgentCore(): AgentCore {
   const mockSessionManager = {
@@ -534,6 +559,121 @@ describe('TelegramBot', () => {
     })
   })
 
+  describe('/skill command', () => {
+    let dataDir: string
+    let previousDataDir: string | undefined
+
+    function writeAgentSkill(dir: string, name: string, body: string): void {
+      const skillDir = path.join(dataDir, 'skills_agent', dir)
+      fs.mkdirSync(skillDir, { recursive: true })
+      fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${name} skill\n---\n${body}\n`, 'utf-8')
+    }
+
+    beforeEach(() => {
+      previousDataDir = process.env.DATA_DIR
+      dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'axiom-tg-skill-'))
+      process.env.DATA_DIR = dataDir
+      writeAgentSkill('deploy', 'deploy', 'Deploy body')
+      writeAgentSkill('review', 'code-review', 'Review body')
+    })
+
+    afterEach(() => {
+      if (previousDataDir === undefined) delete process.env.DATA_DIR
+      else process.env.DATA_DIR = previousDataDir
+      fs.rmSync(dataDir, { recursive: true, force: true })
+    })
+
+    it('registers /skill and lists it in the bot menu', async () => {
+      const bot = new TelegramBot({ agentCore, config: defaultConfig })
+      const underlying = bot.getBot() as unknown as MockBotInternals
+      expect(underlying._commandHandlers.has('skill')).toBe(true)
+      await bot.start()
+      const menu = (bot.getBot() as any).api.setMyCommands.mock.calls[0]![0] as { command: string }[]
+      expect(menu.map((c) => c.command)).toContain('skill')
+    })
+
+    it('bare /skill sends an inline keyboard with one button per skill', async () => {
+      const bot = new TelegramBot({ agentCore, config: defaultConfig })
+      const underlying = bot.getBot() as unknown as MockBotInternals
+
+      const ctx = createMockContext()
+      ctx.message = { text: '/skill', message_id: 1 }
+      await underlying._commandHandlers.get('skill')!(ctx)
+
+      const [text, opts] = ctx.reply.mock.calls[0] as [string, { reply_markup: { inline_keyboard: { text: string; callback_data: string }[][] } }]
+      expect(text).toContain('Choose a skill')
+      const rows = opts.reply_markup.inline_keyboard
+      expect(rows.map((r) => r[0]!.text)).toEqual(['code-review', 'deploy'])
+      expect(agentCore.sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('tapping a skill loads it as an agent turn and edits the picker message', async () => {
+      vi.mocked(agentCore.sendMessage).mockReturnValue(textStream('Skill deploy loaded. What should I do?'))
+      const bot = new TelegramBot({ agentCore, config: defaultConfig })
+      const underlying = bot.getBot() as unknown as MockBotInternals
+
+      const cmdCtx = createMockContext()
+      cmdCtx.message = { text: '/skill', message_id: 1 }
+      await underlying._commandHandlers.get('skill')!(cmdCtx)
+      const rows = (cmdCtx.reply.mock.calls[0] as [string, { reply_markup: { inline_keyboard: { text: string; callback_data: string }[][] } }])[1].reply_markup.inline_keyboard
+      const deployCb = rows.find((r) => r[0]!.text === 'deploy')![0]!.callback_data
+
+      const cbCtx = createMockContext({
+        callbackQuery: { data: deployCb, message: { message_id: 1 } },
+        answerCallbackQuery: vi.fn().mockResolvedValue(true),
+        editMessageText: vi.fn().mockResolvedValue(true),
+      })
+      await underlying._handlers.get('callback_query:data')!(cbCtx as any)
+      await flushAsyncWork()
+
+      const [editedText, editedOpts] = (cbCtx as any).editMessageText.mock.calls[0] as [string, { reply_markup?: unknown }]
+      expect(editedText).toContain('deploy')
+      expect(editedOpts.reply_markup).toBeUndefined()
+
+      expect(agentCore.sendMessage).toHaveBeenCalledTimes(1)
+      const [userId, agentText, source] = vi.mocked(agentCore.sendMessage).mock.calls[0] as [string, string, string]
+      expect(userId).toBe('telegram-12345')
+      expect(source).toBe('telegram')
+      expect(agentText).toContain('<skill name="deploy">')
+      expect(agentText).toContain('Deploy body')
+      expect(agentText).toMatch(/ask what they want to do/i)
+
+      const botApi = (bot.getBot() as any).api
+      expect(botApi.sendMessage).toHaveBeenCalledWith(67890, 'Skill deploy loaded. What should I do?', { parse_mode: 'HTML' })
+    })
+
+    it('/skill:<name> <prompt> typed as text runs the prompt with the skill loaded, without batching', async () => {
+      vi.mocked(agentCore.sendMessage).mockReturnValue(textStream('Reviewing.'))
+      const bot = new TelegramBot({ agentCore, config: defaultConfig })
+      const underlying = bot.getBot() as unknown as MockBotInternals
+
+      const ctx = createMockContext()
+      ctx.message = { text: '/skill:review look at PR 42', message_id: 1 }
+      await underlying._handlers.get('message:text')!(ctx)
+      await flushAsyncWork()
+
+      expect(agentCore.sendMessage).toHaveBeenCalledTimes(1)
+      const agentText = (vi.mocked(agentCore.sendMessage).mock.calls[0] as [string, string])[1]
+      expect(agentText).toContain('Review body')
+      expect(agentText).toContain('look at PR 42')
+      expect(agentText).not.toMatch(/Do not act yet/)
+    })
+
+    it('unknown skill replies with the available list and does not start a turn', async () => {
+      const bot = new TelegramBot({ agentCore, config: defaultConfig })
+      const underlying = bot.getBot() as unknown as MockBotInternals
+
+      const ctx = createMockContext()
+      ctx.message = { text: '/skill:nope', message_id: 1 }
+      await underlying._commandHandlers.get('skill')!(ctx)
+
+      const [text] = ctx.reply.mock.calls[0] as [string]
+      expect(text).toContain('Unknown skill: nope')
+      expect(text).toContain('/skill:deploy')
+      expect(agentCore.sendMessage).not.toHaveBeenCalled()
+    })
+  })
+
   describe('/new command', () => {
     it('resets via resetSessionAsync so the in-memory context is actually cleared', async () => {
       // Must use resetSessionAsync (clears runtime messages), NOT handleNewCommand
@@ -933,7 +1073,7 @@ describe('TelegramBot', () => {
       expect(vi.mocked(ctx.reply).mock.calls[0][0]).toContain('keine Antwort erzeugt')
     })
 
-    it('handles agent errors gracefully', async () => {
+    it('reports a failed turn as an error message instead of ending silently', async () => {
       vi.mocked(agentCore.sendMessage).mockImplementation(() => {
         throw new Error('agent failed')
       })
@@ -946,9 +1086,11 @@ describe('TelegramBot', () => {
       await handler(ctx)
       await vi.advanceTimersByTimeAsync(2500)
 
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('encountered an error'),
-        { parse_mode: 'HTML' }
+      const botApi = (bot.getBot() as any).api
+      expect(botApi.sendMessage).toHaveBeenCalledWith(
+        67890,
+        expect.stringContaining('agent failed'),
+        expect.objectContaining({ parse_mode: 'HTML' }),
       )
     })
   })
@@ -1584,5 +1726,279 @@ describe('email approval channel', () => {
     })
     await underlying._handlers.get('callback_query:data')!(ctx as any)
     expect((ctx as any).answerCallbackQuery).toHaveBeenCalled()
+  })
+})
+
+describe('turn retry channel', () => {
+  const SESSION_ID = 'session-telegram-retry'
+  const USER_ID = 42
+  const CHAT_ID = 67890
+
+  const config: TelegramConfig = {
+    enabled: true,
+    botToken: 'test-token-123',
+    adminUserIds: [],
+    pollingMode: true,
+    webhookUrl: '',
+    batchingDelayMs: 2500,
+  }
+
+  let db: Database
+  let agentCore: AgentCore
+
+  /** Agent core whose session id is stable so DB fixtures can reference it. */
+  function retryAgentCore(): AgentCore {
+    const core = createMockAgentCore()
+    vi.mocked(core.getSessionManager).mockReturnValue({
+      getOrCreateSession: () => ({ id: SESSION_ID }),
+    } as any)
+    return core
+  }
+
+  function seedDb(): Database {
+    const seeded = initDatabase(':memory:')
+    seeded.prepare('INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)')
+      .run(USER_ID, 'tester', 'x')
+    seeded.prepare(
+      "INSERT INTO telegram_users (telegram_id, telegram_username, telegram_display_name, status, user_id) VALUES (?, ?, ?, 'approved', ?)",
+    ).run('12345', 'johndoe', 'John Doe', USER_ID)
+    seeded.prepare("INSERT INTO sessions (id, user_id, source, type) VALUES (?, ?, 'telegram', 'interactive')")
+      .run(SESSION_ID, USER_ID)
+    return seeded
+  }
+
+  function errorRowId(): number {
+    const row = db.prepare(
+      "SELECT id FROM chat_messages WHERE session_id = ? AND role = 'system' ORDER BY id DESC LIMIT 1",
+    ).get(SESSION_ID) as { id: number } | undefined
+    return row!.id
+  }
+
+  function makeBot(): { bot: TelegramBot; api: any; handlers: MockBotInternals } {
+    const bot = new TelegramBot({ agentCore, db, config })
+    const underlying = bot.getBot() as unknown as MockBotInternals & { api: any }
+    return { bot, api: underlying.api, handlers: underlying }
+  }
+
+  async function sendUserMessage(handlers: MockBotInternals, text = 'Hello agent'): Promise<void> {
+    await handlers._handlers.get('message:text')!(createMockContext({ message: { text, message_id: 1 } }) as any)
+    await vi.advanceTimersByTimeAsync(2500)
+  }
+
+  function retryButton(api: any): { text: string; callback_data: string } | undefined {
+    const call = api.sendMessage.mock.calls.find(
+      (c: any[]) => c[2]?.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data?.startsWith('retry:'),
+    )
+    return call?.[2].reply_markup.inline_keyboard[0][0]
+  }
+
+  beforeEach(() => {
+    db = seedDb()
+    agentCore = retryAgentCore()
+    // Bots from earlier tests are never stopped, so their (process-global)
+    // retry notifiers would still answer for row ids the fresh in-memory
+    // database reuses.
+    clearTurnRetryNotifiers()
+    vi.clearAllMocks()
+    vi.useFakeTimers()
+    vi.mocked(loadConfig).mockImplementation((filename: string) => {
+      if (filename === 'settings.json') return { batchingDelayMs: 2500 }
+      return { ...config }
+    })
+  })
+
+  afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
+  it('delivers a terminal error with a Retry button bound to the persisted error row', async () => {
+    vi.mocked(agentCore.sendMessage).mockReturnValue(errorStream('invalid_api_key'))
+    const { api, handlers } = makeBot()
+
+    await sendUserMessage(handlers)
+
+    const button = retryButton(api)
+    expect(button).toBeDefined()
+    expect(button!.callback_data).toBe(`retry:${errorRowId()}`)
+    const errorText = api.sendMessage.mock.calls.find((c: any[]) => c[2]?.reply_markup)![1] as string
+    expect(errorText).toContain('invalid_api_key')
+  })
+
+  it('re-runs the failed turn on tap and delivers the answer to the Telegram chat', async () => {
+    vi.mocked(agentCore.sendMessage)
+      .mockReturnValueOnce(errorStream('invalid_api_key'))
+      .mockReturnValueOnce(textStream('Recovered answer'))
+    const { api, handlers } = makeBot()
+
+    await sendUserMessage(handlers)
+    const callbackData = retryButton(api)!.callback_data
+
+    const ctx = createMockContext({
+      callbackQuery: { data: callbackData, message: { message_id: 5 } },
+      answerCallbackQuery: vi.fn().mockResolvedValue(true),
+    })
+    await handlers._handlers.get('callback_query:data')!(ctx as any)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect((ctx as any).answerCallbackQuery).toHaveBeenCalledWith({ text: expect.stringContaining('Retrying') })
+    expect(agentCore.sendMessage).toHaveBeenCalledTimes(2)
+    expect(api.sendMessage).toHaveBeenCalledWith(CHAT_ID, 'Recovered answer', { parse_mode: 'HTML' })
+    // The retry continues the transcript — the user message is not re-sent.
+    const userRows = db.prepare("SELECT COUNT(*) AS count FROM chat_messages WHERE session_id = ? AND role = 'user'")
+      .get(SESSION_ID) as { count: number }
+    expect(userRows.count).toBe(1)
+  })
+
+  it('refuses a stale retry once the conversation moved on', async () => {
+    vi.mocked(agentCore.sendMessage).mockReturnValue(errorStream('invalid_api_key'))
+    const { api, handlers } = makeBot()
+
+    await sendUserMessage(handlers)
+    const callbackData = retryButton(api)!.callback_data
+
+    db.prepare("INSERT INTO chat_messages (session_id, user_id, role, content) VALUES (?, ?, 'user', ?)")
+      .run(SESSION_ID, USER_ID, 'never mind')
+
+    const ctx = createMockContext({
+      callbackQuery: { data: callbackData, message: { message_id: 5 } },
+      answerCallbackQuery: vi.fn().mockResolvedValue(true),
+    })
+    await handlers._handlers.get('callback_query:data')!(ctx as any)
+
+    expect((ctx as any).answerCallbackQuery).toHaveBeenCalledWith({
+      text: expect.stringContaining('no longer available'),
+      show_alert: true,
+    })
+    expect(agentCore.sendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a retry when the session has ended', async () => {
+    vi.mocked(agentCore.sendMessage).mockReturnValue(errorStream('invalid_api_key'))
+    const { api, handlers } = makeBot()
+
+    await sendUserMessage(handlers)
+    const callbackData = retryButton(api)!.callback_data
+    db.prepare("UPDATE sessions SET ended_at = datetime('now') WHERE id = ?").run(SESSION_ID)
+
+    const ctx = createMockContext({
+      callbackQuery: { data: callbackData, message: { message_id: 5 } },
+      answerCallbackQuery: vi.fn().mockResolvedValue(true),
+    })
+    await handlers._handlers.get('callback_query:data')!(ctx as any)
+
+    expect((ctx as any).answerCallbackQuery).toHaveBeenCalledWith({
+      text: expect.stringContaining('the session has ended'),
+      show_alert: true,
+    })
+    expect(agentCore.sendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops the keyboard when the retry was answered in another channel', async () => {
+    vi.mocked(agentCore.sendMessage).mockReturnValue(errorStream('invalid_api_key'))
+    const { api, handlers } = makeBot()
+
+    await sendUserMessage(handlers)
+    const messageId = errorRowId()
+
+    await notifyTurnRetryResolved({ errorMessageId: messageId, ok: true, resolution: '🔄 Retrying…' })
+
+    const [chatId, editedMessageId, text, opts] = api.editMessageText.mock.calls[0]
+    expect(chatId).toBe(String(CHAT_ID))
+    expect(editedMessageId).toBe(1)
+    expect(text).toContain('Retrying')
+    expect(opts.reply_markup).toBeUndefined()
+
+    // The prompt is consumed — a later tap can no longer edit it again.
+    await notifyTurnRetryResolved({ errorMessageId: messageId, ok: false, resolution: 'nope' })
+    expect(api.editMessageText).toHaveBeenCalledTimes(1)
+  })
+
+  // A turn that dies before it reaches the agent emits no `turn_start`. The
+  // chat subscription must still close on `turn_end`, or it would stay attached
+  // and deliver the user's next answer a second time.
+  it('does not leak its subscription when the retried turn never reaches the agent', async () => {
+    let agent: AgentCore | null = agentCore
+    const runner = new TurnRunner({ db, getAgent: () => agent })
+    const bot = new TelegramBot({ agentCore, db, config, turnRunner: runner })
+    const handlers = bot.getBot() as unknown as MockBotInternals & { api: any }
+    const api = handlers.api
+
+    vi.mocked(agentCore.sendMessage).mockReturnValue(errorStream('invalid_api_key'))
+    await sendUserMessage(handlers)
+    const callbackData = retryButton(api)!.callback_data
+
+    agent = null
+    const ctx = createMockContext({
+      callbackQuery: { data: callbackData, message: { message_id: 5 } },
+      answerCallbackQuery: vi.fn().mockResolvedValue(true),
+    })
+    await handlers._handlers.get('callback_query:data')!(ctx as any)
+    await vi.advanceTimersByTimeAsync(0)
+
+    agent = agentCore
+    vi.mocked(agentCore.sendMessage).mockReturnValue(textStream('Fresh answer'))
+    api.sendMessage.mockClear()
+    await sendUserMessage(handlers, 'and now?')
+
+    const answers = api.sendMessage.mock.calls.filter((c: any[]) => c[1] === 'Fresh answer')
+    expect(answers).toHaveLength(1)
+  })
+
+  it('ignores an unknown retry callback payload', async () => {
+    const { handlers } = makeBot()
+
+    const ctx = createMockContext({
+      callbackQuery: { data: 'retry:not-a-number', message: { message_id: 5 } },
+      answerCallbackQuery: vi.fn().mockResolvedValue(true),
+    })
+    await handlers._handlers.get('callback_query:data')!(ctx as any)
+
+    expect((ctx as any).answerCallbackQuery).toHaveBeenCalledWith({ text: 'Unknown action.', show_alert: true })
+  })
+
+  describe('stall warnings', () => {
+    function useStallWarnings(enabled: boolean): void {
+      vi.mocked(loadConfig).mockImplementation((filename: string) => {
+        if (filename === 'settings.json') return { batchingDelayMs: 2500 }
+        return { ...config, sendStallWarnings: enabled }
+      })
+    }
+
+    it('sends nothing at the warn threshold while the setting is off (default)', async () => {
+      useStallWarnings(false)
+      vi.mocked(agentCore.sendMessage).mockReturnValue(stallThenAnswerStream())
+      const { api, handlers } = makeBot()
+
+      await sendUserMessage(handlers)
+
+      const texts = api.sendMessage.mock.calls.map((c: any[]) => c[1] as string)
+      expect(texts.some((t: string) => t.includes('has not responded'))).toBe(false)
+      expect(texts).toContain('Late answer')
+    })
+
+    it('delivers the stall notice once the setting is enabled', async () => {
+      useStallWarnings(true)
+      vi.mocked(agentCore.sendMessage).mockReturnValue(stallThenAnswerStream())
+      const { api, handlers } = makeBot()
+
+      await sendUserMessage(handlers)
+
+      const texts = api.sendMessage.mock.calls.map((c: any[]) => c[1] as string)
+      expect(texts.some((t: string) => t.includes('has not responded'))).toBe(true)
+      expect(texts).toContain('Late answer')
+    })
+
+    it('delivers the terminal error and its Retry button even with stall warnings off', async () => {
+      useStallWarnings(false)
+      vi.mocked(agentCore.sendMessage).mockReturnValue(stallThenErrorStream())
+      const { api, handlers } = makeBot()
+
+      await sendUserMessage(handlers)
+
+      const texts = api.sendMessage.mock.calls.map((c: any[]) => c[1] as string)
+      expect(texts.some((t: string) => t.includes('has not responded'))).toBe(false)
+      expect(retryButton(api)).toBeDefined()
+    })
   })
 })

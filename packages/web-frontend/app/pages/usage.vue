@@ -102,6 +102,36 @@
             </Card>
           </section>
 
+          <!-- ─── Provider stalls ─── -->
+          <Card class="mb-4">
+            <CardContent class="p-5">
+              <div class="mb-4">
+                <h2 class="text-base font-semibold text-foreground">{{ $t('usage.stalls.title') }}</h2>
+                <p class="mt-1 text-sm text-muted-foreground">{{ $t('usage.stalls.description') }}</p>
+              </div>
+
+              <div
+                v-if="stalls.total === 0"
+                class="flex items-center gap-2 rounded-lg border border-dashed border-border/70 px-4 py-6 text-sm text-muted-foreground"
+              >
+                <AppIcon name="check" class="h-4 w-4 opacity-60" />
+                {{ $t('usage.stalls.empty') }}
+              </div>
+
+              <div v-else class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div v-for="card in stallCards" :key="card.label" class="rounded-lg border border-border/70 p-4">
+                  <span class="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                    {{ card.label }}
+                  </span>
+                  <strong class="mt-2 block text-xl font-bold tracking-tight tabular-nums text-foreground">
+                    {{ card.value }}
+                  </strong>
+                  <span class="mt-1 block text-xs text-muted-foreground">{{ card.meta }}</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           <!-- No results for current filters -->
           <Card v-if="!hasFilteredResults" class="mb-4">
             <CardContent class="flex flex-col items-center gap-3 py-10 text-center">
@@ -351,13 +381,15 @@
                         <TableHead class="text-right">{{ $t('usage.table.columns.requests') }}</TableHead>
                         <TableHead class="text-right">{{ $t('usage.table.columns.promptTokens') }}</TableHead>
                         <TableHead class="text-right">{{ $t('usage.table.columns.completionTokens') }}</TableHead>
-                        <TableHead class="text-right">{{ $t('usage.table.columns.totalTokens') }}</TableHead>
+                        <TableHead class="text-right">{{ $t('usage.table.columns.cacheRead') }}</TableHead>
+                        <TableHead class="text-right">{{ $t('usage.table.columns.cacheWrite') }}</TableHead>
+                        <TableHead class="text-right">{{ $t('usage.table.columns.cacheHitRate') }}</TableHead>
                         <TableHead class="text-right">{{ $t('usage.table.columns.cost') }}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       <TableRow v-if="breakdown.rows.length === 0">
-                        <TableCell colspan="7" class="py-8 text-center text-muted-foreground">
+                        <TableCell colspan="9" class="py-8 text-center text-muted-foreground">
                           {{ $t('usage.table.empty') }}
                         </TableCell>
                       </TableRow>
@@ -371,7 +403,9 @@
                           <TableCell class="text-right tabular-nums">{{ formatNumber(row.requests) }}</TableCell>
                           <TableCell class="text-right tabular-nums">{{ formatNumber(row.promptTokens) }}</TableCell>
                           <TableCell class="text-right tabular-nums">{{ formatNumber(row.completionTokens) }}</TableCell>
-                          <TableCell class="text-right font-semibold tabular-nums">{{ formatNumber(row.totalTokens) }}</TableCell>
+                          <TableCell class="text-right tabular-nums">{{ formatNumber(row.cacheRead) }}</TableCell>
+                          <TableCell class="text-right tabular-nums">{{ formatNumber(row.cacheWrite) }}</TableCell>
+                          <TableCell class="text-right tabular-nums">{{ cacheHitLabel(row) }}</TableCell>
                           <TableCell class="text-right tabular-nums">
                             {{ formatCurrency(row.estimatedCost) }}
                             <span v-if="breakdown.rows.length > 1" class="ml-1 text-[11px] text-muted-foreground">
@@ -395,7 +429,13 @@
                             {{ formatNumber(totals.completionTokens) }}
                           </TableCell>
                           <TableCell class="text-right font-semibold tabular-nums">
-                            {{ formatNumber(totals.totalTokens) }}
+                            {{ formatNumber(totals.cacheRead) }}
+                          </TableCell>
+                          <TableCell class="text-right font-semibold tabular-nums">
+                            {{ formatNumber(totals.cacheWrite) }}
+                          </TableCell>
+                          <TableCell class="text-right font-semibold tabular-nums">
+                            {{ cacheHitLabel(totals) }}
                           </TableCell>
                           <TableCell class="text-right font-semibold tabular-nums">
                             {{ formatCurrency(totals.estimatedCost) }}
@@ -416,7 +456,7 @@
 
 <script setup lang="ts">
 const { t, locale } = useI18n()
-const { formatNumber, formatCurrency } = useFormat()
+const { formatNumber, formatCurrency, formatDuration } = useFormat()
 const { user } = useAuth()
 const isAdmin = computed(() => user.value?.role === 'admin')
 
@@ -429,6 +469,7 @@ const {
   dailyTaskAgent,
   dailyHeartbeat,
   breakdown,
+  stalls,
   availableProviders,
   availableModels,
   hasAnyUsage,
@@ -473,6 +514,43 @@ const kpiCards = computed(() => [
       : '—',
   },
 ])
+
+// ── Provider stall cards ────────────────────────────────────
+const stallCards = computed(() => {
+  const stats = stalls.value
+  const share = (count: number) => stats.total > 0
+    ? t('usage.stalls.share', { percent: Math.round((count / stats.total) * 100) })
+    : '—'
+
+  return [
+    {
+      label: t('usage.stalls.total'),
+      value: formatNumber(stats.total),
+      meta: stats.unresolved > 0
+        ? t('usage.stalls.unresolved', { count: formatNumber(stats.unresolved) })
+        : t('usage.stalls.allResolved'),
+    },
+    {
+      label: t('usage.stalls.avgDuration'),
+      value: formatDuration(stats.averageDurationMs),
+      meta: t('usage.stalls.longest', { duration: formatDuration(stats.maxDurationMs) }),
+    },
+    {
+      label: t('usage.stalls.recovered'),
+      value: formatNumber(stats.recovered),
+      meta: stats.recovered > 0
+        ? `${share(stats.recovered)} · ${t('usage.stalls.avgShort', { duration: formatDuration(stats.averageRecoveredDurationMs) })}`
+        : share(stats.recovered),
+    },
+    {
+      label: t('usage.stalls.aborted'),
+      value: formatNumber(stats.aborted),
+      meta: stats.aborted > 0
+        ? `${share(stats.aborted)} · ${t('usage.stalls.avgShort', { duration: formatDuration(stats.averageAbortedDurationMs) })}`
+        : share(stats.aborted),
+    },
+  ]
+})
 
 // ── Chart data ──────────────────────────────────────────────
 interface ChartPoint {
@@ -654,6 +732,13 @@ function sourceChartTooltip(point: SourceChartPoint): string {
 }
 
 // ── Table helpers ───────────────────────────────────────────
+function cacheHitLabel(row: { promptTokens: number; cacheRead: number; cacheWrite: number }): string {
+  if (row.cacheRead + row.cacheWrite === 0) return '—'
+  const denominator = row.promptTokens + row.cacheRead + row.cacheWrite
+  if (denominator <= 0) return '—'
+  return `${((row.cacheRead / denominator) * 100).toFixed(1)}%`
+}
+
 function costShareLabel(cost: number): string {
   const total = totals.value.estimatedCost
   if (total === 0) return ''

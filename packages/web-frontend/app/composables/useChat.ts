@@ -1,3 +1,5 @@
+import { ApiError } from './useApi'
+
 export interface ToolCallData {
   toolName: string
   toolCallId: string
@@ -45,6 +47,54 @@ export interface ChatActionMessage {
   actions: ChatActionButton[]
   /** Set once decided (in any channel) — buttons are replaced by this text. */
   resolution?: string
+}
+
+export type ChatStallOutcome = 'recovered' | 'aborted'
+
+/**
+ * Provider-stall details attached to a stall notice. Mirrors the backend
+ * `StallInfo`; `messageId` is the persisted `chat_messages` row id, which is
+ * what lets a `stall_resolved` update the already-rendered bubble in place.
+ */
+export interface ChatStallInfo {
+  messageId?: number
+  startedAt: string
+  resolvedAt?: string
+  durationMs: number
+  outcome?: ChatStallOutcome
+}
+
+/**
+ * Auto-retry details attached to a `retry_scheduled` status. Mirrors the
+ * backend `RetryInfo`. Live-only: the failed attempt is discarded server-side,
+ * so nothing about it survives a reload.
+ */
+export interface ChatRetryInfo {
+  attempt: number
+  maxRetries: number
+  delayMs: number
+  error: string
+}
+
+export type ChatTurnErrorCause = 'non_retryable' | 'retry_exhausted' | 'agent_unavailable'
+
+/**
+ * Terminal-error details of a failed turn. Mirrors the backend `TurnErrorInfo`;
+ * the error is a persisted chat row, so `messageId` matches the live bubble
+ * with the one rebuilt from history after a reload.
+ */
+export interface ChatTurnErrorInfo {
+  messageId?: number
+  /**
+   * Id of the Retry chat action hanging off this error. Sent live and stored
+   * on the persisted row, so the button is rebuilt after a page reload.
+   */
+  retryActionId?: string
+  cause: ChatTurnErrorCause
+  error: string
+  attempts: number
+  retryable: boolean
+  occurredAt: string
 }
 
 export interface ChatAttachment {
@@ -105,6 +155,18 @@ export interface ChatMessage {
    */
   isThinking?: boolean
   /**
+   * Provider-stall details for a `role: 'system'` stall notice. Present both
+   * live (from `stall_warning`) and after a reload (from the persisted
+   * `provider_stall` row), so the bubble survives a refresh.
+   */
+  stallInfo?: ChatStallInfo
+  /**
+   * Terminal provider error for a `role: 'system'` error notice. Present both
+   * live (from the `error` chunk) and after a reload (from the persisted
+   * `turn_error` row), so the failure never silently disappears.
+   */
+  errorInfo?: ChatTurnErrorInfo
+  /**
    * Excerpt of the message the user replied to (e.g. Telegram reply-to), truncated to 500 chars.
    * When present, the UI renders a WhatsApp/Telegram-style quote bubble above the
    * message body with `[Replying to: "…"]`. Only set for `role: 'user'`.
@@ -135,8 +197,14 @@ export interface ChatMessage {
 }
 
 interface WsMessage {
-  type: 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'reminder' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved'
+  type: 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'reminder' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled'
   text?: string
+  /** Provider-stall details (for stall_warning / stall_resolved) */
+  stall?: ChatStallInfo
+  /** Auto-retry details (for retry_scheduled) */
+  retry?: ChatRetryInfo
+  /** Terminal-error details of a persisted error row (for type='error') */
+  errorInfo?: ChatTurnErrorInfo
   /** Interactive message payload (for chat_action / chat_action_resolved) */
   chatAction?: ChatActionMessage
   /** Picker payload for interactive slash-command replies (e.g. /model). */
@@ -240,6 +308,154 @@ function closeStreamingThinking(list: ChatMessage[]): ChatMessage[] {
     return updated
   }
   return list
+}
+
+/**
+ * Drop the trailing assistant/tool run so a replayed turn can be rebuilt from
+ * scratch. Everything the running turn produced sits after the last user (or
+ * system) message, so this removes exactly the partial turn — whether it came
+ * from a mid-stream reconnect or from history rows the backend already wrote.
+ */
+export function stripTrailingTurn(list: ChatMessage[]): ChatMessage[] {
+  let end = list.length
+  while (end > 0) {
+    const message = list[end - 1]!
+    // Stall and error notices are emitted as part of the turn, so they belong
+    // to the turn being rebuilt — leaving them in place would strand them and
+    // block stripping of the assistant/tool run that came before them. The
+    // replay re-emits both, so nothing is lost.
+    const belongsToTurn = message.role === 'assistant'
+      || message.role === 'tool'
+      || (message.role === 'system' && (!!message.stallInfo || !!message.errorInfo))
+    if (!belongsToTurn) break
+    end--
+  }
+  return end === list.length ? list : list.slice(0, end)
+}
+
+/**
+ * Drop the assistant/tool output of an attempt the backend discarded before
+ * restarting the turn. Unlike {@link stripTrailingTurn} this keeps stall
+ * notices: those are persisted rows and remain part of the history.
+ */
+export function stripFailedAttempt(list: ChatMessage[]): ChatMessage[] {
+  const result = [...list]
+  for (let i = result.length - 1; i >= 0; i--) {
+    const message = result[i]!
+    if (message.role === 'assistant' || message.role === 'tool') {
+      result.splice(i, 1)
+      continue
+    }
+    if (message.role === 'system' && message.stallInfo) continue
+    break
+  }
+  return result
+}
+
+/**
+ * Insert or update the stall notice for `stall`. Matching on the persisted row
+ * id keeps a single bubble across live warn → resolve, mid-turn replay and a
+ * history reload that already rendered the row.
+ */
+export function upsertStallMessage(list: ChatMessage[], stall: ChatStallInfo, content: string): ChatMessage[] {
+  const index = stall.messageId === undefined
+    ? -1
+    : list.findIndex(m => m.stallInfo?.messageId === stall.messageId)
+
+  if (index >= 0) {
+    const updated = [...list]
+    updated[index] = { ...updated[index]!, content, stallInfo: stall }
+    return updated
+  }
+
+  return insertBeforeTrailingStreams(list, {
+    id: stall.messageId,
+    role: 'system',
+    content,
+    timestamp: new Date().toISOString(),
+    stallInfo: stall,
+  })
+}
+
+/**
+ * Insert or update the terminal-error notice for `info`. Matching on the
+ * persisted row id keeps a single bubble when a turn that already failed is
+ * replayed on top of a history load.
+ */
+export function upsertErrorMessage(
+  list: ChatMessage[],
+  info: ChatTurnErrorInfo,
+  content: string,
+): ChatMessage[] {
+  const index = info.messageId === undefined
+    ? -1
+    : list.findIndex(m => m.errorInfo?.messageId === info.messageId)
+
+  if (index >= 0) {
+    const updated = [...list]
+    const existing = updated[index]!
+    updated[index] = {
+      ...existing,
+      content,
+      errorInfo: info,
+      // Keep an already-resolved retry resolved: a replay must not hand the
+      // user a second Retry button for a click the server already answered.
+      chatAction: existing.chatAction ?? buildTurnRetryAction(info, content),
+    }
+    return updated
+  }
+
+  return [...list, {
+    id: info.messageId,
+    role: 'system',
+    content,
+    timestamp: new Date().toISOString(),
+    errorInfo: info,
+    chatAction: buildTurnRetryAction(info, content),
+  }]
+}
+
+/**
+ * The Retry button of a terminal error. Resolved server-side against the
+ * persisted error row, which is what makes it work after a reload; the label
+ * is localized where the bubble is rendered.
+ */
+export function buildTurnRetryAction(
+  info: ChatTurnErrorInfo,
+  content: string,
+): ChatActionMessage | undefined {
+  if (!info.retryActionId || info.messageId === undefined) return undefined
+  return {
+    messageId: info.retryActionId,
+    kind: 'turn_retry',
+    refId: String(info.messageId),
+    text: content,
+    actions: [{ actionId: 'retry', label: 'Retry', style: 'primary' }],
+  }
+}
+
+/**
+ * Rebuild the terminal-error details of a persisted `turn_error` row on a
+ * history load, so the error bubble looks exactly like it did live.
+ */
+export function turnErrorFromHistoryMetadata(metadata: unknown, messageId: number): ChatTurnErrorInfo | null {
+  if (!metadata || typeof metadata !== 'object') return null
+  const meta = metadata as Record<string, unknown>
+  if (meta.kind !== 'turn_error' || typeof meta.error !== 'string') return null
+
+  const cause = meta.cause === 'retry_exhausted' || meta.cause === 'agent_unavailable'
+    ? meta.cause
+    : 'non_retryable'
+
+  return {
+    messageId,
+    retryActionId: typeof meta.retryActionId === 'string' ? meta.retryActionId : undefined,
+    cause,
+    error: meta.error,
+    attempts: typeof meta.attempts === 'number' ? meta.attempts : 0,
+    retryable: meta.retryable === true,
+    occurredAt: typeof meta.occurredAt === 'string' ? meta.occurredAt : '',
+  }
 }
 
 function insertBeforeTrailingStreams(list: ChatMessage[], message: ChatMessage): ChatMessage[] {
@@ -620,12 +836,23 @@ export function useChat() {
         if (lastOnError && lastOnError.streaming) {
           updatedOnError[updatedOnError.length - 1] = { ...lastOnError, streaming: false }
         }
-        updatedOnError.push({
-          role: 'system',
-          content: `Error: ${msg.error}`,
-          timestamp: new Date().toISOString(),
-        })
-        messages.value = updatedOnError
+        if (msg.errorInfo) {
+          // A terminal turn failure: the backend persisted it as a chat row and
+          // sent the very text it stored, so the bubble is identical after a
+          // reload. Connection-level errors (no `errorInfo`) stay ephemeral.
+          messages.value = upsertErrorMessage(
+            updatedOnError,
+            msg.errorInfo,
+            msg.text ?? `Error: ${msg.error}`,
+          )
+        } else {
+          updatedOnError.push({
+            role: 'system',
+            content: `Error: ${msg.error}`,
+            timestamp: new Date().toISOString(),
+          })
+          messages.value = updatedOnError
+        }
         isStreaming.value = false
         break
       }
@@ -662,6 +889,46 @@ export function useChat() {
         // A decision arrived (this tab, another tab, the web UI or Telegram) —
         // swap the buttons for the result.
         if (msg.chatAction) applyChatActionResolution(msg.chatAction.messageId, msg.chatAction.resolution)
+        break
+
+      case 'stall_warning':
+      case 'stall_resolved':
+        // The provider went silent (or came back). The notice is a persisted
+        // chat row, so this only mirrors it into the live view; the same row
+        // is rebuilt from history after a reload.
+        // The backend sends the same text it persisted on the row, so live
+        // rendering and a history reload never disagree.
+        if (msg.stall) messages.value = upsertStallMessage(messages.value, msg.stall, msg.text ?? '')
+        break
+
+      case 'retry_scheduled':
+        // The provider failed with a transient error; the backend discarded the
+        // failed attempt and restarts the turn after a backoff. Drop the partial
+        // answer here too so the retried turn does not stack on top of garbage.
+        if (msg.retry) {
+          const retry = msg.retry
+          messages.value = [...stripFailedAttempt(messages.value), {
+            role: 'system',
+            content: msg.text ?? `Retrying (${retry.attempt}/${retry.maxRetries})…`,
+            timestamp: new Date().toISOString(),
+          }]
+          isStreaming.value = true
+        }
+        break
+
+      case 'turn_replay_start':
+        // The backend is about to replay a turn that is still running (or just
+        // finished) server-side. Discard whatever partial turn we currently
+        // show — from a mid-stream reconnect or from history — so the replayed
+        // chunks rebuild it exactly once.
+        if (msg.sessionId) sessionId.value = msg.sessionId
+        messages.value = stripTrailingTurn(messages.value)
+        isStreaming.value = true
+        break
+
+      case 'turn_replay_end':
+        // Buffer drained; live chunks follow (or the turn already ended, in
+        // which case the replayed `done` already cleared the indicator).
         break
 
       case 'pong':
@@ -826,10 +1093,17 @@ export function useChat() {
       )
       applyChatActionResolution(messageId, response.resolution)
     } catch (err) {
-      // Keep the buttons clickable: a transient failure (offline, 500) left the
-      // decision unmade, and a lost race is announced by the server's
-      // `chat_action_resolved` broadcast anyway.
-      console.error('[chat] action failed:', err)
+      // Only a client-side rejection is final (stale button, lost race, a button
+      // minted before a restart): the server answered and its text replaces the
+      // buttons — for a lost race the broadcast carries the same text.
+      // Everything else (offline, expired session, 5xx) left the decision
+      // unmade, so the buttons stay clickable for another attempt.
+      const status = err instanceof ApiError ? err.status : null
+      if (status === null || status === 401 || status >= 500) {
+        console.error('[chat] action failed:', err)
+        return
+      }
+      applyChatActionResolution(messageId, (err as Error).message)
     }
   }
 

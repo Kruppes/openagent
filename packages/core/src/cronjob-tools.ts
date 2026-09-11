@@ -4,6 +4,7 @@ import type { ScheduledTaskActionType } from './scheduled-task-store.js'
 import type { TaskRuntimeScheduleBoundary } from './task-runtime.js'
 import { validateCronExpression, cronToHumanReadable, parseCronExpression, getNextRunTime } from './cron-parser.js'
 import { resolveProviderModelInput } from './provider-config.js'
+import { normalizeAttachedSkills } from './attached-skills.js'
 
 /**
  * Resolve the (provider, model) pair a user may pass to a cronjob tool into
@@ -136,15 +137,7 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
         const providerValue = providerResolved.value
         const providerLabel = providerResolved.label
 
-        // Normalize attached skills: keep only non-empty strings, drop duplicates, trim
-        const normalizedAttachedSkills = Array.isArray(attached_skills)
-          ? Array.from(new Set(
-              attached_skills
-                .filter((v): v is string => typeof v === 'string')
-                .map(v => v.trim())
-                .filter(v => v.length > 0),
-            ))
-          : undefined
+        const normalizedAttachedSkills = normalizeAttachedSkills(attached_skills)
 
         // Resolve agentId: explicit param > current persona > 'main'
         const resolvedAgentId = agent_id ?? options.getCurrentAgentId?.() ?? 'main'
@@ -158,6 +151,7 @@ export function createCronjobTool(options: CronjobToolsOptions): AgentTool {
           provider: providerValue,
           enabled: true,
           attachedSkills: normalizedAttachedSkills && normalizedAttachedSkills.length > 0 ? normalizedAttachedSkills : undefined,
+          // Fork multi-persona: attribute the cronjob's spawned task to the persona.
           agentId: resolvedAgentId,
         })
 
@@ -318,21 +312,10 @@ export function editCronjobTool(options: CronjobToolsOptions): AgentTool {
           providerUpdate = providerResolved.value
         }
 
-        // Normalize attached skills if provided: [] explicitly clears, undefined leaves unchanged.
-        let attachedSkillsUpdate: string[] | null | undefined
-        if (attached_skills === undefined) {
-          attachedSkillsUpdate = undefined
-        } else if (Array.isArray(attached_skills) && attached_skills.length === 0) {
-          attachedSkillsUpdate = null
-        } else {
-          attachedSkillsUpdate = Array.from(new Set(
-            (attached_skills as unknown[])
-              .filter((v): v is string => typeof v === 'string')
-              .map(v => v.trim())
-              .filter(v => v.length > 0),
-          ))
-          if (attachedSkillsUpdate.length === 0) attachedSkillsUpdate = null
-        }
+        // `undefined` leaves the list unchanged; `[]` explicitly clears it.
+        const attachedSkillsUpdate = attached_skills === undefined
+          ? undefined
+          : normalizeAttachedSkills(attached_skills)
 
         // Update in DB
         const updated = options.taskRuntime.update(id, {

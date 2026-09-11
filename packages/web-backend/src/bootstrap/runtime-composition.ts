@@ -46,6 +46,7 @@ import {
   registerEmailApprovalNotifier,
   removeCronjobTool,
   TaskEventBus,
+  TurnRunner,
 } from '@axiom/core'
 import type {
   BuiltinToolsConfig,
@@ -58,13 +59,15 @@ import type {
 } from '@axiom/core'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { completeSimple } from '@axiom/core'
-import { getCurrentTaskAgentId, resolveTaskDefaultProvider } from '@axiom/core'
+import { getCurrentTaskAgentId, resolveTaskDefaultProvider as resolveTaskDefaultProviderChain } from '@axiom/core'
 import { randomUUID } from 'node:crypto'
 import { createTelegramBot, createTelegramBotPool } from '@axiom/telegram'
 import type { TelegramBot, TelegramBotPool, TelegramChatEvent } from '@axiom/telegram'
 import { ChatEventBus } from '../chat-event-bus.js'
 import { ChatActionRegistry } from '../chat-actions.js'
 import { registerEmailApprovalChatChannel } from '../email-approval-chat.js'
+import { registerTurnRetryChatChannel } from '../turn-retry-chat.js'
+import type { TurnRetryChatChannel } from '../turn-retry-chat.js'
 import { triggerFactExtractionForSessionEnd } from '../fact-extraction-session-end.js'
 import { HealthMonitorService } from '../health-monitor.js'
 import { MemoryConsolidationScheduler } from '../memory-consolidation-scheduler.js'
@@ -138,6 +141,8 @@ export interface RuntimeComposition {
   taskEventBus: TaskEventBus
   chatEventBus: ChatEventBus
   chatActions: ChatActionRegistry
+  /** Shared turn lifecycle owner; every chat channel dispatches into it. */
+  turnRunner: TurnRunner
   getAgentCore: () => AgentCore | null
   getTaskRuntime: () => TaskRuntimeBoundary
   /**
@@ -150,7 +155,7 @@ export interface RuntimeComposition {
    * Current task default provider — same source of truth as the task
    * runner and cronjob scheduler.
    */
-  getTaskDefaultProvider: () => ProviderConfig
+  getTaskDefaultProvider: () => ProviderConfig | null
   /**
    * Names of the tools the task runner gives to background task agents.
    * Exposed so the cronjob UI can render the current tool list dynamically
@@ -329,6 +334,47 @@ function parseNumericUserId(userId: string): number | null {
   return Number.isSafeInteger(numericUserId) ? numericUserId : null
 }
 
+/**
+ * Resolve the provider (and its model, pinned as the sole `enabledModels`
+ * entry) that background tasks run on when no explicit provider/model is given
+ * at task creation.
+ *
+ * An explicitly configured task provider is only honored when it can actually
+ * run a model. Providers may be created without selecting a model upfront, so a
+ * configured provider with no enabled models would start tasks with an empty
+ * model; in that case we fall back to the active provider/model selection.
+ */
+export function resolveTaskDefaultProvider(deps: {
+  taskDefaultProvider: string
+  resolveProvider: (providerId: string) => ProviderConfig | null
+  getActiveProvider: () => ProviderConfig | null
+  getActiveModelId: () => string | null
+  onFallback?: (reason: string) => void
+}): ProviderConfig | null {
+  const { taskDefaultProvider, resolveProvider, getActiveProvider, getActiveModelId, onFallback } = deps
+
+  if (taskDefaultProvider) {
+    const { providerId, modelId } = parseProviderModelId(taskDefaultProvider)
+    const resolved = providerId ? resolveProvider(providerId) : null
+    if (resolved && modelId) return { ...resolved, enabledModels: [modelId] }
+    if (resolved && getProviderDefaultModel(resolved)) return resolved
+
+    onFallback?.(
+      resolved
+        ? `provider "${resolved.name}" has no enabled models`
+        : `provider "${providerId || taskDefaultProvider}" could not be resolved`,
+    )
+  }
+
+  // "Active provider (default)": follow the live chat selection for both
+  // provider and model so tasks pick the user's active model instead of the
+  // provider's first enabled model.
+  const active = getActiveProvider()
+  if (!active) return null
+  const activeModelId = getActiveModelId()
+  return activeModelId ? { ...active, enabledModels: [activeModelId] } : active
+}
+
 export async function createRuntimeComposition(options: RuntimeCompositionOptions = {}): Promise<RuntimeComposition> {
   const logger = options.logger ?? console
 
@@ -402,26 +448,33 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
    * System default provider (chain tiers 3+4): the global tasks.defaultProvider
    * setting, else the live active chat provider/model. This is the weakest tier
    * of the task model inheritance chain.
+   *
+   * Merge (upstream 0.27.0): delegate to the module-level
+   * `resolveTaskDefaultProvider` helper so we inherit its fallback-warn logging
+   * (task-provider-fallback fix) and null-safe active-provider handling. The
+   * fork contract here is non-null (the persona chain in core requires a
+   * `getSystemDefault: () => ProviderConfig`), so if even the active provider is
+   * missing we fall back to `getActiveProvider()!` to preserve the original
+   * behaviour (task creation then fails downstream on an empty model, as before).
    */
   function getTaskSystemDefaultProvider(): ProviderConfig {
-    const currentTaskSettings = getCurrentTaskSettings()
-    if (currentTaskSettings.defaultProvider) {
-      const resolved = resolveProviderModelString(currentTaskSettings.defaultProvider)
-      if (resolved) return resolved
-    }
-
-    // "Active provider (default)": follow the live chat selection for BOTH
-    // provider and model. Downstream task creation derives the model via
-    // getProviderDefaultModel() (= enabledModels[0]), so we narrow the cloned
-    // provider to the active model. Without this, tasks would pick the
-    // provider's first enabled model instead of the user's active model — and
-    // if enabledModels is empty they'd run with no model at all and fail.
+    const taskDefaultProvider = getCurrentTaskSettings().defaultProvider
+    const resolved = resolveTaskDefaultProvider({
+      taskDefaultProvider: taskDefaultProvider ?? '',
+      resolveProvider,
+      getActiveProvider,
+      getActiveModelId,
+      onFallback: (reason) => {
+        logger.warn(
+          `[axiom] Task default provider "${taskDefaultProvider}" is not usable (${reason}); falling back to the active provider`,
+        )
+      },
+    })
+    if (resolved) return resolved
+    // Preserve the fork's non-null contract for the persona chain's system tier.
     const active = getActiveProvider()!
     const activeModelId = getActiveModelId()
-    if (activeModelId) {
-      return { ...active, enabledModels: [activeModelId] }
-    }
-    return active
+    return activeModelId ? { ...active, enabledModels: [activeModelId] } : active
   }
 
   /**
@@ -434,7 +487,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
    */
   function getTaskDefaultProvider(agentId?: string | null): ProviderConfig {
     const personaSettings = loadMultiPersonaSettings()
-    return resolveTaskDefaultProvider({
+    return resolveTaskDefaultProviderChain({
       // Priority: explicit (create_task passes its attribution target) >
       // ALS task context (deterministic data from the task row — RC principle) >
       // interactive-turn inference. ALS MUST come before getCurrentToolAgentId:
@@ -493,6 +546,19 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     }
     return telegramBot
   }
+
+  // One runner for the whole process: web sockets and Telegram attach to the
+  // same turns, so a turn started in one channel streams into the other and a
+  // manual retry cannot race a second, channel-local runner.
+  let retryChatChannel: TurnRetryChatChannel | null = null
+  const turnRunner = new TurnRunner({
+    db,
+    getAgent: () => agentCore,
+    onTurnStart: () => runtimeMetrics.startRequest(),
+    onTurnEnd: () => runtimeMetrics.endRequest(),
+    onTurnFailed: failure => retryChatChannel?.attachRetryAction(failure),
+  })
+  retryChatChannel = registerTurnRetryChatChannel({ chatActions, db, runner: turnRunner })
 
   // Pending task injections keyed by a per-injection UUID. The key is
   // minted here, passed into AgentCore.injectTaskResult as the
@@ -780,6 +846,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
 
   // Background task tools live in a mutable array that is repopulated in place
   // by rebuildBackgroundTaskTools (see there).
+  const quotaMonitorService = new QuotaMonitorService()
+
   const backgroundSttEnabled = (() => { try { return loadSttSettings().enabled } catch { return false } })()
   // createBaseAgentTools builds the shared tool set (yolo, web, chat-history,
   // search-memories, agent-skills, transcribe-audio). Both the interactive
@@ -789,6 +857,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     db,
     builtinToolsConfig: () => loadRuntimeSettings().builtinToolsConfig,
     sttEnabled: backgroundSttEnabled,
+    quotaService: quotaMonitorService,
     // Background tasks have no interactive session; search_memories will fall
     // back to the lowest-id user when getCurrentUserId is undefined.
   })
@@ -997,6 +1066,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         db,
         builtinToolsConfig: () => loadRuntimeSettings().builtinToolsConfig,
         sttEnabled: backgroundSttEnabled,
+        quotaService: quotaMonitorService,
       }),
       createTaskTool(backgroundTaskToolsOptions),
       createResumeTaskTool(backgroundTaskToolsOptions),
@@ -1293,7 +1363,6 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   const healthMonitorService = new HealthMonitorService({ db, providerManager: null })
   healthMonitorService.start()
 
-  const quotaMonitorService = new QuotaMonitorService()
   quotaMonitorService.start()
 
   const consolidationScheduler = new MemoryConsolidationScheduler({
@@ -1314,6 +1383,9 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
   const uploadCleanupService = new UploadCleanupService(db)
   uploadCleanupService.start()
 
+  // Only the events the turn runner does not already stream to every attached
+  // channel; the assistant side of a Telegram turn reaches web clients through
+  // their own runner subscription.
   const onTelegramChatEvent = (event: TelegramChatEvent) => {
     if (event.userId == null) return
     chatEventBus.broadcast({
@@ -1322,12 +1394,6 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       source: 'telegram',
       sessionId: event.sessionId,
       text: event.text,
-      thinking: event.thinking,
-      toolName: event.toolName,
-      toolCallId: event.toolCallId,
-      toolArgs: event.toolArgs,
-      toolResult: event.toolResult,
-      toolIsError: event.toolIsError,
       senderName: event.senderName,
       attachment: event.attachment,
       replyContext: event.replyContext,
@@ -1570,6 +1636,14 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         onTaskReply: handleTelegramTaskReply,
         onTaskAction: handleTelegramTaskAction,
         draftTaskPlan,
+        // NOTE: deliberately NOT sharing the process-wide `turnRunner` here.
+        // Pool bots serve DIFFERENT personas but a linked user resolves to the
+        // same numeric user id across all of them (resolveUserId), which is
+        // also the TurnRunner subscription key. Sharing one runner would group
+        // distinct personas' turns under one key and could surface persona A's
+        // turn to a persona-B / web subscriber. Each pool bot therefore gets
+        // its own TurnRunner (bot.ts fallback), keeping personas isolated;
+        // every bot still persists chat_messages with its own agent_id.
         onActiveProviderChanged: () => {
           initOrUpdateAgentCore().catch((err) => {
             logger.error('[axiom] Error rebuilding agent core after Telegram provider change:', err)
@@ -1614,6 +1688,10 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         onTaskReply: handleTelegramTaskReply,
         onTaskAction: handleTelegramTaskAction,
         draftTaskPlan,
+        // Upstream 0.27.0: share the one process-wide TurnRunner so a turn
+        // started in Telegram streams into a concurrently-open web tab and a
+        // manual retry cannot race a second, channel-local runner.
+        turnRunner,
         onActiveProviderChanged: () => {
           initOrUpdateAgentCore().catch((err) => {
             logger.error('[axiom] Error rebuilding agent core after Telegram provider change:', err)
@@ -1768,6 +1846,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
         providerConfig: provider,
         providerManager,
         sessionTimeoutMinutes,
+        quotaService: quotaMonitorService,
       })
 
       registerProviderManagerListeners(providerManager)
@@ -1835,6 +1914,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
     taskEventBus,
     chatEventBus,
     chatActions,
+    turnRunner,
     getAgentCore: () => agentCore,
     getTaskRuntime: () => taskRuntime,
     resolveProvider,
@@ -1867,6 +1947,8 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       unregisterTelegramEmailApproval?.()
       unregisterTelegramEmailApproval = null
       unregisterEmailApprovalChat()
+      retryChatChannel?.unregister()
+      retryChatChannel = null
 
       if (telegramBotPool) {
         try {

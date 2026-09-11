@@ -1,18 +1,25 @@
 <template>
   <div class="flex h-full flex-col overflow-hidden">
     <!-- Header with back button -->
-    <div class="flex-shrink-0 border-b border-border px-5 py-3">
-      <div class="flex items-center gap-3">
-        <Button variant="ghost" size="sm" class="gap-1.5" @click="$emit('back')">
+    <!-- Mobile left padding matches the layout header so the back icon sits
+         directly below the hamburger button. -->
+    <div class="flex-shrink-0 border-b border-border py-2 pl-1 pr-3 md:px-5 md:py-3">
+      <div class="flex items-center gap-2 md:gap-3">
+        <Button
+          variant="ghost"
+          class="h-10 w-10 shrink-0 gap-1.5 p-0 md:h-8 md:w-auto md:px-3 md:text-xs"
+          :title="$t('taskViewer.back')"
+          @click="$emit('back')"
+        >
           <AppIcon name="arrowLeft" size="sm" />
-          {{ $t('taskViewer.back') }}
+          <span class="hidden md:inline">{{ $t('taskViewer.back') }}</span>
         </Button>
 
-        <Separator orientation="vertical" class="h-5" />
+        <Separator orientation="vertical" class="hidden h-5 md:block" />
 
         <div class="flex min-w-0 flex-1 items-center gap-2">
           <h2 class="truncate text-sm font-semibold">{{ taskInfo?.name ?? '—' }}</h2>
-          <Badge v-if="taskInfo?.status" :variant="statusVariant(taskInfo.status)">
+          <Badge v-if="taskInfo?.status" :variant="taskStatusVariant(taskInfo.status)">
             {{ $t(`tasks.status.${taskInfo.status}`) }}
           </Badge>
           <Badge v-if="isLive" variant="default" class="gap-1">
@@ -23,6 +30,21 @@
             {{ $t('taskViewer.live') }}
           </Badge>
         </div>
+
+        <Button
+          v-if="isLive"
+          variant="outline"
+          size="sm"
+          class="gap-1.5"
+          :class="{ 'text-muted-foreground': !autoScroll }"
+          role="checkbox"
+          :aria-checked="autoScroll"
+          :title="$t('taskViewer.autoScrollHint')"
+          @click="toggleAutoScroll"
+        >
+          <AppIcon :name="autoScroll ? 'squareCheck' : 'square'" size="sm" />
+          <span class="hidden sm:inline">{{ $t('taskViewer.autoScroll') }}</span>
+        </Button>
 
         <!-- Edit & Restart button. Only shown for terminal states. For
              `running` / `paused` we surface a hint in the button's tooltip
@@ -36,7 +58,7 @@
           @click="startEdit"
         >
           <AppIcon name="refresh" size="sm" />
-          {{ $t('taskViewer.restartButton') }}
+          <span class="hidden sm:inline">{{ $t('taskViewer.restartButton') }}</span>
         </Button>
         <Button
           v-else-if="!editing && taskInfo?.status && !canRestart"
@@ -47,7 +69,7 @@
           :title="$t(`taskViewer.restartDisabled.${taskInfo.status}`)"
         >
           <AppIcon name="refresh" size="sm" />
-          {{ $t('taskViewer.restartButton') }}
+          <span class="hidden sm:inline">{{ $t('taskViewer.restartButton') }}</span>
         </Button>
       </div>
     </div>
@@ -73,7 +95,12 @@
     </div>
 
     <!-- Events list -->
-    <div v-else ref="eventsContainer" class="flex flex-1 flex-col gap-1 overflow-y-auto px-5 py-3">
+    <div
+      v-else
+      ref="eventsContainer"
+      class="flex flex-1 flex-col gap-1 overflow-y-auto px-5 py-3"
+      @scroll="onEventsScroll"
+    >
       <!-- Edit & Restart form (replaces the read-only Prompt block while editing) -->
       <div v-if="editing" class="rounded-lg border border-primary/50 bg-card px-5 py-4">
         <div class="mb-4 flex items-center gap-2">
@@ -160,58 +187,47 @@
       </div>
 
       <!-- Task prompt (read-only, hidden while editing) -->
-      <div v-if="!editing && taskInfo?.prompt" class="rounded-lg border border-border bg-card px-4 py-3">
-        <div class="flex items-start gap-3">
-          <AppIcon name="send" size="sm" class="mt-0.5 text-primary" />
-          <div class="min-w-0 flex-1">
-            <p class="mb-1 text-xs font-medium text-primary">Prompt</p>
-            <p class="text-sm text-foreground whitespace-pre-wrap">{{ taskInfo.prompt }}</p>
-          </div>
-          <span v-if="firstEventTimestamp" class="flex-shrink-0 text-xs text-muted-foreground">
-            {{ formatTime(firstEventTimestamp) }}
-          </span>
-        </div>
-      </div>
-
-      <div
-        v-for="(event, idx) in groupedEvents"
-        :key="idx"
-        class="rounded-lg border border-border bg-card"
+      <TaskEventCard
+        v-if="!editing && taskInfo?.prompt"
+        icon="send"
+        icon-class="text-primary"
+        :timestamp="firstEventTimestamp ? formatTime(firstEventTimestamp) : undefined"
       >
+        <template #header>
+          <span class="text-xs font-medium text-primary">Prompt</span>
+        </template>
+        <p class="text-sm text-foreground whitespace-pre-wrap">{{ taskInfo.prompt }}</p>
+      </TaskEventCard>
+
+      <template v-for="(event, idx) in groupedEvents" :key="idx">
         <!-- Tool call event -->
-        <div v-if="event.type === 'tool_call_end' || event.type === 'tool_call_start'" class="group">
-          <button
-            class="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
-            @click="toggleExpanded(idx)"
-          >
-            <AppIcon
-              name="wrench"
-              size="sm"
-              :class="event.toolIsError ? 'text-destructive' : 'text-muted-foreground'"
-            />
-            <span class="font-mono text-xs font-medium" :class="event.toolIsError ? 'text-destructive' : 'text-foreground'">
-              {{ event.toolName ?? 'unknown' }}
+        <TaskEventCard
+          v-if="event.type === 'tool_call_end' || event.type === 'tool_call_start'"
+          collapsible
+          icon="wrench"
+          :icon-class="event.toolIsError ? 'text-destructive' : undefined"
+          :meta="event.durationMs != null ? formatDurationMs(event.durationMs) : undefined"
+          :timestamp="formatTime(event.timestamp)"
+          :expanded="isExpanded(`tool-${idx}`)"
+          @toggle="toggleExpanded(`tool-${idx}`)"
+        >
+          <template #header>
+            <span class="text-xs font-medium" :class="event.toolIsError ? 'text-destructive' : 'text-foreground'">
+              {{ formatToolName(event.toolName ?? 'unknown') }}
+            </span>
+            <span
+              v-if="getToolCallSummary(event.toolName ?? '', event.toolArgs)"
+              class="hidden min-w-0 truncate font-mono text-xs text-muted-foreground sm:inline"
+              :title="getToolCallSummary(event.toolName ?? '', event.toolArgs)!"
+            >
+              {{ getToolCallSummary(event.toolName ?? '', event.toolArgs) }}
             </span>
             <Badge v-if="event.toolIsError" variant="destructive" class="text-[10px] px-1.5 py-0">
               {{ $t('taskViewer.error') }}
             </Badge>
-            <span v-if="event.durationMs != null" class="text-xs text-muted-foreground">
-              {{ formatDurationMs(event.durationMs) }}
-            </span>
-            <span class="flex-1" />
-            <span class="text-xs text-muted-foreground">
-              {{ formatTime(event.timestamp) }}
-            </span>
-            <AppIcon
-              :name="expandedItems.has(idx) ? 'chevronDown' : 'chevronRight'"
-              size="sm"
-              class="text-muted-foreground"
-            />
-          </button>
+          </template>
 
-          <!-- Expanded content -->
-          <div v-if="expandedItems.has(idx)" class="border-t border-border bg-muted/20 px-4 py-3 space-y-3">
-            <!-- Arguments -->
+          <div class="space-y-3">
             <div v-if="event.toolArgs">
               <p class="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 {{ $t('taskViewer.arguments') }}
@@ -221,7 +237,6 @@
               </div>
             </div>
 
-            <!-- Result -->
             <div v-if="event.type === 'tool_call_end' && event.toolResult !== undefined">
               <p class="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 {{ $t('taskViewer.result') }}
@@ -231,86 +246,75 @@
               </div>
             </div>
           </div>
-        </div>
+        </TaskEventCard>
 
-        <!-- Text delta event -->
-        <div v-else-if="event.type === 'text_delta' && (event.text || event.thinking)" class="px-4 py-3 space-y-3">
-          <!-- Thinking -->
-          <div v-if="event.thinking" class="flex items-start gap-3">
-            <AppIcon name="sparkles" size="sm" class="mt-0.5 text-muted-foreground/50" />
-            <div class="min-w-0 flex-1">
-              <button
-                class="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors mb-1"
-                @click="toggleThinking(idx)"
+        <!-- Thinking -->
+        <TaskEventCard
+          v-if="event.type === 'text_delta' && event.thinking"
+          collapsible
+          icon="sparkles"
+          icon-class="text-muted-foreground/50"
+          :timestamp="formatTime(event.timestamp)"
+          :expanded="isExpanded(`thinking-${idx}`)"
+          @toggle="toggleExpanded(`thinking-${idx}`)"
+        >
+          <template #header>
+            <span class="text-xs font-medium text-muted-foreground">
+              {{ $t('taskViewer.thinking') }}
+            </span>
+          </template>
+
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <div class="prose-chat text-xs text-muted-foreground" v-html="renderMarkdown(event.thinking.trim())" />
+        </TaskEventCard>
+
+        <!-- Agent text (structured or plain) -->
+        <template v-if="event.type === 'text_delta' && event.text">
+          <TaskEventCard
+            v-if="parseStructuredResponse(event.text)"
+            :icon="parseStructuredResponse(event.text)!.status === 'completed' ? 'check' : 'close'"
+            :icon-class="parseStructuredResponse(event.text)!.status === 'completed' ? 'text-green-500' : 'text-destructive'"
+            :timestamp="formatTime(event.timestamp)"
+          >
+            <template #header>
+              <span
+                class="text-xs font-medium"
+                :class="parseStructuredResponse(event.text)!.status === 'completed' ? 'text-green-500' : 'text-destructive'"
               >
-                <AppIcon
-                  :name="expandedThinking.has(idx) ? 'chevronDown' : 'chevronRight'"
-                  size="sm"
-                />
-                {{ $t('taskViewer.thinking') }}
-              </button>
-              <div v-if="expandedThinking.has(idx)" class="rounded border border-border/50 bg-muted/30 p-2.5">
-                <p class="whitespace-pre-wrap text-xs text-muted-foreground">{{ event.thinking }}</p>
-              </div>
-            </div>
-          </div>
-          <!-- Agent text (structured or plain) -->
-          <div v-if="event.text" class="flex items-start gap-3">
-            <template v-if="parseStructuredResponse(event.text)">
-              <AppIcon
-                :name="parseStructuredResponse(event.text)!.status === 'completed' ? 'check' : 'close'"
-                size="sm"
-                :class="parseStructuredResponse(event.text)!.status === 'completed' ? 'mt-0.5 text-green-500' : 'mt-0.5 text-destructive'"
-              />
-              <div class="min-w-0 flex-1">
-                <p
-                  class="mb-1 text-xs font-medium"
-                  :class="parseStructuredResponse(event.text)!.status === 'completed' ? 'text-green-500' : 'text-destructive'"
-                >
-                  {{ parseStructuredResponse(event.text)!.statusLabel }}
-                </p>
-                <!-- eslint-disable-next-line vue/no-v-html -->
-                <div class="prose-chat text-sm" v-html="renderMarkdown(parseStructuredResponse(event.text)!.summary)" />
-              </div>
-              <span class="flex-shrink-0 text-xs text-muted-foreground">
-                {{ formatTime(event.timestamp) }}
+                {{ parseStructuredResponse(event.text)!.statusLabel }}
               </span>
             </template>
-            <template v-else>
-              <AppIcon name="bot" size="sm" class="mt-0.5 text-muted-foreground" />
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-2 mb-1">
-                  <span class="text-xs font-medium text-muted-foreground">
-                    {{ $t('taskViewer.agentResponse') }}
-                  </span>
-                  <span class="text-xs text-muted-foreground">
-                    {{ formatTime(event.timestamp) }}
-                  </span>
-                </div>
-                <!-- eslint-disable-next-line vue/no-v-html -->
-                <div class="prose-chat text-sm" v-html="renderMarkdown(event.text)" />
-              </div>
+            <!-- eslint-disable-next-line vue/no-v-html -->
+            <div class="prose-chat text-sm" v-html="renderMarkdown(parseStructuredResponse(event.text)!.summary)" />
+          </TaskEventCard>
+
+          <TaskEventCard v-else icon="bot" :timestamp="formatTime(event.timestamp)">
+            <template #header>
+              <span class="text-xs font-medium text-muted-foreground">
+                {{ $t('taskViewer.agentResponse') }}
+              </span>
             </template>
-          </div>
-        </div>
+            <!-- eslint-disable-next-line vue/no-v-html -->
+            <div class="prose-chat text-sm" v-html="renderMarkdown(event.text)" />
+          </TaskEventCard>
+        </template>
 
         <!-- Status change event -->
-        <div v-else-if="event.type === 'status_change'" class="px-4 py-2.5">
-          <div class="flex items-center gap-3">
-            <AppIcon name="info" size="sm" class="text-muted-foreground" />
-            <Badge :variant="statusVariant(event.status ?? '')">
+        <TaskEventCard
+          v-if="event.type === 'status_change'"
+          icon="info"
+          :timestamp="formatTime(event.timestamp)"
+        >
+          <template #header>
+            <Badge :variant="taskStatusVariant(event.status ?? '')">
               {{ $t(`tasks.status.${event.status}`) }}
             </Badge>
             <span v-if="event.statusMessage" class="text-sm text-muted-foreground truncate">
               {{ event.statusMessage }}
             </span>
-            <span class="flex-1" />
-            <span class="text-xs text-muted-foreground">
-              {{ formatTime(event.timestamp) }}
-            </span>
-          </div>
-        </div>
-      </div>
+          </template>
+        </TaskEventCard>
+      </template>
 
       <!-- Auto-scroll anchor -->
       <div ref="scrollAnchor" />
@@ -320,9 +324,13 @@
 
 <script setup lang="ts">
 import type { TaskEventItem } from '~/api/tasks'
+import { buildProviderModelOptions } from '~/utils/providerModelOptions'
+import TaskEventCard from '~/features/tasks/components/TaskEventCard.vue'
 import { useTaskEvents } from '~/features/tasks/composables/useTaskEvents'
 import { useTasksApi } from '~/api/tasks'
+import { formatToolName, getToolCallSummary } from '~/utils/toolNameFormat'
 import { useProviders } from '~/composables/useProviders'
+import { taskStatusVariant } from '~/features/tasks/utils/taskFormat'
 
 const props = defineProps<{
   taskId: string
@@ -350,8 +358,7 @@ const {
   disconnect,
 } = useTaskEvents()
 
-const expandedItems = ref(new Set<number>())
-const expandedThinking = ref(new Set<number>())
+const expandedItems = ref(new Set<string>())
 
 // —— Edit & Restart form state ——
 //
@@ -388,19 +395,7 @@ const showRetriggerNotice = computed(() => {
 })
 
 /** Flattened provider+model options, same pattern as CronjobFormDialog. */
-const providerModelOptions = computed(() => {
-  const options: { value: string; label: string }[] = []
-  for (const p of providers.value) {
-    const models = p.enabledModels ?? []
-    for (const modelId of models) {
-      options.push({
-        value: `${p.id}:${modelId}`,
-        label: `${p.name} (${modelId})`,
-      })
-    }
-  }
-  return options
-})
+const providerModelOptions = computed(() => buildProviderModelOptions(providers.value))
 
 /** Map the task's stored (provider, model) strings onto the composite
  *  `providerId:modelId` used by the select. Falls back to '' when the
@@ -497,22 +492,18 @@ const firstEventTimestamp = computed(() => {
   return events.value.length > 0 ? events.value[0]!.timestamp : undefined
 })
 
-function toggleExpanded(idx: number) {
-  if (expandedItems.value.has(idx)) {
-    expandedItems.value.delete(idx)
-  } else {
-    expandedItems.value.add(idx)
-  }
-  expandedItems.value = new Set(expandedItems.value)
+function isExpanded(key: string): boolean {
+  return expandedItems.value.has(key)
 }
 
-function toggleThinking(idx: number) {
-  if (expandedThinking.value.has(idx)) {
-    expandedThinking.value.delete(idx)
+function toggleExpanded(key: string) {
+  const next = new Set(expandedItems.value)
+  if (next.has(key)) {
+    next.delete(key)
   } else {
-    expandedThinking.value.add(idx)
+    next.add(key)
   }
-  expandedThinking.value = new Set(expandedThinking.value)
+  expandedItems.value = next
 }
 
 const groupedEvents = computed(() => {
@@ -543,25 +534,38 @@ const groupedEvents = computed(() => {
   return result
 })
 
+const eventsContainer = ref<HTMLElement | null>(null)
 const scrollAnchor = ref<HTMLElement | null>(null)
+const autoScroll = ref(true)
+let lastScrollTop = 0
 
-watch(() => events.value.length, () => {
-  if (isLive.value) {
-    nextTick(() => {
-      scrollAnchor.value?.scrollIntoView({ behavior: 'smooth' })
-    })
+function scrollToBottom() {
+  scrollAnchor.value?.scrollIntoView({ behavior: 'smooth' })
+}
+
+// Programmatic scrolling only ever moves downwards, so a decreasing
+// scrollTop is a reliable signal of user intent to stop following.
+function onEventsScroll() {
+  const el = eventsContainer.value
+  if (!el) return
+  if (el.scrollTop < lastScrollTop) {
+    autoScroll.value = false
   }
-})
+  lastScrollTop = el.scrollTop
+}
 
-function statusVariant(status: string): 'default' | 'success' | 'destructive' | 'warning' | 'muted' {
-  switch (status) {
-    case 'running': return 'default'
-    case 'completed': return 'success'
-    case 'failed': return 'destructive'
-    case 'paused': return 'warning'
-    default: return 'muted'
+function toggleAutoScroll() {
+  autoScroll.value = !autoScroll.value
+  if (autoScroll.value) {
+    nextTick(scrollToBottom)
   }
 }
+
+watch(() => events.value.length, () => {
+  if (isLive.value && autoScroll.value) {
+    nextTick(scrollToBottom)
+  }
+})
 
 function formatDurationMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`
@@ -587,6 +591,8 @@ onMounted(() => {
 watch(() => props.taskId, (newId) => {
   disconnect()
   expandedItems.value.clear()
+  autoScroll.value = true
+  lastScrollTop = 0
   // Any pending edit belongs to the previous task — drop it before the new
   // task loads so the form doesn't end up carrying stale values.
   editing.value = false

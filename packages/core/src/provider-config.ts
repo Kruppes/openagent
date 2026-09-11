@@ -4,6 +4,7 @@ import crypto from 'node:crypto'
 import type { Api, Model, ModelAuth, OAuthAuth, OAuthCredential, Transport } from '@earendil-works/pi-ai'
 import { streamSimple } from './pi-models.js'
 import { getBuiltinModels as getPiAiModels } from '@earendil-works/pi-ai/providers/all'
+import type { BuiltinProvider } from '@earendil-works/pi-ai/providers/all'
 import type { OAuthCredentials } from '@earendil-works/pi-ai/oauth'
 import { anthropicProvider } from '@earendil-works/pi-ai/providers/anthropic'
 import { githubCopilotProvider } from '@earendil-works/pi-ai/providers/github-copilot'
@@ -105,11 +106,23 @@ export interface ProviderTypePreset {
    * Does not affect the auth flow — `authMethod` still drives that.
    */
   subscription?: boolean
+  /**
+   * When true, the Add Model dialog lists models fetched live from the
+   * provider's own `/models` endpoint (using the stored baseUrl + apiKey)
+   * instead of the static pi-ai catalog. The live list replaces the curated
+   * one; the curated `getAvailableModels()` result is only used as an offline
+   * fallback when the live fetch fails. Suitable for gateways whose catalog
+   * changes frequently and is authoritative at the source (e.g. OpenRouter).
+   */
+  dynamicCatalog?: boolean
 }
 
 export interface AvailableModel {
   id: string
   name: string
+  contextWindow?: number
+  /** USD per 1M tokens. */
+  cost?: { input: number; output: number }
 }
 
 /**
@@ -207,6 +220,7 @@ export const PROVIDER_TYPE_PRESETS: Record<ProviderType, ProviderTypePreset> = {
     urlEditable: false,
     piAiProvider: 'openrouter',
     authMethod: 'api-key',
+    dynamicCatalog: true,
   },
   deepseek: {
     type: 'deepseek',
@@ -560,6 +574,14 @@ export function buildStreamFn(
 }
 
 /**
+ * Whether a provider type serves its Add Model catalog live from the
+ * provider's own `/models` endpoint instead of the static pi-ai catalog.
+ */
+export function isDynamicCatalogProvider(providerType: ProviderType | string): boolean {
+  return Boolean(PROVIDER_TYPE_PRESETS[providerType as ProviderType]?.dynamicCatalog)
+}
+
+/**
  * Get available models for a given provider type: pi-ai's generated catalog
  * for the preset's piAiProvider, with PROVIDER_TYPE_MODEL_OVERRIDES entries
  * layered on top (added, or replacing a catalog entry of the same id).
@@ -569,7 +591,7 @@ export function getAvailableModels(providerType: ProviderType): AvailableModel[]
   const catalogModels: AvailableModel[] = preset?.piAiProvider
     ? (() => {
         try {
-          return getPiAiModels(preset.piAiProvider as Parameters<typeof getPiAiModels>[0]).map(m => ({ id: m.id, name: m.name }))
+          return getPiAiModels(preset.piAiProvider as BuiltinProvider).map(m => toAvailableModel(m.id, m.name, m.contextWindow, m.cost))
         } catch {
           return []
         }
@@ -579,7 +601,7 @@ export function getAvailableModels(providerType: ProviderType): AvailableModel[]
   const overrides = PROVIDER_TYPE_MODEL_OVERRIDES[providerType] ?? []
   const merged = new Map(catalogModels.map(m => [m.id, m]))
   for (const override of overrides) {
-    merged.set(override.id, { id: override.id, name: override.name ?? override.id })
+    merged.set(override.id, toAvailableModel(override.id, override.name ?? override.id, override.contextWindow, override.cost))
   }
   return Array.from(merged.values())
 }
@@ -638,6 +660,21 @@ export function syncNewCatalogModels(): CatalogSyncResult[] {
 
   if (changed) saveProviders(file)
   return results
+}
+
+// Upstream 0.27.0: catalog models carry optional contextWindow/cost overrides.
+function toAvailableModel(
+  id: string,
+  name: string,
+  contextWindow?: number,
+  cost?: { input: number; output: number },
+): AvailableModel {
+  return {
+    id,
+    name,
+    ...(contextWindow ? { contextWindow } : {}),
+    ...(cost ? { cost: { input: cost.input, output: cost.output } } : {}),
+  }
 }
 
 /**
@@ -1430,7 +1467,9 @@ export function updateProviderModel(
   providerId: string,
   modelId: string,
   patch: {
+    name?: string
     description?: string
+    contextWindow?: number
     cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }
   },
 ): ProviderConfig {
@@ -1467,9 +1506,18 @@ export function updateProviderModel(
     provider.models.push(entry)
   }
 
+  if (patch.name !== undefined) {
+    const trimmed = patch.name.trim()
+    entry.name = trimmed ? trimmed : undefined
+  }
+
   if (patch.description !== undefined) {
     const trimmed = patch.description.trim()
     entry.description = trimmed ? trimmed : undefined
+  }
+
+  if (patch.contextWindow !== undefined && patch.contextWindow > 0) {
+    entry.contextWindow = patch.contextWindow
   }
 
   if (patch.cost) {

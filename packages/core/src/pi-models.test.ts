@@ -71,3 +71,34 @@ describe('pi-models', () => {
     expect(typeof stream.result).toBe('function')
   })
 })
+
+// --- upstream 0.27.0: API coverage lock (merged in) ---
+describe('pi-models api coverage', () => {
+  it('implements every preset apiType', async () => {
+    const { SUPPORTED_APIS } = await import('./pi-models.js')
+    const { PROVIDER_TYPE_PRESETS } = await import('./provider-config.js')
+    for (const preset of Object.values(PROVIDER_TYPE_PRESETS)) {
+      expect(
+        SUPPORTED_APIS.has(preset.apiType as Api),
+        `preset "${preset.type}" uses unimplemented api "${preset.apiType}"`,
+      ).toBe(true)
+    }
+  })
+
+  it('implements every wire api the catalog-resolved presets can dispatch to', async () => {
+    const { SUPPORTED_APIS } = await import('./pi-models.js')
+    const { PROVIDER_TYPE_PRESETS } = await import('./provider-config.js')
+    const { getBuiltinModels } = await import('@earendil-works/pi-ai/providers/all')
+    for (const preset of Object.values(PROVIDER_TYPE_PRESETS)) {
+      if (!preset.piAiProvider) continue
+      if (preset.authMethod !== 'oauth' && !preset.resolveModelsFromCatalog) continue
+
+      for (const model of getBuiltinModels(preset.piAiProvider as any)) {
+        expect(
+          SUPPORTED_APIS.has(model.api),
+          `catalog model "${preset.piAiProvider}/${model.id}" uses unimplemented api "${model.api}"`,
+        ).toBe(true)
+      }
+    }
+  })
+})

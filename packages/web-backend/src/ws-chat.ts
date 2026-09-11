@@ -6,13 +6,13 @@ import type {
   SlashCommandRegistry,
   SlashCommandPicker,
 } from '@axiom/core'
-import { isSlashCommandPicker } from '@axiom/core'
-import type { AgentCore, ResponseChunk } from '@axiom/core'
+import { isSlashCommandPicker, isSlashCommandAgentTurn } from '@axiom/core'
+import type { TurnPreambleToolCall } from '@axiom/core'
+import type { AgentCore, ResponseChunk, RetryInfo, StallInfo, TurnErrorInfo, TurnEvent } from '@axiom/core'
 import {
-  extractUploadsFromToolResult,
-  serializeUploadsMetadata,
   TaskStore,
   ScheduledTaskStore,
+  TurnRunner,
 } from '@axiom/core'
 import { buildWebChatSlashCommandRegistry } from './slash-commands.js'
 import { verifyToken } from './auth.js'
@@ -21,7 +21,9 @@ import { URL } from 'node:url'
 import crypto from 'node:crypto'
 import type { RuntimeMetrics } from './runtime-metrics.js'
 import type { ChatEventBus, ChatEvent } from './chat-event-bus.js'
-import type { ChatActionMessage } from './chat-actions.js'
+import type { ChatActionMessage, ChatActionRegistry } from './chat-actions.js'
+import { registerTurnRetryChatChannel } from './turn-retry-chat.js'
+import type { TurnRetryChatChannel } from './turn-retry-chat.js'
 
 interface ChatMessage {
   type: 'message' | 'command' | 'ping'
@@ -33,8 +35,25 @@ interface ChatMessage {
 }
 
 interface ChatResponse {
-  type: 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'reminder' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved'
+  type: 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'reminder' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled'
   text?: string
+  /**
+   * Auto-retry details (for `retry_scheduled`). Live-only status: the failed
+   * attempt is discarded, so nothing about it is persisted.
+   */
+  retry?: RetryInfo
+  /**
+   * Provider-stall details (for `stall_warning` / `stall_resolved`). Carries
+   * the `chat_messages` row id of the persisted notice so the client updates
+   * the existing bubble in place instead of appending a second one.
+   */
+  stall?: StallInfo
+  /**
+   * Terminal-error details (for `error`). Present whenever the failure was
+   * persisted as a chat row: it carries that row's id plus the machine-readable
+   * cause, so the client renders the same error bubble live and after a reload.
+   */
+  errorInfo?: TurnErrorInfo
   /**
    * Interactive message with action buttons (e.g. an email waiting for
    * approval). Buttons are answered via `POST /api/chat/actions/:messageId`;
@@ -113,15 +132,19 @@ function saveChatMessage(
   content: string,
   metadata?: string,
 ): void {
+  // Web chat is single-persona: every row is attributed to 'main' (the DB
+  // column defaults to 'main' too, but we write it explicitly for clarity).
   db.prepare(
-    'INSERT INTO chat_messages (session_id, user_id, role, content, metadata) VALUES (?, ?, ?, ?, ?)'
-  ).run(sessionId, userId, role, content, metadata ?? null)
+    'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(sessionId, userId, role, content, metadata ?? null, 'main')
 }
 
 export interface WebSocketChatResult {
   wss: WebSocketServer
   /** Check whether the given user ID has at least one active WebSocket connection */
   hasActiveWebSocket: (userId: number) => boolean
+  /** The turn runner driving all web chat turns (shared across connections). */
+  turnRunner: TurnRunner
 }
 
 /**
@@ -133,11 +156,39 @@ export function setupWebSocketChat(
   getAgentCore: (() => AgentCore | null) | AgentCore | null,
   runtimeMetrics?: RuntimeMetrics,
   chatEventBus?: ChatEventBus,
+  // Upstream 0.27.0 param order (positions 6/7) is preserved so its positional
+  // callers/tests keep working: chatActions (retry buttons) + the shared,
+  // process-wide TurnRunner (cross-channel turns, single retry runner).
+  chatActions?: ChatActionRegistry | null,
+  sharedTurnRunner?: TurnRunner,
+  // Fork: web-side slash commands can switch the active provider. Appended
+  // LAST so it does not shift upstream's positional arguments.
   onActiveProviderChanged?: () => void,
 ): WebSocketChatResult {
   // Support both getter function and direct reference (backward compat)
   const resolveAgentCore = typeof getAgentCore === 'function' ? getAgentCore : () => getAgentCore
   const wss = new WebSocketServer({ noServer: true })
+
+  // The runner owns the turn lifecycle (streaming, persistence, abort). This
+  // handler only dispatches inbound messages into it and forwards its events,
+  // which is what keeps a turn alive across socket drops and page reloads.
+  // In the real process the runner is shared with Telegram (composition root);
+  // a standalone setup gets its own so this module stays independently usable.
+  let retryChannel: TurnRetryChatChannel | null = null
+  const turnRunner = sharedTurnRunner ?? new TurnRunner({
+    db,
+    getAgent: () => resolveAgentCore(),
+    onTurnStart: () => runtimeMetrics?.startRequest(),
+    onTurnEnd: () => runtimeMetrics?.endRequest(),
+    onTurnFailed: failure => retryChannel?.attachRetryAction(failure),
+  })
+
+  // Manual retry: the button lives on the persisted error row and is answered
+  // through the chat-action registry, so it survives a reload and resolves for
+  // every connected client at once. A shared runner already brought its own.
+  if (chatActions && !sharedTurnRunner) {
+    retryChannel = registerTurnRetryChatChannel({ chatActions, db, runner: turnRunner })
+  }
 
   const slashRegistry: SlashCommandRegistry = buildWebChatSlashCommandRegistry()
   const taskStore = new TaskStore(db)
@@ -156,11 +207,23 @@ export function setupWebSocketChat(
   // Track active connections
   const authenticatedClients = new Map<WebSocket, JwtPayload>()
   const clientSessions = new Map<WebSocket, string>()
-  const activeStreams = new Map<WebSocket, AbortController>()
   /** Unique connection ID per WebSocket (to avoid echoing messages back to sender) */
   const connectionIds = new Map<WebSocket, string>()
   /** Lookup: userId -> set of connected WebSockets */
   const userClients = new Map<number, Set<WebSocket>>()
+  /** Turn-runner unsubscribe handles, one per authenticated connection. */
+  const turnSubscriptions = new Map<WebSocket, () => void>()
+
+  /**
+   * Attach a connection to its user's turn stream. Subscribing replays the
+   * active turn's buffer first (flagged `replay`), which is what makes a page
+   * reload mid-turn look seamless.
+   */
+  function attachToTurns(ws: WebSocket, userId: number): void {
+    turnSubscriptions.get(ws)?.()
+    const detach = turnRunner.subscribe(userId, (event) => forwardTurnEvent(ws, event))
+    turnSubscriptions.set(ws, detach)
+  }
 
   wss.on('connection', (ws, req) => {
     // Try to authenticate from query parameter
@@ -193,6 +256,7 @@ export function setupWebSocketChat(
       userClients.get(user.userId)!.add(ws)
 
       sendMessage(ws, { type: 'system', text: 'Authenticated' })
+      attachToTurns(ws, user.userId)
     }
 
     ws.on('message', async (data) => {
@@ -223,6 +287,7 @@ export function setupWebSocketChat(
             userClients.get(tokenUser.userId)!.add(ws)
 
             sendMessage(ws, { type: 'system', text: 'Authenticated' })
+            attachToTurns(ws, tokenUser.userId)
             return
           }
         }
@@ -237,6 +302,12 @@ export function setupWebSocketChat(
         sendMessage(ws, { type: 'pong' })
         return
       }
+
+      // What the agent receives. Differs from `parsed.content` only for
+      // slash commands that enrich the input (e.g. /skill), where the raw
+      // command is persisted but the agent sees the expanded text.
+      let agentText = parsed.content
+      let preambleToolCalls: TurnPreambleToolCall[] | undefined
 
       // Handle commands
       if (parsed.type === 'command' || parsed.content.startsWith('/')) {
@@ -253,18 +324,26 @@ export function setupWebSocketChat(
           onThinkingLevelChanged: (level) => resolveAgentCore()?.setThinkingLevel(level),
         })
         if (dispatch.kind === 'handled') {
-          if (isSlashCommandPicker(dispatch.reply)) {
-            sendMessage(ws, {
-              type: 'system',
-              // Title/description rendered as the bubble's text; buttons live
-              // alongside via the `picker` field.
-              text: formatPickerText(dispatch.reply),
-              picker: dispatch.reply,
-            })
-          } else if (dispatch.reply !== null) {
-            sendMessage(ws, { type: 'system', text: dispatch.reply })
+          const reply = dispatch.reply
+          if (isSlashCommandAgentTurn(reply)) {
+            // Fall through to the regular message flow below with the
+            // expanded text; the raw command is what gets persisted.
+            agentText = reply.text
+            if (reply.toolCall) preambleToolCalls = [reply.toolCall]
+          } else {
+            if (isSlashCommandPicker(reply)) {
+              sendMessage(ws, {
+                type: 'system',
+                // Title/description rendered as the bubble's text; buttons live
+                // alongside via the `picker` field.
+                text: formatPickerText(reply),
+                picker: reply,
+              })
+            } else if (reply !== null) {
+              sendMessage(ws, { type: 'system', text: reply })
+            }
+            return
           }
-          return
         }
         if (dispatch.kind === 'not_found') {
           sendMessage(ws, {
@@ -282,15 +361,12 @@ export function setupWebSocketChat(
         }
         const command = dispatch.kind === 'external'
           ? dispatch.command.name
-          : parsed.content.replace(/^\//, '').trim().toLowerCase()
+          : dispatch.kind === 'handled'
+            ? null
+            : parsed.content.replace(/^\//, '').trim().toLowerCase()
 
         if (command === 'new') {
-          // Abort any active stream
-          const controller = activeStreams.get(ws)
-          if (controller) {
-            controller.abort()
-            activeStreams.delete(ws)
-          }
+          turnRunner.abortTurn(currentUser.userId)
 
           const agentCore = resolveAgentCore()
 
@@ -319,17 +395,9 @@ export function setupWebSocketChat(
         }
 
         if (command === 'stop' || command === 'kill') {
-          const controller = activeStreams.get(ws)
-          if (!controller) {
+          if (!turnRunner.abortTurn(currentUser.userId)) {
             sendMessage(ws, { type: 'system', text: 'Nothing to stop.' })
             return
-          }
-
-          controller.abort()
-          activeStreams.delete(ws)
-
-          if (resolveAgentCore()) {
-            resolveAgentCore()!.abort()
           }
 
           sendMessage(ws, { type: 'system', text: 'Task aborted. No queued messages.' })
@@ -372,226 +440,25 @@ export function setupWebSocketChat(
         return
       }
 
-      const abortController = new AbortController()
-      activeStreams.set(ws, abortController)
-      runtimeMetrics?.startRequest()
-
-      // Inactivity watchdog: detects silently dead provider streams (e.g. zombie
-      // websocket-cached sockets, halted SSE readers behind dropped HTTP/2
-      // streams). Without this, the for-await below blocks forever — pi-ai's
-      // parseSSE/parseWebSocket never throw on idle, so no error reaches the
-      // runtime, no log line is written, and the frontend stays stuck on
-      // "streaming" without ever receiving a `done`. Resets on every chunk;
-      // warns at 30s, hard-aborts at 90s. Transport-agnostic — sits one layer
-      // above SSE/WS so it covers both.
-      const STALL_WARN_MS = 30_000
-      const STALL_ABORT_MS = 90_000
-      let lastActivityAt = Date.now()
-      let stallWarned = false
-      const watchdog = setInterval(() => {
-        if (abortController.signal.aborted) return
-        const idleMs = Date.now() - lastActivityAt
-
-        if (idleMs >= STALL_ABORT_MS) {
-          console.error(
-            `[ws-chat] Provider stalled ${idleMs}ms (user=${currentUser.userId}, `
-            + `session=${resolvedSessionId}). Aborting stream.`,
-          )
-          sendMessage(ws, {
-            type: 'error',
-            error: `Provider stopped responding after ${Math.round(idleMs / 1000)}s. `
-              + `Connection aborted — please retry.`,
-          })
-          abortController.abort()
-          // Propagate abort into pi-agent-core so the underlying SSE fetch /
-          // WebSocket gets cancelled (mirrors the /stop command handler).
-          agentCore.abort()
-          return
-        }
-
-        if (idleMs >= STALL_WARN_MS && !stallWarned) {
-          stallWarned = true
-          console.warn(
-            `[ws-chat] Provider slow: ${idleMs}ms idle (user=${currentUser.userId}, `
-            + `session=${resolvedSessionId}).`,
-          )
-          sendMessage(ws, {
-            type: 'system',
-            text: `\u23F3 Provider has not responded for ${Math.round(idleMs / 1000)}s\u2026`,
-          })
-        }
-      }, 5_000)
-
-      let fullResponse = ''
-      let doneSent = false
-      // Track pending tool calls to save input+output together
-      const pendingToolCalls = new Map<string, { toolName: string; toolArgs: unknown }>()
-      // Collect any uploads produced by tools during this turn (e.g.
-      // `send_file_to_user`). These are:
-      //   1. streamed live to the client via `attachment` ws messages so
-      //      the download card appears next to the assistant bubble
-      //      without a reload, and
-      //   2. merged into the saved assistant message's metadata so a
-      //      history reload shows the same attachment(s).
-      // Channel-agnostic extraction (via `extractUploadsFromToolResult`)
-      // means any tool can produce files, not just the built-in sender.
-      const assistantUploads: UploadDescriptor[] = []
-      // Buffer thinking deltas between thinking_start/thinking_end boundaries. Because
-      // the core runtime only surfaces `thinking_delta` today, we treat each contiguous
-      // run of thinking chunks (i.e. uninterrupted by text/tool/done) as a single block
-      // and persist it as its own chat_messages row with metadata.kind === 'thinking'.
-      let currentThinking = ''
-      const flushThinking = () => {
-        if (!currentThinking) return
-        const thinkingText = currentThinking
-        currentThinking = ''
-        try {
-          saveChatMessage(
-            db,
-            resolvedSessionId,
-            currentUser.userId,
-            'assistant',
-            thinkingText,
-            JSON.stringify({ kind: 'thinking' }),
-          )
-        } catch (err) {
-          console.error('Failed to persist thinking block:', err)
-        }
-      }
-
-      try {
-        for await (const chunk of agentCore.sendMessage(String(currentUser.userId), parsed.content, 'web', parsed.attachments)) {
-          // Reset inactivity watchdog on every chunk (text, thinking, tool_*, done).
-          lastActivityAt = Date.now()
-          stallWarned = false
-          if (abortController.signal.aborted) break
-
-          if (chunk.type === 'text' && chunk.text) {
-            // Any text closes an in-progress thinking block.
-            flushThinking()
-            fullResponse += chunk.text
-          }
-
-          if (chunk.type === 'thinking' && chunk.thinking) {
-            currentThinking += chunk.thinking
-          }
-
-          if (chunk.type === 'done') {
-            flushThinking()
-            doneSent = true
-          }
-
-          // Track tool call start
-          if (chunk.type === 'tool_call_start' && chunk.toolCallId) {
-            // Tool calls also end the current thinking block.
-            flushThinking()
-            pendingToolCalls.set(chunk.toolCallId, {
-              toolName: chunk.toolName ?? 'unknown',
-              toolArgs: chunk.toolArgs,
-            })
-          }
-
-          // Save completed tool call to DB
-          if (chunk.type === 'tool_call_end' && chunk.toolCallId) {
-            const pending = pendingToolCalls.get(chunk.toolCallId)
-            const toolName = pending?.toolName ?? chunk.toolName ?? 'unknown'
-            const metadata = JSON.stringify({
-              toolName,
-              toolCallId: chunk.toolCallId,
-              toolArgs: pending?.toolArgs ?? null,
-              toolResult: chunk.toolResult ?? null,
-              toolIsError: chunk.toolIsError ?? false,
-            })
-            saveChatMessage(db, resolvedSessionId, currentUser.userId, 'tool', `Tool: ${toolName}`, metadata)
-            pendingToolCalls.delete(chunk.toolCallId)
-
-            // Harvest any uploads produced by this tool and forward them as
-            // `attachment` events so the frontend can render them inline
-            // on the active assistant message.
-            const newUploads = extractUploadsFromToolResult(chunk.toolResult)
-            for (const upload of newUploads) {
-              assistantUploads.push(upload)
-              sendMessage(ws, { type: 'attachment', attachment: upload })
-              // Fan out to other tabs of the same user so every connected
-              // client renders the attachment, not just the one that drove
-              // the turn.
-              chatEventBus?.broadcast({
-                type: 'attachment',
-                userId: currentUser.userId,
-                source: 'web',
-                sourceConnectionId: connId,
-                sessionId: resolvedSessionId,
-                attachment: upload,
-              })
-            }
-          }
-
-          sendMessage(ws, chunkToResponse(chunk))
-
-          // Broadcast response chunks to other clients of same user
-          chatEventBus?.broadcast({
-            type: chunk.type === 'done' ? 'done' : chunk.type,
-            userId: currentUser.userId,
-            source: 'web',
-            sourceConnectionId: connId,
-            sessionId: resolvedSessionId,
-            text: chunk.text,
-            thinking: chunk.thinking,
-            toolName: chunk.toolName,
-            toolCallId: chunk.toolCallId,
-            toolArgs: chunk.toolArgs,
-            toolResult: chunk.toolResult,
-            toolIsError: chunk.toolIsError,
-            error: chunk.error,
-          })
-        }
-
-        // Save the full assistant response, including attachment metadata.
-        // If the turn produced only attachments (no text), we still persist
-        // an assistant row with empty content so the download card is
-        // recoverable on history reload.
-        if (fullResponse || assistantUploads.length > 0) {
-          const metadata = assistantUploads.length > 0
-            ? serializeUploadsMetadata(assistantUploads)
-            : undefined
-          saveChatMessage(
-            db,
-            resolvedSessionId,
-            currentUser.userId,
-            'assistant',
-            fullResponse,
-            metadata,
-          )
-        }
-      } catch (err) {
-        if (!abortController.signal.aborted) {
-          sendMessage(ws, { type: 'error', error: `Agent error: ${(err as Error).message}` })
-        }
-      } finally {
-        clearInterval(watchdog)
-        // Flush any trailing thinking that wasn't closed by text/tool/done (e.g.
-        // aborted/errored streams) so reload shows the partial reasoning.
-        flushThinking()
-        // Always send a 'done' if one wasn't already sent, so the frontend
-        // never gets stuck with a streaming indicator that never resolves.
-        if (!doneSent) {
-          sendMessage(ws, { type: 'done' })
-          chatEventBus?.broadcast({
-            type: 'done',
-            userId: currentUser.userId,
-            source: 'web',
-            sourceConnectionId: connId,
-            sessionId: resolvedSessionId,
-          })
-        }
-        activeStreams.delete(ws)
-        runtimeMetrics?.endRequest()
-      }
+      // Hand the turn to the runner and return. Everything the client sees —
+      // chunks, attachments, stall notices, `done` — arrives through the
+      // per-connection turn subscription, so the turn survives this socket
+      // going away and is replayed to whoever attaches next.
+      turnRunner.startTurn({
+        userId: currentUser.userId,
+        sessionId: resolvedSessionId,
+        text: agentText,
+        source: 'web',
+        attachments: parsed.attachments,
+        preambleToolCalls,
+      })
     })
 
     ws.on('close', () => {
-      const controller = activeStreams.get(ws)
-      if (controller) controller.abort()
+      // Deliberately NOT aborting the running turn: the runner owns it, keeps
+      // buffering, and replays it to the next connection that attaches.
+      turnSubscriptions.get(ws)?.()
+      turnSubscriptions.delete(ws)
 
       // Remove from user tracking
       const closingUser = authenticatedClients.get(ws)
@@ -608,7 +475,6 @@ export function setupWebSocketChat(
       authenticatedClients.delete(ws)
       clientSessions.delete(ws)
       connectionIds.delete(ws)
-      activeStreams.delete(ws)
     })
   })
 
@@ -702,6 +568,9 @@ export function setupWebSocketChat(
             toolResult: event.toolResult,
             toolIsError: event.toolIsError,
             error: event.error,
+            errorInfo: event.errorInfo,
+            stall: event.stall,
+            retry: event.retry,
             telegramDelivered: event.telegramDelivered,
             isTaskInjection: event.isTaskInjection,
           })
@@ -712,10 +581,36 @@ export function setupWebSocketChat(
 
   return {
     wss,
+    turnRunner,
     hasActiveWebSocket: (userId: number) => {
       const clients = userClients.get(userId)
       return !!clients && clients.size > 0
     },
+  }
+}
+
+/**
+ * Translate a runner event into the wire protocol. Replayed events are
+ * bracketed by `turn_replay_start`/`turn_replay_end` so the client can drop
+ * the partial turn it already rendered before rebuilding it from the buffer.
+ */
+function forwardTurnEvent(ws: WebSocket, event: TurnEvent): void {
+  switch (event.type) {
+    case 'turn_start':
+      if (event.replay) sendMessage(ws, { type: 'turn_replay_start', sessionId: event.sessionId })
+      break
+    case 'chunk':
+      sendMessage(ws, chunkToResponse(event.chunk))
+      break
+    case 'attachment':
+      sendMessage(ws, { type: 'attachment', attachment: event.attachment })
+      break
+    case 'system':
+      sendMessage(ws, { type: 'system', text: event.text })
+      break
+    case 'turn_end':
+      if (event.replay) sendMessage(ws, { type: 'turn_replay_end' })
+      break
   }
 }
 
@@ -748,5 +643,8 @@ function chunkToResponse(chunk: ResponseChunk): ChatResponse {
     toolResult: chunk.toolResult,
     toolIsError: chunk.toolIsError,
     error: chunk.error,
+    errorInfo: chunk.errorInfo,
+    stall: chunk.stall,
+    retry: chunk.retry,
   }
 }

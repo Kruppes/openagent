@@ -14,7 +14,7 @@ export {
   getImageDimensions,
 } from './uploads.js'
 export type { UploadDescriptor, SaveUploadInput, UploadSettings } from './uploads.js'
-export { loadConfig, getConfigDir, ensureConfigTemplates, getDefaultTimezone, getProjectRootDir, getReadmePath, getDocsPath, getAgentDocsPath, loadMultiPersonaSettings } from './config.js'
+export { loadConfig, warnConfigReadFailed, getConfigDir, ensureConfigTemplates, getDefaultTimezone, getProjectRootDir, getReadmePath, getDocsPath, getAgentDocsPath, loadMultiPersonaSettings } from './config.js'
 export type { MultiPersonaSettings } from './config.js'
 export { loadPersona, clearPersonaCache, invalidatePersonaCache, seedPersonaFiles, getPersonaDir, listPersonaIds } from './persona-loader.js'
 export type { PersonaContext } from './persona-loader.js'
@@ -91,6 +91,7 @@ export {
   getPiOAuthAuth,
   getAvailableModels,
   syncNewCatalogModels,
+  isDynamicCatalogProvider,
   addOAuthProvider,
   updateOAuthCredentials,
   encryptOAuthCredentials,
@@ -150,6 +151,8 @@ export {
   getQuotaAdapter,
   isQuotaProvider,
 } from './quota-registry.js'
+export { createProviderQuotaTool } from './quota-tool.js'
+export type { QuotaServiceLike, ProviderQuotaToolOptions } from './quota-tool.js'
 export {
   parseRetryAfterMs,
   normalizeUtilization,
@@ -257,9 +260,75 @@ export {
 export type { AgentSkillEntry, AgentSkillUsage, SkillPromptContext } from './agent-skills.js'
 export { AgentCore, createYoloTools, getWorkspaceDir, isRetryablePreStreamError } from './agent.js'
 export type { ResponseChunk, AgentCoreOptions } from './agent.js'
+export { TurnRunner } from './turn-runner.js'
+export type {
+  TurnAgentLike,
+  TurnEvent,
+  TurnInfo,
+  TurnRunnerOptions,
+  TurnSubscriber,
+  StartTurnInput,
+  TurnPreambleToolCall,
+} from './turn-runner.js'
 export { createAgentRuntime, createBaseAgentTools } from './agent-runtime.js'
 export type { AgentRuntimeBoundary, AgentRuntimeOptions, AgentRuntimePiAgentAccess, BaseAgentToolsOptions } from './agent-runtime.js'
-export type { AgentRuntimeStateSnapshot } from './agent-runtime-types.js'
+export type {
+  AgentRuntimeStateSnapshot,
+  RetryInfo,
+  StallInfo,
+  StallOutcome,
+  TurnErrorCause,
+  TurnErrorInfo,
+} from './agent-runtime-types.js'
+export { STALL_OUTCOMES, TURN_ERROR_CAUSES } from './agent-runtime-types.js'
+export {
+  TURN_ERROR_KIND,
+  buildTurnErrorMetadata,
+  parseTurnErrorMetadata,
+  formatTurnErrorContent,
+} from './turn-error.js'
+export type { TurnErrorMetadata } from './turn-error.js'
+export {
+  TURN_RETRY_ACTION_KIND,
+  TURN_RETRY_ACTION_ID,
+  TURN_RETRY_RESOLUTIONS,
+  createTurnRetryService,
+  newTurnRetryActionId,
+} from './turn-retry-action.js'
+export type {
+  TurnRetryOutcome,
+  TurnRetryRunnerLike,
+  TurnRetryService,
+  TurnRetryServiceDeps,
+} from './turn-retry-action.js'
+export {
+  registerTurnRetryNotifier,
+  clearTurnRetryNotifiers,
+  notifyTurnRetryResolved,
+} from './turn-retry-notifier.js'
+export type { TurnRetryNotifier, TurnRetryResolution } from './turn-retry-notifier.js'
+export {
+  DEFAULT_RETRY_POLICY,
+  DEFAULT_RETRY_ENABLED,
+  DEFAULT_RETRY_MAX_RETRIES,
+  DEFAULT_RETRY_BASE_DELAY_MS,
+  formatRetryScheduledContent,
+  isRetryableTurnError,
+  loadRetryPolicy,
+  retryDelayMs,
+} from './turn-retry.js'
+export type { RetryPolicy } from './turn-retry.js'
+export {
+  PROVIDER_STALL_KIND,
+  DEFAULT_STALL_WARN_MS,
+  DEFAULT_STALL_ABORT_MS,
+  buildProviderStallMetadata,
+  parseProviderStallMetadata,
+  formatProviderStallContent,
+  loadStallThresholds,
+  queryStallStats,
+} from './provider-stall.js'
+export type { ProviderStallMetadata, StallStats, StallStatsQueryOptions, StallThresholds } from './provider-stall.js'
 export { ProviderManager } from './provider-manager.js'
 export type { OperatingMode, ProviderManagerEvents } from './provider-manager.js'
 export { TaskStore, initTasksTable, buildTaskFilterClause } from './task-store.js'
@@ -548,6 +617,8 @@ export {
   formatTasksReply,
   formatCronjobsReply,
   isSlashCommandPicker,
+  isSlashCommandAgentTurn,
+  listLoadableSkills,
 } from './slash-commands.js'
 export type {
   SlashCommandSurface,
@@ -561,4 +632,6 @@ export type {
   SlashCommandPicker,
   SlashCommandPickerOption,
   SlashCommandReply,
+  SlashCommandAgentTurn,
+  LoadableSkill,
 } from './slash-commands.js'

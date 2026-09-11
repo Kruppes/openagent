@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import type { UploadDescriptor } from '@axiom/core'
+import type { RetryInfo, StallInfo, TurnErrorInfo, UploadDescriptor } from '@axiom/core'
 import type { ChatActionMessage } from './chat-actions.js'
 
 /**
@@ -8,7 +8,7 @@ import type { ChatActionMessage } from './chat-actions.js'
  */
 export interface ChatEvent {
   /** The kind of event being broadcast */
-  type: 'user_message' | 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'done' | 'error' | 'system' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'reminder' | 'attachment' | 'chat_action' | 'chat_action_resolved'
+  type: 'user_message' | 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'done' | 'error' | 'system' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'reminder' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled'
   /** The Axiom user ID (integer) this event belongs to */
   userId: number
   /** Where the event originated */
@@ -33,6 +33,12 @@ export interface ChatEvent {
   toolIsError?: boolean
   /** Error description */
   error?: string
+  /** Terminal-error details of a persisted error row (for `error`) */
+  errorInfo?: TurnErrorInfo
+  /** Provider-stall details (for `stall_warning` / `stall_resolved`) */
+  stall?: StallInfo
+  /** Auto-retry details (for `retry_scheduled`) */
+  retry?: RetryInfo
   /** Display name of the sender (e.g. Telegram username) */
   senderName?: string
   /** Task ID (for task_completed, task_failed, task_question events) */

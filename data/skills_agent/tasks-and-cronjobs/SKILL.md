@@ -1,6 +1,6 @@
 ---
 name: tasks-and-cronjobs
-version: 1.0.0
+version: 1.1.0
 description: Use Axiom's background-execution system — one-off background tasks (create_task), recurring cronjobs (create_cronjob), and static scheduled reminders (create_reminder). Load this skill before creating any of them, and ALWAYS load it when you receive a <task_injection> message so you respond correctly.
 ---
 
@@ -10,7 +10,7 @@ Axiom has three related but distinct ways to run work outside the current chat t
 
 | Tool family | Lifecycle | Spawns an agent? | Typical use |
 |---|---|---|---|
-| **Tasks** (`create_task`, `resume_task`, `list_tasks`) | One-shot, async | **Yes** — full agent with all tools/skills | "Build this app." "Refactor X across the repo." "Research and write a report." |
+| **Tasks** (`create_task`, `resume_task`, `list_tasks`) | One-shot, async | **Yes** — full agent with all tools/skills, plus optional `attached_skills` | "Build this app." "Refactor X across the repo." "Research and write a report." |
 | **Cronjobs** (`create_cronjob`, `edit_cronjob`, `list_cronjobs`, `get_cronjob`, `remove_cronjob`) | Recurring on a cron schedule | **Yes if `action_type: task`**, no if `action_type: injection` | "Every weekday at 9 summarize my GitHub notifications." "Daily sanity check on service X." |
 | **Reminders** (`create_reminder`) | Scheduled, can be one-shot or recurring | **No — static text only** | "Remind me at 17:30 to leave for the train." "Every Monday morning ping me 'standup at 10'." |
 
@@ -75,6 +75,20 @@ Both `create_task` and `create_cronjob` accept optional `provider` and `model`. 
 
 Optional cap. Defaults to the system value, hard-capped at the system maximum (set in Settings → Tasks). Only set this when the user wants something different. Tasks that hit the cap are aborted, not paused.
 
+### `attached_skills`
+
+`create_task` takes an optional `attached_skills` array — names of agent skills under `/data/skills_agent/<name>/` (or installed skills as `owner/name`). Each `SKILL.md` is **injected directly into the task prompt** when the task starts, so the task agent doesn't have to discover and `read_file` the skill itself.
+
+```
+create_task(
+  name: "Nitter scrape",
+  prompt: "<self-contained instructions>",
+  attached_skills: ["nitter"],
+)
+```
+
+Use it whenever the task's work depends on a skill — it is more reliable than writing "read /data/skills_agent/nitter/SKILL.md first" into the prompt. Missing SKILL.md files are skipped with a warning; the task still runs. Omit the parameter when no skill is relevant.
+
 ### Resuming a paused task
 
 When a task pauses with `status: question`, it's waiting for input via `resume_task`. See the next section.
@@ -138,9 +152,9 @@ If unsure → **task**. Injection is the lightweight optimization for the rare c
 
 Schedules are evaluated in the configured timezone (`TZ`, see `<current_datetime>`). Confirm the user's intended timezone if it's unclear from context.
 
-### `attached_skills` (cronjob-specific)
+### `attached_skills`
 
-`create_cronjob` (and `edit_cronjob`) take an optional `attached_skills` array — names of agent skills under `/data/skills_agent/<name>/`. The contents of each `SKILL.md` get **injected directly into the task prompt** on every run, so the spawned task agent doesn't have to discover and `read_file` the skill itself.
+`create_cronjob` (and `edit_cronjob`) take the same optional `attached_skills` array as `create_task`. The contents of each `SKILL.md` get **injected directly into the task prompt** on every run, so the spawned task agent doesn't have to discover and `read_file` the skill itself. Only relevant for `action_type: "task"`.
 
 Use this when:
 - The cronjob's reliability depends on a skill (e.g. a daily Nitter scrape that needs the `nitter` skill's URL conventions).
@@ -151,6 +165,37 @@ attached_skills: ["nitter", "summarizer"]
 ```
 
 Missing SKILL.md files are skipped with a warning — the task still runs.
+
+### Persistent state across runs (continuity)
+
+Each cronjob run spawns a **fresh, isolated task agent**. Run N+1 remembers nothing from run N. For digest / monitor / watch jobs this means the same items get reported over and over. Fix it with a **brain file** the task owns:
+
+1. At the **start** of the run, read the brain file to see what's already known/reported.
+2. Do the work, dedupe against that state.
+3. At the **end**, write the new facts / last-seen markers back.
+
+This needs zero platform code — it's just `read_file` / `write_file` in the cronjob prompt. It composes with `attached_skills`: attached skills bake in *rules*, the brain file carries *run-to-run state*.
+
+**Where to store:**
+
+- **`/data/memory/state/<job-name>.json` or `.md`** — compact, machine-readable job state (last-seen IDs, timestamps, cursors). Prefer this for pure dedupe markers.
+- **Wiki page (`/data/memory/wiki/<topic>.md`)** — curated, human-readable knowledge the job enriches over time.
+
+**Guardrails (a brain a cronjob writes to on every run grows unnoticed):**
+
+- **Set a size budget** (~60 KB). When the file outgrows it, move raw material into monthly archives / sub-pages and keep only a compact summary or current state in the main file.
+- **Don't blindly `read_file` a large state file** — a single `read_file` on an overgrown file can silently blow up the run (a real incident: a hub page grew to 756 KB and killed the run on low token budget / high cost). Instead `grep` for the specific marker and append with shell `>>`.
+- **Keep the split clean:** compact machine state → `/data/memory/state/`; curated knowledge → the wiki.
+
+Example digest cronjob prompt using a brain file:
+
+```
+prompt: "Read /data/memory/state/hn-digest.md for the list of story IDs already sent.
+         Fetch the current Hacker News front page. Report only stories whose ID is
+         NOT in that file, as a 5-bullet digest. Then append the newly reported IDs
+         to /data/memory/state/hn-digest.md (use grep + shell append, do not reload
+         the whole file if it is large). Keep the file under ~60 KB."
+```
 
 ### Editing, listing, removing
 
@@ -203,6 +248,16 @@ create_task(
 )
 ```
 
+### "Run this in the background, following the wiki skill"
+
+```
+create_task(
+  name: "Wiki cleanup",
+  prompt: "<self-contained instructions>",
+  attached_skills: ["wiki"],   // SKILL.md baked into the task prompt
+)
+```
+
 ### "Every weekday morning, summarize my GitHub notifications"
 
 ```
@@ -240,6 +295,19 @@ create_cronjob(
 )
 ```
 
+### "A daily digest that doesn't repeat itself"
+
+Give the cronjob a brain file so it dedupes across runs (see [Persistent state across runs](#persistent-state-across-runs-continuity)):
+
+```
+create_cronjob(
+  name: "HN digest",
+  schedule: "0 8 * * *",
+  action_type: "task",
+  prompt: "Read /data/memory/state/hn-digest.md for story IDs already sent. Fetch the HN front page, report only new stories, then append the new IDs back to that file (grep + shell append; keep it under ~60 KB).",
+)
+```
+
 ---
 
 ## Common mistakes to avoid
@@ -250,7 +318,10 @@ create_cronjob(
 - **Forgetting timezone.** Cron schedules use the configured `TZ`. If the user is in a different timezone, ask before assuming.
 - **Forwarding raw user text to `resume_task` without context.** The paused task has no chat history. Include the question + the user's answer + any relevant context in the `message`.
 - **Promising fresh data from a `create_reminder`.** A reminder is static text. If you say "I'll remind you with the latest weather", you're lying. Use `create_cronjob` task-type instead.
-- **Setting `attached_skills` on a `create_task`.** That parameter only exists on `create_cronjob` / `edit_cronjob`. Tasks don't have it.
+- **Telling a task to `read_file` a skill instead of attaching it.** `create_task` accepts `attached_skills` — use it, the SKILL.md then ships inside the task prompt.
+- **Attaching skills to a `create_reminder` or an `injection` cronjob.** No agent runs there, so `attached_skills` does not exist for them.
+- **A digest/monitor cronjob with no brain file.** Each run is isolated, so it re-reports the same items forever. Give it a `/data/memory/state/` file to dedupe against.
+- **Reloading an overgrown brain file with `read_file`.** A single `read_file` on a state/wiki file that grew into the hundreds of KB can kill the run. Budget its size and `grep` + append instead.
 
 ---
 
@@ -265,7 +336,7 @@ create_cronjob(
 
 | Tool | What it does |
 |---|---|
-| `create_task` | Spawn a one-shot background agent with a self-contained prompt. |
+| `create_task` | Spawn a one-shot background agent with a self-contained prompt. Optional `attached_skills` bakes the listed SKILL.md files into the task prompt. |
 | `resume_task` | Send a message to a paused task (used after a `status: question` injection). |
 | `list_tasks` | List background tasks with their status. |
 | `create_cronjob` | Schedule a recurring task or injection. |

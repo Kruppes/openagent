@@ -88,6 +88,21 @@ export class ChatActionRegistry {
     return message
   }
 
+  /**
+   * Register buttons for a message the channel renders itself (e.g. the
+   * persisted turn-error row): unlike `publish` this emits no `chat_action`
+   * bubble, and the caller owns `messageId` so the buttons can be rebuilt
+   * from persisted data after a page reload. Resolutions are broadcast the
+   * usual way.
+   */
+  // Used by turn-retry-chat.ts; Fallow does not resolve the call site.
+  // fallow-ignore-next-line unused-class-member
+  attach(message: ChatActionMessage): ChatActionMessage {
+    this.messages.set(message.messageId, message)
+    this.prune()
+    return message
+  }
+
   /** Called when any channel decided — disables the buttons everywhere. */
   resolve(kind: string, refId: string, resolution: string): ChatActionMessage | null {
     const message = [...this.messages.values()]
@@ -113,9 +128,14 @@ export class ChatActionRegistry {
     // The handler owns first-action-wins; a stale click simply loses there.
     const outcome = await handler({ refId: message.refId, actionId, user })
 
+    // Handlers that announce their outcome cross-channel resolve the message
+    // through `resolve()` while still running; broadcasting the identical
+    // result again would duplicate the event for every client.
+    const alreadyBroadcast = message.resolution === outcome.resolution
+
     // A losing click must not overwrite the winner's result for everyone; it
     // still gets the handler's answer back over HTTP.
-    if (outcome.ok || !message.resolution) {
+    if (!alreadyBroadcast && (outcome.ok || !message.resolution)) {
       message.resolution = outcome.resolution
       this.deps.publishToClients({ type: 'chat_action_resolved', message })
     }

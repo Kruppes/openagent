@@ -35,6 +35,7 @@ export interface AgentCoreOptions {
   baseInstructions?: string
   providerConfig?: ProviderConfig // For OAuth token refresh
   providerManager?: ProviderManager // For fallback retry support
+  quotaService?: import('./quota-tool.js').QuotaServiceLike
   /**
    * Called when a session ends (timeout, /new command, or provider change)
    * with the summary text. `options.background` is true when the session
@@ -96,7 +97,10 @@ export class AgentCore {
     this.onSessionEndCallback = options.onSessionEnd
     this.runtimeOptions = options
 
-    // Create the default 'main' runtime eagerly.
+    // Create the default 'main' runtime eagerly. Per-persona runtimes are
+    // created lazily via getOrCreateRuntime(). (Fork multi-persona model — kept
+    // over upstream's single `this.runtime`; upstream's per-runtime options
+    // such as `quotaService` are threaded through createRuntimeForAgent.)
     this.runtimes.set('main', this.createRuntimeForAgent('main', options.systemPrompt))
 
     // Initialize message queue for sequential processing
@@ -144,6 +148,7 @@ export class AgentCore {
       providerConfig: this.runtimeOptions.providerConfig,
       providerManager: this.runtimeOptions.providerManager,
       getCurrentToolUserId: () => this.currentToolUserId,
+      quotaService: this.runtimeOptions.quotaService,
       agentId,
     })
   }
@@ -271,6 +276,36 @@ export class AgentCore {
   }
 
   /**
+   * Re-run the last assistant turn after it failed (auto-retry, manual retry).
+   *
+   * The user message is NOT re-sent: the runtime drops the failed assistant
+   * tail and continues from the existing transcript, so a retried turn never
+   * duplicates the user message in the model context. `text`/`attachments`
+   * are only used for the fallback path where the transcript has nothing to
+   * continue from (e.g. the session was cleared in between).
+   */
+  async *retryTurn(
+    userId: string,
+    text: string,
+    source: string = 'web',
+    attachments?: UploadDescriptor[],
+    agentId: string = 'main',
+  ): AsyncIterable<ResponseChunk> {
+    const uploads = attachments
+    const iterable = await this.messageQueue.enqueue<ResponseChunk>(
+      'user_message',
+      userId,
+      text,
+      source,
+      (msg) => {
+        // Persona-aware retry: route to the same persona runtime and set retry=true.
+        return this.processUserMessage(msg.payload.userId, msg.payload.text, msg.payload.source, uploads, agentId, true)
+      },
+    )
+    yield* iterable
+  }
+
+  /**
    * Inject a task result into the main agent via the message queue.
    * The injection is queued and processed sequentially like any other message.
    *
@@ -323,10 +358,17 @@ export class AgentCore {
   /**
    * Process a user message (called from the queue).
    */
-  private async *processUserMessage(userId: string, text: string, source: string, attachments?: UploadDescriptor[], agentId: string = 'main'): AsyncIterable<ResponseChunk> {
+  // Merge (upstream 0.27.0 + fork multi-persona): keep BOTH the persona
+  // `agentId` (routes to the per-persona runtime + fact/session scope) AND the
+  // `retry` flag (manual retry continues the transcript instead of re-sending).
+  private async *processUserMessage(userId: string, text: string, source: string, attachments?: UploadDescriptor[], agentId: string = 'main', retry: boolean = false): AsyncIterable<ResponseChunk> {
     // Use resolveSession with the message text so topic-shift detection and
     // fact injection run on new sessions / topic shifts.
-    const session = this.sessionManager.resolveSession(userId, source, text, agentId)
+    // On a manual retry we must NOT run topic-shift detection (it could split
+    // the session mid-retry); reuse the existing session for the same persona.
+    const session = retry
+      ? this.sessionManager.getOrCreateSession(userId, source, agentId)
+      : this.sessionManager.resolveSession(userId, source, text, agentId)
     const sessionId = session.id
     this.currentInteractiveSessionId = sessionId
 
@@ -387,7 +429,13 @@ export class AgentCore {
     this.currentToolAgentId = agentId
 
     try {
-      yield* runtime.streamPrompt(enrichedText, sessionId, images.length > 0 ? images : undefined)
+      // Merge: retry/stream run on the SAME per-persona runtime the turn was
+      // routed to (NOT a singular this.runtime), so a manual retry replays under
+      // the correct persona's transcript/session.
+      const stream = retry
+        ? runtime.retryLastTurn(enrichedText, sessionId, images.length > 0 ? images : undefined)
+        : runtime.streamPrompt(enrichedText, sessionId, images.length > 0 ? images : undefined)
+      yield* stream
     } finally {
       this.currentToolUserId = undefined
       this.currentToolAgentId = undefined

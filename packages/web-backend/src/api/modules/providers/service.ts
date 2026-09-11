@@ -6,6 +6,7 @@ import {
   clearFallbackProvider,
   deleteProvider as deleteProviderConfig,
   getAvailableModels,
+  isDynamicCatalogProvider,
   getFallbackModelId,
   getProviderDefaultModel,
   loadProviders,
@@ -65,6 +66,7 @@ export class ProvidersExternalError extends Error {}
 export interface ProvidersService {
   listProviders: () => { masked: ProvidersFile; decrypted: ProvidersFile }
   getModelsByProviderType: (providerType: string) => AvailableModel[]
+  getLiveModels: (providerId: string) => Promise<AvailableModel[]>
   setFallback: (payload: ProviderFallbackUpdatePayloadContract) => { fallbackProvider: string | null; fallbackModel: string | null }
   startOAuthLogin: (payload: ProviderOAuthLoginStartPayloadContract) => Promise<OAuthLoginResponseContract>
   getOAuthStatus: (loginId: string) => Promise<
@@ -142,6 +144,20 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
       return getAvailableModels(providerType as ProviderType)
     } catch (err) {
       throw new ProvidersRuntimeError(`Failed to get models: ${(err as Error).message}`)
+    }
+  }
+
+  async function getLiveModels(providerId: string): Promise<AvailableModel[]> {
+    const provider = requireProvider(providerId)
+    if (!isDynamicCatalogProvider(provider.providerType)) {
+      throw new ProvidersValidationError('Provider type does not use a dynamic catalog')
+    }
+
+    try {
+      return await probeOpenAiCompatibleModelsFromBase(provider.baseUrl, provider.apiKey || undefined)
+    } catch (err) {
+      console.warn(`[axiom] Live model fetch failed for provider "${provider.name}", using bundled catalog: ${(err as Error).message}`)
+      return getAvailableModels(provider.providerType as ProviderType)
     }
   }
 
@@ -619,6 +635,7 @@ export function createProvidersService(options: ProvidersRouterOptions = {}): Pr
   return {
     listProviders,
     getModelsByProviderType,
+    getLiveModels,
     setFallback,
     startOAuthLogin,
     getOAuthStatus,
@@ -659,23 +676,47 @@ async function probeOpenAiCompatibleModelsFromBase(baseUrl: string, apiKey?: str
         continue
       }
 
-      const body = await response.json() as { data?: Array<{ id?: unknown; object?: unknown }> }
+      const body = await response.json() as { data?: ProbedModelEntry[] }
       const seen = new Set<string>()
-      return (body.data ?? [])
-        .map(entry => typeof entry.id === 'string' ? entry.id.trim() : '')
-        .filter((id) => {
-          if (!id || seen.has(id)) return false
-          seen.add(id)
-          return true
+      const models: AvailableModel[] = []
+      for (const entry of body.data ?? []) {
+        const id = typeof entry.id === 'string' ? entry.id.trim() : ''
+        if (!id || seen.has(id)) continue
+        seen.add(id)
+        const name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : id
+        const cost = parseProbedModelCost(entry.pricing)
+        models.push({
+          id,
+          name,
+          ...(typeof entry.context_length === 'number' && entry.context_length > 0
+            ? { contextWindow: entry.context_length }
+            : {}),
+          ...(cost ? { cost } : {}),
         })
-        .sort((a, b) => a.localeCompare(b))
-        .map(id => ({ id, name: id }))
+      }
+      return models.sort((a, b) => a.id.localeCompare(b.id))
     } catch (err) {
       lastError = (err as Error).message
     }
   }
 
   throw new ProvidersExternalError(lastError)
+}
+
+interface ProbedModelEntry {
+  id?: unknown
+  name?: unknown
+  context_length?: unknown
+  pricing?: { prompt?: unknown; completion?: unknown }
+}
+
+/** OpenRouter reports pricing in USD per token; convert to USD per 1M tokens. */
+function parseProbedModelCost(pricing: ProbedModelEntry['pricing']): { input: number; output: number } | undefined {
+  const input = Number(pricing?.prompt) * 1_000_000
+  const output = Number(pricing?.completion) * 1_000_000
+  if (!Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0) return undefined
+  const round = (value: number) => Math.round(value * 1e6) / 1e6
+  return { input: round(input), output: round(output) }
 }
 
 async function requestOllamaPullFromBase(
