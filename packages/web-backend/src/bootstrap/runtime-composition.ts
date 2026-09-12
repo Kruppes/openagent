@@ -1397,6 +1397,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
       senderName: event.senderName,
       attachment: event.attachment,
       replyContext: event.replyContext,
+      agentId: event.agentId,
     })
   }
 
@@ -1454,6 +1455,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
               source: 'web',
               sessionId,
               text: summary,
+              agentId,
             })
           }
         } else {
@@ -1465,6 +1467,7 @@ export async function createRuntimeComposition(options: RuntimeCompositionOption
             userId: numericUserId,
             source: 'web',
             text: summary ?? undefined,
+            agentId,
           })
         }
       }

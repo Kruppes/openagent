@@ -7,6 +7,7 @@ import type {
   SlashCommandPicker,
 } from '@axiom/core'
 import { isSlashCommandPicker, isSlashCommandAgentTurn } from '@axiom/core'
+import { normalizeClientMessageId, resolveAgentId } from './persona-request.js'
 import type { TurnPreambleToolCall } from '@axiom/core'
 import type { AgentCore, ResponseChunk, RetryInfo, StallInfo, TurnErrorInfo, TurnEvent } from '@axiom/core'
 import {
@@ -32,11 +33,40 @@ interface ChatMessage {
   skipSave?: boolean
   /** Upload descriptors for file attachments (passed when skipSave is true) */
   attachments?: UploadDescriptor[]
+  /**
+   * Fork multi-persona (Axiom-Companion M1): which persona this message is
+   * for. Optional; the web UI never sends it and gets 'main'. Must name a
+   * configured persona (a directory under /data/agents) or 'main'.
+   */
+  agentId?: string
+  /**
+   * Client-side idempotency key (Axiom-Companion M1). A retry after a lost
+   * ack carries the same id and must neither persist a second row nor start
+   * a second turn. Answered with a `message_ack` frame.
+   */
+  clientMessageId?: string
 }
 
 interface ChatResponse {
-  type: 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'reminder' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled'
+  type: 'text' | 'thinking' | 'tool_call_start' | 'tool_call_end' | 'error' | 'done' | 'system' | 'external_user_message' | 'session_end' | 'session_summary' | 'task_completed' | 'task_failed' | 'task_question' | 'task_status_update' | 'reminder' | 'pong' | 'attachment' | 'chat_action' | 'chat_action_resolved' | 'turn_replay_start' | 'turn_replay_end' | 'stall_warning' | 'stall_resolved' | 'retry_scheduled' | 'message_ack'
   text?: string
+  /**
+   * Persona attribution (fork multi-persona). Set on every turn frame, on
+   * `external_user_message`, `session_end` and `message_ack` so a client that
+   * talks to several personas over ONE socket can route each frame. Legacy
+   * clients ignore it.
+   */
+  agentId?: string
+  /**
+   * For `message_ack`: the `chat_messages` row id the user message got (or
+   * already had, when `duplicate` is true). Lets an offline outbox mark the
+   * entry as delivered and use the id as its `since_id` cursor.
+   */
+  messageId?: number
+  /** For `message_ack`: echoes the client's idempotency key. */
+  clientMessageId?: string
+  /** For `message_ack`: true when this key was seen before and no new turn was started. */
+  duplicate?: boolean
   /**
    * Auto-retry details (for `retry_scheduled`). Live-only status: the failed
    * attempt is discarded, so nothing about it is persisted.
@@ -124,19 +154,73 @@ interface ChatResponse {
   taskStatusTokensUsed?: number
 }
 
-function saveChatMessage(
+interface SavedUserMessage {
+  id: number
+  /** True when a row with this (user, clientMessageId) already existed. */
+  duplicate: boolean
+  /** Persona the EXISTING row belongs to (only meaningful when `duplicate`). */
+  agentId?: string
+}
+
+/**
+ * Persist a user message. With a `clientMessageId` the insert is idempotent:
+ * the partial UNIQUE index on (user_id, client_message_id) makes a retry hit
+ * `ON CONFLICT DO NOTHING`, and we hand back the existing row instead.
+ */
+function saveUserMessage(
   db: Database,
   sessionId: string,
   userId: number,
-  role: 'user' | 'assistant' | 'tool' | 'system',
   content: string,
-  metadata?: string,
-): void {
-  // Web chat is single-persona: every row is attributed to 'main' (the DB
-  // column defaults to 'main' too, but we write it explicitly for clarity).
-  db.prepare(
+  agentId: string,
+  clientMessageId?: string,
+): SavedUserMessage {
+  if (clientMessageId) {
+    const result = db.prepare(
+      `INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id, client_message_id)
+       VALUES (?, ?, 'user', ?, NULL, ?, ?)
+       ON CONFLICT(user_id, client_message_id) WHERE client_message_id IS NOT NULL DO NOTHING`
+    ).run(sessionId, userId, content, agentId, clientMessageId)
+    if (result.changes === 1) return { id: Number(result.lastInsertRowid), duplicate: false }
+    const existing = db.prepare(
+      'SELECT id, agent_id FROM chat_messages WHERE user_id = ? AND client_message_id = ?'
+    ).get(userId, clientMessageId) as { id: number; agent_id: string } | undefined
+    if (!existing) throw new Error('chat_messages row vanished between conflicting insert and lookup')
+    return { id: existing.id, duplicate: true, agentId: existing.agent_id }
+  }
+
+  const result = db.prepare(
     'INSERT INTO chat_messages (session_id, user_id, role, content, metadata, agent_id) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(sessionId, userId, role, content, metadata ?? null, 'main')
+  ).run(sessionId, userId, 'user', content, null, agentId)
+  return { id: Number(result.lastInsertRowid), duplicate: false }
+}
+
+/**
+ * Idempotency keys for which THIS process already started a turn. Covers the
+ * upload path (`skipSave`: the row was created by `POST /api/chat/message`,
+ * so the DB cannot tell us whether the follow-up WS frame was seen). Bounded
+ * FIFO; losing entries on restart is intended — a turn that died with the
+ * process should be re-run when the client retries.
+ */
+class StartedTurnKeys {
+  private readonly keys = new Set<string>()
+  private readonly order: string[] = []
+  constructor(private readonly capacity = 10_000) {}
+
+  has(userId: number, clientMessageId: string): boolean {
+    return this.keys.has(`${userId}:${clientMessageId}`)
+  }
+
+  add(userId: number, clientMessageId: string): void {
+    const key = `${userId}:${clientMessageId}`
+    if (this.keys.has(key)) return
+    this.keys.add(key)
+    this.order.push(key)
+    while (this.order.length > this.capacity) {
+      const oldest = this.order.shift()
+      if (oldest) this.keys.delete(oldest)
+    }
+  }
 }
 
 export interface WebSocketChatResult {
@@ -193,6 +277,7 @@ export function setupWebSocketChat(
   const slashRegistry: SlashCommandRegistry = buildWebChatSlashCommandRegistry()
   const taskStore = new TaskStore(db)
   const scheduledTaskStore = new ScheduledTaskStore(db)
+  const startedTurnKeys = new StartedTurnKeys()
 
   // Handle upgrade requests for /ws/chat path
   server.on('upgrade', (request, socket, head) => {
@@ -303,6 +388,19 @@ export function setupWebSocketChat(
         return
       }
 
+      // Persona + idempotency key are validated up front so a malformed frame
+      // is refused before any command/session side effect happens.
+      const agentId = resolveAgentId(parsed.agentId)
+      if (agentId === null) {
+        sendMessage(ws, { type: 'error', error: 'Unknown agentId' })
+        return
+      }
+      const clientMessageId = normalizeClientMessageId(parsed.clientMessageId)
+      if (clientMessageId === null) {
+        sendMessage(ws, { type: 'error', error: 'Invalid clientMessageId' })
+        return
+      }
+
       // What the agent receives. Differs from `parsed.content` only for
       // slash commands that enrich the input (e.g. /skill), where the raw
       // command is persisted but the agent sees the expanded text.
@@ -375,13 +473,18 @@ export function setupWebSocketChat(
             // `clientSessions` is the authoritative active-session id for this
             // connection (set on every message), so it stays correct across
             // reloads where the frontend's own session id would be null.
-            const endedSessionId = clientSessions.get(ws)
-            const newSession = agentCore.resetSessionAsync(String(currentUser.userId), 'web')
+            // Multi-persona: the connection may have last talked to another
+            // persona, so prefer the session manager's view for THIS persona
+            // and only fall back to the connection-cached id.
+            const endedSessionId = agentCore.getSessionManager().getSession?.(String(currentUser.userId), agentId)?.id
+              ?? clientSessions.get(ws)
+            const newSession = agentCore.resetSessionAsync(String(currentUser.userId), 'web', agentId)
             clientSessions.set(ws, newSession.id)
             sendMessage(ws, {
               type: 'session_end',
               sessionId: newSession.id,
               endedSessionId,
+              agentId,
             })
           } else {
             // No agent core: clear any cached session ID; next message will resolve a new one.
@@ -411,7 +514,7 @@ export function setupWebSocketChat(
       // registered in the `sessions` table.
       const agentCore = resolveAgentCore()
       if (agentCore) {
-        const smSession = agentCore.getSessionManager().getOrCreateSession(String(currentUser.userId), 'web')
+        const smSession = agentCore.getSessionManager().getOrCreateSession(String(currentUser.userId), 'web', agentId)
         clientSessions.set(ws, smSession.id)
       }
       const resolvedSessionId = clientSessions.get(ws)
@@ -420,8 +523,54 @@ export function setupWebSocketChat(
         return
       }
 
+      // Retry of a frame whose turn this process already started (any path):
+      // acknowledge, do not persist, do not run the agent again.
+      if (clientMessageId && startedTurnKeys.has(currentUser.userId, clientMessageId)) {
+        const existing = db.prepare(
+          'SELECT id FROM chat_messages WHERE user_id = ? AND client_message_id = ?'
+        ).get(currentUser.userId, clientMessageId) as { id: number } | undefined
+        sendMessage(ws, {
+          type: 'message_ack',
+          messageId: existing?.id,
+          clientMessageId,
+          agentId,
+          sessionId: resolvedSessionId,
+          duplicate: true,
+        })
+        return
+      }
+
+      let savedMessageId: number | undefined
+      let duplicateRow = false
       if (!parsed.skipSave) {
-        saveChatMessage(db, resolvedSessionId, currentUser.userId, 'user', parsed.content)
+        const saved = saveUserMessage(db, resolvedSessionId, currentUser.userId, parsed.content, agentId, clientMessageId)
+        if (saved.duplicate && saved.agentId !== agentId) {
+          // One key, two personas: a client bug, not a retry. Refuse rather
+          // than run persona B's turn for a row that belongs to persona A.
+          sendMessage(ws, { type: 'error', error: 'clientMessageId already used for another persona' })
+          return
+        }
+        savedMessageId = saved.id
+        // A duplicate ROW without a started turn in this process means the
+        // earlier attempt died before/with a restart: the turn still runs
+        // now, it is what the client is waiting for. The ack flags the row.
+        duplicateRow = saved.duplicate
+      } else if (clientMessageId) {
+        // skipSave asserts that POST /api/chat/message already stored the row
+        // under this key. If it did not, the claim is wrong; refuse instead of
+        // running a turn for a message that would never appear in history.
+        const existing = db.prepare(
+          'SELECT id, agent_id FROM chat_messages WHERE user_id = ? AND client_message_id = ?'
+        ).get(currentUser.userId, clientMessageId) as { id: number; agent_id: string } | undefined
+        if (!existing) {
+          sendMessage(ws, { type: 'error', error: 'skipSave requires a message stored under this clientMessageId' })
+          return
+        }
+        if (existing.agent_id !== agentId) {
+          sendMessage(ws, { type: 'error', error: 'clientMessageId already used for another persona' })
+          return
+        }
+        savedMessageId = existing.id
       }
 
       // Broadcast user message to other clients of same user (e.g. other browser tabs)
@@ -433,6 +582,7 @@ export function setupWebSocketChat(
         sourceConnectionId: connId,
         sessionId: resolvedSessionId,
         text: parsed.content,
+        agentId,
       })
 
       if (!agentCore) {
@@ -451,7 +601,23 @@ export function setupWebSocketChat(
         source: 'web',
         attachments: parsed.attachments,
         preambleToolCalls,
+        agentId,
       })
+
+      // Only now is the key "consumed": the row exists AND a turn is queued.
+      // Marking earlier would turn any failure above into a permanent
+      // duplicate:true for every retry of this key.
+      if (clientMessageId) {
+        startedTurnKeys.add(currentUser.userId, clientMessageId)
+        sendMessage(ws, {
+          type: 'message_ack',
+          messageId: savedMessageId,
+          clientMessageId,
+          agentId,
+          sessionId: resolvedSessionId,
+          duplicate: duplicateRow,
+        })
+      }
     })
 
     ws.on('close', () => {
@@ -496,6 +662,7 @@ export function setupWebSocketChat(
             source: event.source,
             senderName: event.senderName,
             replyContext: event.replyContext,
+            agentId: event.agentId ?? 'main',
           })
         } else if (event.type === 'session_end') {
           // Session ended (timeout or explicit /new). Clear the cached ID and
@@ -505,6 +672,7 @@ export function setupWebSocketChat(
           sendMessage(client, {
             type: 'session_end',
             text: event.text,
+            agentId: event.agentId ?? 'main',
           })
         } else if (event.type === 'session_summary') {
           // Late-arriving summary for a session that was ended
@@ -516,6 +684,7 @@ export function setupWebSocketChat(
             type: 'session_summary',
             sessionId: event.sessionId,
             text: event.text,
+            agentId: event.agentId ?? 'main',
           })
         } else if (event.type === 'task_completed' || event.type === 'task_failed' || event.type === 'task_question') {
           sendMessage(client, {
@@ -595,21 +764,22 @@ export function setupWebSocketChat(
  * the partial turn it already rendered before rebuilding it from the buffer.
  */
 function forwardTurnEvent(ws: WebSocket, event: TurnEvent): void {
+  const agentId = event.agentId
   switch (event.type) {
     case 'turn_start':
-      if (event.replay) sendMessage(ws, { type: 'turn_replay_start', sessionId: event.sessionId })
+      if (event.replay) sendMessage(ws, { type: 'turn_replay_start', sessionId: event.sessionId, agentId })
       break
     case 'chunk':
-      sendMessage(ws, chunkToResponse(event.chunk))
+      sendMessage(ws, { ...chunkToResponse(event.chunk), agentId })
       break
     case 'attachment':
-      sendMessage(ws, { type: 'attachment', attachment: event.attachment })
+      sendMessage(ws, { type: 'attachment', attachment: event.attachment, agentId })
       break
     case 'system':
-      sendMessage(ws, { type: 'system', text: event.text })
+      sendMessage(ws, { type: 'system', text: event.text, agentId })
       break
     case 'turn_end':
-      if (event.replay) sendMessage(ws, { type: 'turn_replay_end' })
+      if (event.replay) sendMessage(ws, { type: 'turn_replay_end', agentId })
       break
   }
 }

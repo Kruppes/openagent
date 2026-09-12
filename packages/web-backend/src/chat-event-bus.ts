@@ -17,6 +17,12 @@ export interface ChatEvent {
   sourceConnectionId?: string
   /** Chat session ID */
   sessionId?: string
+  /**
+   * Fork multi-persona: persona the event belongs to (`user_message`,
+   * `session_end`, `session_summary`). Optional; absent means 'main' or
+   * "not persona-scoped" (task/reminder events carry their own ids).
+   */
+  agentId?: string
   /** Text content (for user_message, text, system, error) */
   text?: string
   /** Thinking delta (for type='thinking') */
