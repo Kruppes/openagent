@@ -13,10 +13,17 @@ import { getConfigDir, ensureConfigTemplates, loadConfig } from './config.js'
 import { encrypt, decrypt, isEncrypted, maskApiKey } from './encryption.js'
 
 /**
- * Claude Code CLI version to advertise in the user-agent header for Anthropic requests.
- * This ensures Anthropic treats requests as coming from a Claude Code client.
+ * Claude Code CLI version to advertise in the user-agent header for Anthropic
+ * requests. This ensures Anthropic treats requests as coming from a Claude Code
+ * client; the API rejects too-old versions with HTTP 400
+ * `claude_code_version_too_old` (e.g. `claude-fable-5-1` requires >= 2.1.251).
+ *
+ * MUST stay in sync with pi-ai's `dist/api/anthropic-messages.js`
+ * `claudeCodeVersion` — pi-ai does not export the value, so we duplicate it
+ * here and guard the duplication with a drift test
+ * (provider-config.claude-version.test.ts). Re-check on every pi-ai bump.
  */
-export const CLAUDE_CODE_VERSION = '2.1.96'
+export const CLAUDE_CODE_VERSION = '2.1.251'
 
 /**
  * Supported provider types with presets
