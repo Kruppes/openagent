@@ -2006,4 +2006,191 @@ describe('TaskRunner', () => {
       customRunner.dispose()
     })
   })
+
+  // Bug B: task runner must surface provider errors instead of recording an
+  // empty "completed" (task aed6184a: 400 claude_code_version_too_old died on
+  // the first model call, 0 tokens, empty body, yet status was "completed").
+  describe('provider error surfacing (no silent empty completion)', () => {
+    it('marks task failed when the agent produced no output and 0 completion tokens', async () => {
+      const { Agent } = await import('@earendil-works/pi-agent-core')
+      const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>
+
+      // Simulate a run that died immediately: no message_end event fires (so
+      // completionTokens stays 0) and state.messages holds only the empty,
+      // errored assistant message pi-agent recorded instead of throwing.
+      MockAgent.mockImplementationOnce(() => {
+        const messages: unknown[] = [{
+          role: 'assistant',
+          content: [],
+          stopReason: 'error',
+          errorMessage: '400 claude_code_version_too_old: version 2.1.251 or newer is required',
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+        }]
+        return {
+          subscribe: vi.fn(() => () => {}),
+          prompt: vi.fn(async () => { /* dies without emitting output */ }),
+          abort: vi.fn(),
+          state: { get messages() { return messages } },
+        }
+      })
+
+      const task = store.create({
+        name: 'Provider Error Task',
+        prompt: 'Do work',
+        triggerType: 'agent',
+      })
+
+      await runner.startTask(task, mockProvider)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const updated = store.getById(task.id)!
+      expect(updated.status).toBe('failed')
+      expect(updated.resultStatus).toBe('failed')
+      expect(updated.completionTokens).toBe(0)
+      // The real provider cause is surfaced, not an empty summary.
+      expect(updated.errorMessage).toContain('claude_code_version_too_old')
+
+      // Injection reflects the failure and carries the real error.
+      expect(onTaskCompleteCalls).toHaveLength(1)
+      expect(onTaskCompleteCalls[0].injection).toContain('status="failed"')
+      expect(onTaskCompleteCalls[0].injection).toContain('claude_code_version_too_old')
+    })
+
+    it('marks task failed with a fallback message when output is empty, 0 tokens, and no errorMessage', async () => {
+      const { Agent } = await import('@earendil-works/pi-agent-core')
+      const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>
+
+      MockAgent.mockImplementationOnce(() => {
+        const messages: unknown[] = [{
+          role: 'assistant',
+          content: [],
+          stopReason: 'stop',
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+        }]
+        return {
+          subscribe: vi.fn(() => () => {}),
+          prompt: vi.fn(async () => { /* no output, no tokens */ }),
+          abort: vi.fn(),
+          state: { get messages() { return messages } },
+        }
+      })
+
+      const task = store.create({
+        name: 'Empty Output Task',
+        prompt: 'Do work',
+        triggerType: 'agent',
+      })
+
+      await runner.startTask(task, mockProvider)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const updated = store.getById(task.id)!
+      expect(updated.status).toBe('failed')
+      expect(updated.resultStatus).toBe('failed')
+      expect(updated.errorMessage).toContain('0 tokens')
+    })
+
+    it('passes through the real provider errorMessage when stopReason is error', async () => {
+      const { Agent } = await import('@earendil-works/pi-agent-core')
+      const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>
+
+      // Even with some completion tokens recorded, a stopReason 'error' must
+      // fail the task and forward the exact provider message.
+      MockAgent.mockImplementationOnce(() => {
+        let subscribeFn: ((event: unknown) => void) | null = null
+        const messages: unknown[] = []
+        return {
+          subscribe: vi.fn((fn: (event: unknown) => void) => {
+            subscribeFn = fn
+            return () => { subscribeFn = null }
+          }),
+          prompt: vi.fn(async () => {
+            const errored = {
+              role: 'assistant',
+              content: [],
+              stopReason: 'error',
+              errorMessage: 'The model refused to complete the request',
+              provider: 'test-provider',
+              model: 'test-model',
+              usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: { total: 0.001 } },
+            }
+            if (subscribeFn) subscribeFn({ type: 'message_end', message: errored })
+            messages.push(errored)
+          }),
+          abort: vi.fn(),
+          state: { get messages() { return messages } },
+        }
+      })
+
+      const task = store.create({
+        name: 'Refusal Task',
+        prompt: 'Do work',
+        triggerType: 'agent',
+      })
+
+      await runner.startTask(task, mockProvider)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const updated = store.getById(task.id)!
+      expect(updated.status).toBe('failed')
+      expect(updated.resultStatus).toBe('failed')
+      expect(updated.errorMessage).toBe('The model refused to complete the request')
+    })
+
+    it('does NOT run the verifier on an empty result (no pointless revision round)', async () => {
+      const { Agent } = await import('@earendil-works/pi-agent-core')
+      const MockAgent = Agent as unknown as ReturnType<typeof vi.fn>
+
+      MockAgent.mockImplementationOnce(() => {
+        const messages: unknown[] = [{
+          role: 'assistant',
+          content: [],
+          stopReason: 'error',
+          errorMessage: 'boom',
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+        }]
+        return {
+          subscribe: vi.fn(() => () => {}),
+          prompt: vi.fn(async () => { /* dies */ }),
+          abort: vi.fn(),
+          state: { get messages() { return messages } },
+        }
+      })
+
+      // buildModel is invoked by maybeVerifyAndRevise; assert it is never
+      // reached for the reviewer pass on an empty/errored result.
+      const buildModel = vi.fn(() => ({} as ReturnType<TaskRunnerOptions['buildModel']>))
+      const verifyRunner = new TaskRunner({
+        db,
+        buildModel,
+        getApiKey: async () => 'test-key',
+        tools: [],
+        memoryDir: undefined,
+        onTaskComplete: () => {},
+        sessionManager,
+        // Explicitly enable verification so the guard — not the VITEST default —
+        // is what prevents the reviewer pass.
+        verification: { enabled: true },
+        getProviderById: () => mockProvider,
+      })
+
+      const task = store.create({
+        name: 'No Verify On Empty Task',
+        prompt: 'Do work',
+        triggerType: 'agent',
+      })
+
+      await verifyRunner.startTask(task, mockProvider)
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      const updated = store.getById(task.id)!
+      expect(updated.status).toBe('failed')
+      // buildModel is called exactly once at startup (pre-resolve). The
+      // reviewer pass would call it a SECOND time — it must not, because the
+      // failed/empty result short-circuits before maybeVerifyAndRevise.
+      expect(buildModel).toHaveBeenCalledTimes(1)
+
+      verifyRunner.dispose()
+    })
+  })
 })

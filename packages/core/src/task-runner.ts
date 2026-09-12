@@ -243,10 +243,7 @@ If you encounter an unrecoverable error, use STATUS: failed and explain what wen
  * Extract the text content of the agent's most recent assistant message.
  */
 function extractAgentResultText(agent: PiAgent): string {
-  const messages = agent.state.messages
-  const lastAssistantMsg = [...messages].reverse().find(
-    (m) => 'role' in m && m.role === 'assistant'
-  ) as AssistantMessage | undefined
+  const lastAssistantMsg = getLastAssistantMessage(agent)
 
   if (!lastAssistantMsg || !('content' in lastAssistantMsg) || !Array.isArray(lastAssistantMsg.content)) {
     return ''
@@ -255,6 +252,52 @@ function extractAgentResultText(agent: PiAgent): string {
     .filter((c: { type: string }) => c.type === 'text')
     .map((c: { type: string; text?: string }) => c.text ?? '')
     .join('')
+}
+
+/** Most recent assistant message in the agent's state, if any. */
+function getLastAssistantMessage(agent: PiAgent): AssistantMessage | undefined {
+  const messages = agent.state.messages
+  return [...messages].reverse().find(
+    (m) => 'role' in m && m.role === 'assistant'
+  ) as AssistantMessage | undefined
+}
+
+/**
+ * Detect a provider-level failure that pi-agent recorded as an assistant
+ * message instead of throwing (Bug B, task aed6184a: a 400
+ * `claude_code_version_too_old` died on the first model call, leaving 0
+ * tokens and an empty body, yet the run "succeeded" and defaulted to
+ * status='completed' with an empty summary).
+ *
+ * Two signals, either of which means the run produced no real result:
+ *   1. the last assistant message carries `stopReason === 'error'` (pi-ai
+ *      maps refusals / provider errors here and attaches the real
+ *      `errorMessage`), or
+ *   2. the run yielded no assistant text AND consumed no completion tokens.
+ *
+ * Returns the surfaced error message when a failure is detected, else null.
+ * The `errorMessage` from the assistant message is preferred so the true
+ * provider cause (e.g. the 400 body) reaches the injection instead of a
+ * silent empty "completed".
+ */
+function detectAgentRunFailure(
+  agent: PiAgent,
+  resultText: string,
+  completionTokens: number,
+): string | null {
+  const last = getLastAssistantMessage(agent)
+  const stopReason = last && 'stopReason' in last ? last.stopReason : undefined
+  const errorMessage = last && 'errorMessage' in last ? last.errorMessage : undefined
+
+  if (stopReason === 'error') {
+    return errorMessage || 'Provider returned an error with no message'
+  }
+
+  if (resultText.trim().length === 0 && completionTokens === 0) {
+    return errorMessage || 'Task produced no output (0 tokens) — likely provider error'
+  }
+
+  return null
 }
 
 /**
@@ -612,6 +655,46 @@ export class TaskRunner {
   }
 
   /**
+   * Finalize a task as FAILED with the given provider error message.
+   *
+   * Shared by both the initial and resume completion paths for Bug B: when a
+   * run produced no usable result (provider error stored as an assistant
+   * message, or empty output with 0 tokens), we record a real failure with
+   * the true cause instead of an empty "completed". Assumes the caller has
+   * already unsubscribed and torn down the running-task entry, mirroring the
+   * surrounding completion code.
+   *
+   * `formatTaskInjection` falls back to `errorMessage` for the injection body
+   * when `resultSummary` is unset, so the surfaced error reaches the main
+   * agent; we set both to be explicit and robust.
+   */
+  private finalizeTaskFailure(taskId: string, runningTask: RunningTask, errorMessage: string): void {
+    const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
+
+    const updatedTask = this.store.update(taskId, {
+      status: 'failed',
+      resultStatus: 'failed',
+      resultSummary: `Task failed: ${errorMessage}`,
+      errorMessage,
+      completedAt: now,
+      promptTokens: runningTask.promptTokens,
+      completionTokens: runningTask.completionTokens,
+      cacheRead: runningTask.cacheRead,
+      cacheWrite: runningTask.cacheWrite,
+      estimatedCost: runningTask.estimatedCost,
+      toolCallCount: runningTask.toolCallCount,
+    })
+
+    if (updatedTask) {
+      const task = this.store.getById(taskId)!
+      const startedAt = taskStartedAtMs(task.startedAt)
+      const durationMinutes = Math.round((Date.now() - startedAt) / 60000)
+      const injection = formatTaskInjection(task, durationMinutes)
+      this.notifyTaskComplete(taskId, injection, 'failed', errorMessage, task.agentId)
+    }
+  }
+
+  /**
    * Run the task agent asynchronously
    */
   private async runTaskAsync(
@@ -640,11 +723,22 @@ export class TaskRunner {
       // Extract result from agent messages
       const resultText = extractAgentResultText(agent)
 
+      // Bug B: a provider error that pi-agent stored as an assistant message
+      // (stopReason 'error') or a run that produced no text and burned 0
+      // completion tokens must be surfaced as a FAILURE with the real cause,
+      // not defaulted to an empty "completed" by parseTaskOutput('').
+      const runFailure = detectAgentRunFailure(agent, resultText, runningTask.completionTokens)
+      if (runFailure) {
+        this.finalizeTaskFailure(taskId, runningTask, runFailure)
+        return
+      }
+
       let { status, summary } = parseTaskOutput(resultText)
 
       // Verifier pass: independent review of a "completed" result before it
-      // reaches the user; one revision round on a failed verdict.
-      if (status === 'completed') {
+      // reaches the user; one revision round on a failed verdict. Skip it on
+      // an empty result — reviewing nothing just burns a pointless round.
+      if (status === 'completed' && resultText.trim().length > 0) {
         const revised = await this.maybeVerifyAndRevise(taskId, agent, resultText, runningTask.provider ?? null)
         if (revised) {
           status = revised.status
@@ -1452,12 +1546,20 @@ Hint: Use /kill_task ${task.id} if the task needs to be cleaned up.
 
       const resultText = extractAgentResultText(agent)
 
+      // Bug B (resume path): same guard as runTaskAsync — surface a provider
+      // error / empty-output run as a failure with the real cause.
+      const runFailure = detectAgentRunFailure(agent, resultText, runningTask.completionTokens)
+      if (runFailure) {
+        this.finalizeTaskFailure(taskId, runningTask, runFailure)
+        return
+      }
+
       let { status, summary } = parseTaskOutput(resultText)
 
       // Verifier pass (resume path). Provider is not persisted across the
       // pause, so the reviewer runs only when verification.providerId is
-      // configured; otherwise this is a no-op.
-      if (status === 'completed') {
+      // configured; otherwise this is a no-op. Skipped on an empty result.
+      if (status === 'completed' && resultText.trim().length > 0) {
         const revised = await this.maybeVerifyAndRevise(taskId, agent, resultText, null)
         if (revised) {
           status = revised.status
