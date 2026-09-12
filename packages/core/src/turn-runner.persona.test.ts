@@ -155,4 +155,72 @@ describe('TurnRunner persona attribution', () => {
     expect(seen.retryTurn).toEqual(['bob'])
     for (const r of rows(db)) expect(r.agent_id).toBe('bob')
   })
+
+  // Axiom-Companion M1: the runner keys turns per USER, so a client subscribed
+  // to one user sees the turns of every persona on the same stream. Without
+  // `agentId` on each event it could not tell whose answer it is rendering.
+  it('stamps every emitted (and replayed) event with the turn persona', async () => {
+    const db = freshDb()
+    const { agent } = recordingAgent([
+      { type: 'text', text: 'hi' },
+      { type: 'tool_call_start', toolName: 'search', toolCallId: 't1', toolArgs: {} },
+      { type: 'tool_call_end', toolName: 'search', toolCallId: 't1', toolResult: 1 },
+      { type: 'done' },
+    ])
+    const runner = new TurnRunner({ db, getAgent: () => agent, completedTurnRetentionMs: 5_000 })
+    const live: TurnEvent[] = []
+    runner.subscribe(USER_ID, collect(live))
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: 'q', agentId: 'warren' })
+    await waitForEnd(live)
+
+    expect(live.length).toBeGreaterThanOrEqual(4)
+    for (const e of live) expect(e.agentId).toBe('warren')
+
+    // A late subscriber gets the buffered replay with the same attribution.
+    const replayed: TurnEvent[] = []
+    runner.subscribe(USER_ID, collect(replayed))
+    expect(replayed.length).toBe(live.length)
+    for (const e of replayed) {
+      expect(e.replay).toBe(true)
+      expect(e.agentId).toBe('warren')
+    }
+  })
+
+  it('serializes turns of different personas for the same user, each keeping its own attribution', async () => {
+    const db = freshDb()
+    let releaseFirst!: () => void
+    const gate = new Promise<void>((r) => { releaseFirst = r })
+    const order: string[] = []
+    const agent: TurnAgentLike = {
+      sendMessage: async function* (_u: string, _t: string, _s?: string, _a?: unknown, agentId?: string) {
+        order.push(`start:${agentId}`)
+        if (agentId === 'bob') await gate
+        yield { type: 'text', text: `from ${agentId}` }
+        yield { type: 'done' }
+        order.push(`end:${agentId}`)
+      },
+      abort: vi.fn(),
+    }
+    const runner = new TurnRunner({ db, getAgent: () => agent })
+    const events: TurnEvent[] = []
+    runner.subscribe(USER_ID, collect(events))
+
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: 'a', agentId: 'bob' })
+    runner.startTurn({ userId: USER_ID, sessionId: SESSION_ID, text: 'b', agentId: 'warren' })
+    await new Promise<void>((r) => setTimeout(r, 20))
+    // Documented limitation: one queue per user → warren waits for bob.
+    expect(order).toEqual(['start:bob'])
+    releaseFirst()
+    const deadline = Date.now() + 2000
+    while (events.filter(e => e.type === 'turn_end').length < 2) {
+      if (Date.now() > deadline) throw new Error('turns did not both end')
+      await new Promise<void>((r) => setTimeout(r, 5))
+    }
+    expect(order).toEqual(['start:bob', 'end:bob', 'start:warren', 'end:warren'])
+
+    const texts = events.filter(e => e.type === 'chunk' && e.chunk.type === 'text')
+    expect(texts.map(e => e.agentId)).toEqual(['bob', 'warren'])
+    const persisted = rows(db).filter(r => r.role === 'assistant')
+    expect(persisted.map(r => r.agent_id)).toEqual(['bob', 'warren'])
+  })
 })

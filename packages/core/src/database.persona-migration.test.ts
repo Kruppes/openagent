@@ -106,4 +106,54 @@ describe('database sessions rebuild — persona + cache column preservation', ()
 
     db.close()
   })
+
+  // Axiom-Companion M1: client_message_id is an idempotency key, unique per
+  // user but only when present (legacy/Telegram/web-UI rows have none).
+  it('adds chat_messages.client_message_id with a partial UNIQUE index per user', () => {
+    const db = initDatabase(':memory:')
+    db.prepare('INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)').run(1, 'a', 'x')
+    db.prepare('INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)').run(2, 'b', 'x')
+    const cols = (db.prepare('PRAGMA table_info(chat_messages)').all() as { name: string }[]).map(c => c.name)
+    expect(cols).toContain('client_message_id')
+
+    const insert = db.prepare(
+      'INSERT INTO chat_messages (session_id, user_id, role, content, agent_id, client_message_id) VALUES (?, ?, ?, ?, ?, ?)',
+    )
+    insert.run('s', 1, 'user', 'one', 'bob', 'cm-1')
+    // Same key, other user: allowed (key is scoped per user).
+    insert.run('s', 2, 'user', 'one', 'bob', 'cm-1')
+    // Rows without a key never collide.
+    insert.run('s', 1, 'user', 'two', 'main', null)
+    insert.run('s', 1, 'user', 'three', 'main', null)
+    // Same user + same key: rejected.
+    expect(() => insert.run('s', 1, 'user', 'dup', 'bob', 'cm-1')).toThrow(/UNIQUE/)
+
+    db.close()
+  })
+
+  it('applies the client_message_id migration to a database created before it existed', () => {
+    const db = initDatabase(':memory:')
+    // Simulate an older schema: drop the column + index, then re-run migrations.
+    db.exec('DROP INDEX IF EXISTS idx_chat_messages_client_message_id')
+    db.exec('ALTER TABLE chat_messages DROP COLUMN client_message_id')
+    let cols = (db.prepare('PRAGMA table_info(chat_messages)').all() as { name: string }[]).map(c => c.name)
+    expect(cols).not.toContain('client_message_id')
+    db.close()
+
+    // initDatabase on the same file path is what production does on boot; for
+    // :memory: we re-run the migration function through a fresh init on disk.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'axiom-cmid-'))
+    const file = path.join(dir, 'axiom.db')
+    const first = initDatabase(file)
+    first.exec('DROP INDEX IF EXISTS idx_chat_messages_client_message_id')
+    first.exec('ALTER TABLE chat_messages DROP COLUMN client_message_id')
+    first.close()
+    const second = initDatabase(file)
+    cols = (second.prepare('PRAGMA table_info(chat_messages)').all() as { name: string }[]).map(c => c.name)
+    expect(cols).toContain('client_message_id')
+    const idx = second.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_chat_messages_client_message_id'").get()
+    expect(idx).toBeTruthy()
+    second.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
 })

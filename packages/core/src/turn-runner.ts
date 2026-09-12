@@ -74,14 +74,32 @@ export interface TurnInfo {
  * Everything a consumer needs to render a turn. Emitted live and replayed
  * verbatim (with `replay: true`) when a consumer attaches mid-turn.
  */
+/**
+ * Fields every turn event carries. `agentId` is the fork's multi-persona
+ * attribution: the runner keys turns per user (not per persona), so a client
+ * subscribed to one user may receive turns of several personas interleaved
+ * and needs the id on each event to route them.
+ */
+interface TurnEventBase {
+  turnId: string
+  agentId: string
+  replay?: boolean
+}
+
 export type TurnEvent =
-  | { type: 'turn_start'; turnId: string; sessionId: string; replay?: boolean }
-  | { type: 'chunk'; turnId: string; chunk: ResponseChunk; replay?: boolean }
-  | { type: 'attachment'; turnId: string; attachment: UploadDescriptor; replay?: boolean }
-  | { type: 'system'; turnId: string; text: string; replay?: boolean }
-  | { type: 'turn_end'; turnId: string; replay?: boolean }
+  | ({ type: 'turn_start'; sessionId: string } & TurnEventBase)
+  | ({ type: 'chunk'; chunk: ResponseChunk } & TurnEventBase)
+  | ({ type: 'attachment'; attachment: UploadDescriptor } & TurnEventBase)
+  | ({ type: 'system'; text: string } & TurnEventBase)
+  | ({ type: 'turn_end' } & TurnEventBase)
 
 export type TurnSubscriber = (event: TurnEvent) => void
+
+/** `Omit` that distributes over a union instead of collapsing it to the common members. */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
+
+/** A turn event as emitters produce it; `emit()` stamps `agentId` on top. */
+type UnstampedTurnEvent = DistributiveOmit<TurnEvent, 'agentId'>
 
 /**
  * A tool call that did not come from the agent but should appear in the turn
@@ -442,13 +460,16 @@ export class TurnRunner {
     return recent.buffer.length > 0 ? recent : null
   }
 
-  private emit(turn: TurnState, event: TurnEvent): void {
-    turn.buffer.push(event)
+  private emit(turn: TurnState, event: UnstampedTurnEvent): void {
+    // Stamp the persona here rather than at every call site so no emitter
+    // can forget it (buffered replays carry it too).
+    const stamped: TurnEvent = { ...event, agentId: turn.agentId }
+    turn.buffer.push(stamped)
     const set = this.subscribers.get(turn.key)
     if (!set) return
     for (const subscriber of [...set]) {
       try {
-        subscriber(event)
+        subscriber(stamped)
       } catch (err) {
         console.error('[turn-runner] subscriber failed:', err)
       }

@@ -658,6 +658,19 @@ export function initDatabase(dbPath?: string): Database {
     CREATE INDEX IF NOT EXISTS idx_chat_messages_agent_id ON chat_messages(agent_id);
   `)
 
+  // Fork (Axiom-Companion M1): client-side idempotency key for user messages.
+  // A client that retries after a lost ack must not create a second row (and
+  // the web backend must not start a second turn). Partial UNIQUE index so
+  // rows without a key (every message written before this, Telegram, web UI)
+  // stay unaffected.
+  if (!chatMsgCols.find(c => c.name === 'client_message_id')) {
+    db.exec("ALTER TABLE chat_messages ADD COLUMN client_message_id TEXT")
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_client_message_id
+      ON chat_messages(user_id, client_message_id) WHERE client_message_id IS NOT NULL;
+  `)
+
   // Migration (PRD #11 Task 2): Legacy prefix-based session IDs -> UUIDs + type backfill
   // + orphan recovery. Idempotent: only acts on rows whose session_id is not already
   // in UUID form. Wrapped in a single transaction for atomicity.
